@@ -23,9 +23,9 @@ import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
-import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked, FRAME_TOLERANCE_M } from '../services/frameValidation.js';
+import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
-import { gpsSpreadMeters, medianGps, type LatLng } from '../services/reanchorGps.js';
+import { assertReanchorFiles, measureReanchorDock, REANCHOR_TOLERANCE_M } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
 import { areaFileName, generateMapZipFromDb, gridGpsToLocal, gridLocalToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
@@ -64,10 +64,10 @@ import {
 import { ensureBetaFlashSafe } from '../services/firmwareSafety.js';
 import { getMowerFileCapability, isOpenNovaMower, UNSUPPORTED_FIRMWARE_REASON, UNSUPPORTED_FIRMWARE_MSG_KEY } from '../services/mowerFileCapability.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from '../services/anchor.js';
-import { alignDockPhoto, getPhotoDockPose } from '../services/dockPhotoReference.js';
+import { alignDockPhoto, getPhotoDockPose, snapshotDockPose } from '../services/dockPhotoReference.js';
 import { repairDockChannels, withConfirmedCopyDocks } from '../services/dockChannelRepair.js';
 import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
-import { positionTelemetry, freshPositionState, stablePosition, POSITION_MAX_AGE_MS } from '../services/positionTelemetry.js';
+import { freshPositionState, stablePosition } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
 import { installZoneCopy } from '../services/installZoneCopy.js';
@@ -3261,18 +3261,6 @@ const reanchorOnDock = (sn: string) => freshPositionState(sn).docked;
 const reanchorRtkFixed = (sn: string) => freshPositionState(sn).fixed;
 const reanchorSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-async function reanchorStableGps(sn: string): Promise<LatLng | null> {
-  const started = Date.now();
-  while (Date.now() - started < 90_000) {
-    const state = freshPositionState(sn);
-    if (!state.docked || !state.fixed || !isDeviceOnline(sn)) return null;
-    const samples = (positionTelemetry(sn)?.gps ?? []).filter(p => p.at > started).slice(-8);
-    if (samples.length === 8 && samples.every((p, i) => p.fixed && p.docked && (!i || (p.at > samples[i - 1].at && p.at - samples[i - 1].at <= POSITION_MAX_AGE_MS))) && Date.now() - samples[7].at <= POSITION_MAX_AGE_MS && gpsSpreadMeters(samples) <= 0.10) return medianGps(samples);
-    await reanchorSleep(500);
-  }
-  return null;
-}
-
 async function runAutoReanchor(sn: string): Promise<void> {
   try {
     await withMowerMapOperation(sn, async operation => {
@@ -3281,20 +3269,38 @@ async function runAutoReanchor(sn: string): Promise<void> {
       if (!anchor) throw new Error('Dockanker ontbreekt of dockkanalen spreken elkaar tegen.');
       const snapshot = await readMowerMapSnapshot(sn, operation);
       if (!snapshot || !snapshotAnchorMatches(snapshot, anchor)) throw new Error('De dockankers in server, kanalen en maaierbestanden spreken elkaar tegen. Eerst onderzoeken; niets gewijzigd.');
+      const savedDock = snapshotDockPose(snapshot);
+      if (!savedDock || Math.hypot(savedDock.x - anchor.x, savedDock.y - anchor.y) > .001) throw new Error('Voor herankeren moeten kanaalanker en opgeslagen dockpositie hetzelfde punt zijn.');
       const cycle = { anchor: { x: anchor.x, y: anchor.y }, loadedAt: 0, relockedAt: 0, verify: false };
       reanchorCycles.set(sn, cycle);
-      setReanchor(sn, 'anchor', M`Wachten op acht verse, stabiele Fixed-metingen op het dock.`);
-      const gps = await reanchorStableGps(sn);
-      if (!gps) throw new Error('Geen acht verse, stabiele Fixed-metingen op het dock ontvangen.');
+      setReanchor(sn, 'anchor', M`Verse gedockte voertuigpositie en antennetransformatie meten.`);
+      const measured = await measureReanchorDock(sn, operation, snapshot);
       const currentAnchor = getPolygonAnchor(sn);
       if (!currentAnchor || Math.hypot(currentAnchor.x - anchor.x, currentAnchor.y - anchor.y) > 0.001) throw new Error('Dockanker gewijzigd tijdens de procedure.');
+      if (measured.dist <= REANCHOR_TOLERANCE_M && measured.latestDist <= REANCHOR_TOLERANCE_M) {
+        clearFrameUnvalidated(sn);
+        setReanchor(sn, 'done', M`Frame gecontroleerd zonder oorsprongwijziging: ${measured.dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: measured.base, dist: measured.dist });
+        return;
+      }
       // Exactly one write request. The firmware owns its bounded ROS reload retries.
-      const response = await operation.command('reanchor_pos', { ...gps, anchor_x: anchor.x, anchor_y: anchor.y }, 70_000);
-      const expected = generatePosJson(gps, anchor).utm_origin;
+      const expected = measured.expected;
+      const backupDir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'reanchor', operation.id);
+      mkdirSync(backupDir, { recursive: true });
+      fs.writeFileSync(path.join(backupDir, 'before.json'), JSON.stringify({ sn, snapshot, measured }), { flag: 'wx' });
+      const response = await operation.command('reanchor_pos', { protocol: 'base-link-reanchor-v1',
+        frame_fingerprint: measured.signature, utm_origin: expected, anchor_x: anchor.x, anchor_y: anchor.y }, 90_000);
       const actual = response?.utm_origin as { x?: number; y?: number; utm_zone?: number } | undefined;
       const echoed = response?.anchor as { x?: number; y?: number } | undefined;
-      if (response?.result !== 0 || !actual || actual.utm_zone !== expected.utm_zone || !Number.isFinite(actual.x) || !Number.isFinite(actual.y) || Math.hypot(actual.x! - expected.x, actual.y! - expected.y) > 0.02 || echoed?.x !== anchor.x || echoed?.y !== anchor.y) {
+      if (response?.result !== 0 || response.protocol !== 'base-link-reanchor-v1' || !actual || actual.utm_zone !== expected.utm_zone || !Number.isFinite(actual.x) || !Number.isFinite(actual.y) || Math.hypot(actual.x! - expected.x, actual.y! - expected.y) > 0.02 || echoed?.x !== anchor.x || echoed?.y !== anchor.y) {
         throw new Error('Oorsprong niet aantoonbaar geladen. Uitkomst onzeker; frame blijft geblokkeerd.');
+      }
+      const loaded = await readMowerMapSnapshot(sn, operation);
+      assertReanchorFiles(snapshot, loaded);
+      const loadedOrigin = JSON.parse(String(loaded.pos_json)).utm_origin;
+      if (loadedOrigin.utm_zone !== expected.utm_zone || loadedOrigin.z !== expected.z ||
+          !Number.isFinite(loadedOrigin.x) || !Number.isFinite(loadedOrigin.y) ||
+          Math.hypot(loadedOrigin.x - expected.x, loadedOrigin.y - expected.y) > .002) {
+        throw new Error('Geladen oorsprong wijkt af van de bevestigde voertuigmeting.');
       }
       cycle.loadedAt = Date.now();
       setReanchor(sn, 'needs_drive', M`Rij onder toezicht met de joystick ongeveer één meter van het dock. Wacht op verse RUNNING + RTK Fixed.`);
@@ -3311,25 +3317,17 @@ async function runAutoReanchor(sn: string): Promise<void> {
         }
         if (cycle.verify && cycle.relockedAt) {
           cycle.verify = false;
-          setReanchor(sn, 'verify', M`Acht verse dockmetingen en de geladen oorsprong controleren.`);
-          const started = Date.now();
-          let sample = null as ReturnType<typeof stablePosition>;
-          while (Date.now() - started < 90_000) {
-            if (!isDeviceOnline(sn)) break;
-            sample = stablePosition(sn, { after: started, docked: true, maxSpread: 0.10 });
-            if (sample) break;
-            await reanchorSleep(500);
-          }
-          if (!sample) throw new Error('Geen acht verse, stabiele RUNNING + Fixed-dockmetingen ontvangen.');
+          setReanchor(sn, 'verify', M`Verse voertuigmeting, dockanker en geladen oorsprong controleren.`);
           const after = await readMowerMapSnapshot(sn, operation);
-          let origin: { x?: number; y?: number; utm_zone?: number } | undefined;
-          try { origin = JSON.parse(String(after?.pos_json)).utm_origin; } catch { /* rejected below */ }
-          if (!after || !snapshotAnchorMatches(after, anchor) || origin?.utm_zone !== expected.utm_zone || !Number.isFinite(origin?.x) || !Number.isFinite(origin?.y) || Math.hypot(origin!.x! - expected.x, origin!.y! - expected.y) > 0.02) throw new Error('Dockanker of oorsprong gewijzigd na het herankeren.');
-          const stillFresh = freshPositionState(sn);
-          const dist = Math.hypot(sample.x - anchor.x, sample.y - anchor.y);
-          if (!stillFresh.docked || !stillFresh.fixed || !stillFresh.running || !stillFresh.pose || stillFresh.pose.at < sample.sampledAt || Math.hypot(stillFresh.pose.x - anchor.x, stillFresh.pose.y - anchor.y) > FRAME_TOLERANCE_M || dist > FRAME_TOLERANCE_M) throw new Error('Gedockte positie wijkt meer dan 0,4 m af of meetkwaliteit is verloren.');
+          assertReanchorFiles(loaded, after);
+          if (after.pos_json !== loaded.pos_json || !snapshotAnchorMatches(after, anchor)) throw new Error('Dockanker of oorsprong gewijzigd na het herankeren.');
+          const final = await measureReanchorDock(sn, operation, after);
+          const confirmedAnchor = getPolygonAnchor(sn);
+          if (!confirmedAnchor || Math.hypot(confirmedAnchor.x - anchor.x, confirmedAnchor.y - anchor.y) > .001) throw new Error('Dockanker gewijzigd tijdens de eindmeting.');
+          const dist = final.dist;
+          if (dist > REANCHOR_TOLERANCE_M || final.latestDist > REANCHOR_TOLERANCE_M) throw new Error('Gedockte voertuigpositie wijkt meer dan 5 cm af van het vaste dockanker.');
           clearFrameUnvalidated(sn);
-          setReanchor(sn, 'done', M`Frame gecontroleerd: ${dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: sample, dist });
+          setReanchor(sn, 'done', M`Frame gecontroleerd: ${dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: final.base, dist });
           return;
         }
         await reanchorSleep(500);

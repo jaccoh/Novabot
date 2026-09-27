@@ -77,6 +77,31 @@ class MarkerMeasurementTest(unittest.TestCase):
         self.assertAlmostEqual(runtime["y"], -.02, delta=.002)
         self.assertEqual(runtime["max_pair_dt_s"], 0)
 
+    def test_reanchor_uses_full_vehicle_transform_and_refuses_temporary_offset(self):
+        samples, _ = capture()
+        for row in samples["/robot_decision/robot_status"]:
+            row["data"]["merged_work_status"] = 4
+        old = origin()
+        old["x"] -= .07
+        old["y"] += .02
+        runtime = commands._runtime_frame_result(samples, 100, 106, old)
+        anchor = {"x": .03, "y": .73, "orientation": runtime["base"]["yaw"]}
+        target = commands._reanchor_origin_from_observation(old, runtime, anchor)
+        # Independent PROJ fixture minus independently rotated antenna vector.
+        # Full roll=.2, pitch=.3, yaw=1.2 (Rz*Rx*Ry), translation (.186,0,.15).
+        cy, sy, cr, sr, cp, sp = (math.cos(1.2), math.sin(1.2), math.cos(.2), math.sin(.2), math.cos(.3), math.sin(.3))
+        px, pz = cp * .186 + sp * .15, -sp * .186 + cp * .15
+        rx, ry = cy * px + sy * sr * pz, sy * px - cy * sr * pz
+        self.assertAlmostEqual(target["x"], 310545.1690844319 - rx - .03, delta=.002)
+        self.assertAlmostEqual(target["y"], 5780337.788794573 - ry - .73, delta=.002)
+        for bad in ({"x": .59}, {"docked": False}, {"northern": None}):
+            with self.assertRaises(ValueError):
+                commands._reanchor_origin_from_observation(old, dict(runtime, **bad), anchor)
+        # One off-dock report in an otherwise stationary window cannot authorize a write.
+        samples["/robot_decision/robot_status"][15]["data"]["merged_work_status"] = 0
+        runtime = commands._runtime_frame_result(samples, 100, 106, old)
+        self.assertFalse(runtime["docked"])
+
     def test_extracted_projection_matches_independent_proj_fixtures(self):
         # Generated with PROJ through pyproj, not the function under test.
         for lat, lng, zone, x, y in (

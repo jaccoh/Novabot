@@ -1,36 +1,56 @@
-// Pure GPS helpers for the re-anchor stability gate. Kept separate from the
-// dashboard orchestration so the spread/median math is unit-testable.
+import { isDeepStrictEqual } from 'node:util';
+import { isDeviceOnline } from '../mqtt/broker.js';
+import { frameSnapshotSignature, freshCapture, runtimeObservation, settledRuntime } from './copyAlignment.js';
+import { snapshotDockPose } from './dockPhotoReference.js';
+import { readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
+import { freshPositionState } from './positionTelemetry.js';
 
-export interface LatLng {
-  lat: number;
-  lng: number;
-}
+export const REANCHOR_TOLERANCE_M = .05;
+export type Origin = { x: number; y: number; z: number; utm_zone: number };
+const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
-/** Median lat and median lng of a window (independent per axis; robust to
- *  single-sample outliers). For an even window this returns the upper-middle
- *  element after sorting, which is fine for a tight cluster. */
-export function medianGps(window: LatLng[]): LatLng {
-  if (window.length === 0) return { lat: NaN, lng: NaN };
-  const lat = window.map((p) => p.lat).sort((a, b) => a - b);
-  const lng = window.map((p) => p.lng).sort((a, b) => a - b);
-  const mid = Math.floor(window.length / 2);
-  return { lat: lat[mid], lng: lng[mid] };
-}
-
-/** Max distance in METERS of any sample from the window's median position.
- *  Uses a local equirectangular approximation (fine for the few-metre spreads
- *  we care about): 1 deg lat ~= 111320 m, 1 deg lng ~= 111320 m * cos(lat). */
-export function gpsSpreadMeters(window: LatLng[]): number {
-  if (window.length < 2) return 0;
-  const mid = medianGps(window);
-  const mPerDegLat = 111320;
-  const mPerDegLng = 111320 * Math.cos((mid.lat * Math.PI) / 180);
-  let max = 0;
-  for (const p of window) {
-    const dy = (p.lat - mid.lat) * mPerDegLat;
-    const dx = (p.lng - mid.lng) * mPerDegLng;
-    const d = Math.hypot(dx, dy);
-    if (d > max) max = d;
+/** A reanchor may change pos.json only, never quietly change the ground map. */
+export function assertReanchorFiles(before: Record<string, unknown>, after: Record<string, unknown> | null): asserts after is Record<string, unknown> {
+  if (!after || after.result !== 0 || after.snapshot_consistent !== true ||
+      ['charging_station_yaml', 'csv_files', 'x3_csv_files', 'map_files_b64', 'map_files_text'].some(k =>
+        before[k] === undefined || !isDeepStrictEqual(before[k], after[k]))) {
+    throw new Error('Kaart- of dockbestanden zijn tijdens het herankeren gewijzigd of ontbreken.');
   }
-  return max;
+}
+
+/** Camera-free, exact-stamp GNSS/odom observation with the full antenna transform. */
+export async function measureReanchorDock(sn: string, operation: MowerMapOperation, snapshot: Record<string, unknown>) {
+  const signature = frameSnapshotSignature(snapshot);
+  const started = performance.now();
+  const response = await operation.command('measure_runtime_frame', {}, 30_000);
+  if (response?.result !== 0 || response.protocol !== 'runtime-map-frame-v1' || response.frame_fingerprint !== signature) {
+    throw new Error('Geen bevestigde voertuigmeting ontvangen. Controleer de versie van extended_commands.py en de meetkwaliteit.');
+  }
+  const runtime = runtimeObservation(response.runtime_frame, started);
+  settledRuntime(runtime);
+  const raw = response.runtime_frame as Record<string, unknown>;
+  const base = raw.base as { x: number; y: number; z: number; yaw: number } | undefined;
+  const dock = snapshotDockPose(snapshot)!;
+  if (!base || ![base.x, base.y, base.z, base.yaw, raw.base_spread_m, raw.yaw_spread_rad].every(finite) ||
+      raw.docked !== true || typeof raw.northern !== 'boolean' || Number(raw.base_spread_m) < 0 || Number(raw.base_spread_m) > .03 ||
+      Number(raw.yaw_spread_rad) < 0 || Number(raw.yaw_spread_rad) > .03 ||
+      Math.abs(Math.atan2(Math.sin(base.yaw - dock.orientation), Math.cos(base.yaw - dock.orientation))) > .05) {
+    throw new Error('Geen stabiele voertuigmeting met laadcontact en passende dockrichting.');
+  }
+  const after = await readMowerMapSnapshot(sn, operation);
+  assertReanchorFiles(snapshot, after);
+  if (after.pos_json !== snapshot.pos_json) throw new Error('Oorsprong gewijzigd tijdens de meting.');
+  freshCapture(runtime, started, 15, 'docked vehicle');
+  const state = freshPositionState(sn);
+  if (!isDeviceOnline(sn) || !state.docked || !state.fixed || !state.running || !state.pose ||
+      Math.hypot(state.pose.x - base.x, state.pose.y - base.y) > .05) {
+    throw new Error('Laadcontact, meetkwaliteit of voertuigpositie gewijzigd tijdens de meting.');
+  }
+  const origin = JSON.parse(String(snapshot.pos_json)).utm_origin as Origin;
+  // GNSS antenna -> UTM vehicle -> fixed dock. The observer already removed
+  // the full rotated lever arm; a large temporary offset was rejected above.
+  const expected: Origin = { x: origin.x + base.x - runtime.x - dock.x,
+    y: origin.y + base.y - runtime.y - dock.y, z: 0, utm_zone: origin.utm_zone };
+  return { expected, signature, base, dist: Math.hypot(base.x - dock.x, base.y - dock.y),
+    latestDist: Math.hypot(state.pose.x - dock.x, state.pose.y - dock.y) };
 }

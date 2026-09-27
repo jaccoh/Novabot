@@ -109,6 +109,7 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, setReanchorRelocked } from '../../services/frameValidation.js';
+import { frameSnapshotSignature } from '../../services/copyAlignment.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { mapRepo } from '../../db/repositories/index.js';
 import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
@@ -130,11 +131,15 @@ const SN = 'LFIN_REANCHOR_TEST';
 const data = { battery_state: 'CHARGING', recharge_status: 9, rtk_fix_quality: 4, rtk_latitude: 52.1234567, rtk_longitude: 4.7654321, map_position_x: 0.13, map_position_y: -0.52, localization_state: 'RUNNING' };
 const anchor = { x: 0.13, y: -0.52 };
 const handlers = new Set<(data: Record<string, unknown>) => void>();
-let loadedOrigin: unknown;
+let loadedOrigin: { x: number; y: number; z: number; utm_zone: number };
+let runtimeOverride: Record<string, unknown>;
+let rejectWrite = false;
+let measurementCount = 0;
+let corruptAfterWrite = false;
 let snapshotConflict = false;
 let requestCount = 0;
 function snapshot() {
-  return { result: 0, snapshot_consistent: true, csv_files: {
+  return { result: 0, snapshot_consistent: true, x3_csv_files: {}, map_files_b64: {}, map_files_text: {}, csv_files: {
     'map0tocharge_unicom.csv': '0.13,-0.52\n0.2,-0.4\n',
     'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: 1.5 } }),
   }, charging_station_yaml: `charging_pose: [${snapshotConflict ? 2 : anchor.x}, ${anchor.y}, 1.5]`, pos_json: JSON.stringify({ utm_origin: loadedOrigin }) };
@@ -144,22 +149,42 @@ async function tick(ms = 1000) { await vi.advanceTimersByTimeAsync(ms); }
 async function status() { return (await request(server).get(`/api/dashboard/reanchor/${SN}/status`)).body.status; }
 const action = (value: string) => request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: value });
 beforeEach(() => {
-  vi.clearAllMocks(); clearPositionTelemetry(SN); clearFrameUnvalidated(SN); handlers.clear();
-  snapshotConflict = false; requestCount = 0; loadedOrigin = undefined;
+  vi.restoreAllMocks(); vi.clearAllMocks(); clearPositionTelemetry(SN); clearFrameUnvalidated(SN); handlers.clear();
+  snapshotConflict = false; requestCount = 0; loadedOrigin = { x: 620859.4, y: 5776239.5, z: 0, utm_zone: 31 };
+  runtimeOverride = {}; rejectWrite = false; measurementCount = 0; corruptAfterWrite = false;
+  vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
   for (const row of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(row.map_id);
   mapRepo.create({ map_id: SN, mower_sn: SN, map_type: 'unicom', canonical_name: 'map0tocharge_unicom', map_area: JSON.stringify([anchor, { x: 0.2, y: -0.4 }]) });
   vi.mocked(onExtendedResponse).mockImplementation((_sn, h) => { handlers.add(h); });
   vi.mocked(offExtendedResponse).mockImplementation((_sn, h) => { handlers.delete(h); });
   vi.mocked(publishToExtended).mockImplementation((_sn, message) => {
     const [command, raw] = Object.entries(message)[0];
-    const params = raw as Record<string, number | string>;
+    const params = raw as Record<string, any>;
     let result: Record<string, unknown> = snapshot();
+    if (command === 'read_map_files' && requestCount && corruptAfterWrite) result.x3_csv_files = { 'map0_work.csv': 'changed' };
     if (command === 'reanchor_pos') {
       requestCount++;
       expect(params.anchor_x).toBe(anchor.x); expect(params.anchor_y).toBe(anchor.y);
-      // Independent PROJ reference for the fixture's latitude/longitude (UTM 31N), minus anchor.
-      loadedOrigin = { x: 620859.4976856122 - anchor.x, y: 5776239.508624249 - anchor.y, utm_zone: 31 };
-      result = { result: 0, anchor, utm_origin: loadedOrigin };
+      expect(params.protocol).toBe('base-link-reanchor-v1');
+      expect(params).not.toHaveProperty('lat');
+      if (!rejectWrite) loadedOrigin = params.utm_origin;
+      result = { result: rejectWrite ? 1 : 0, protocol: 'base-link-reanchor-v1', anchor, utm_origin: loadedOrigin };
+    }
+    if (command === 'measure_runtime_frame') {
+      measurementCount++;
+      const signature = frameSnapshotSignature(snapshot());
+      setTimeout(() => {
+        const base = { x: anchor.x + (requestCount ? 0 : .145), y: anchor.y, z: 0, yaw: 1.5 };
+        const frame = { x: 0, y: 0, spread_m: .001, base, base_spread_m: .002, yaw_spread_rad: .001,
+          docked: true, northern: true, sample_count: 30, unique_stamps: 30, max_pair_dt_s: 0,
+          // Mower wall clock intentionally differs from the server.
+          capture_started: Date.now() / 1000 + 25, capture_finished: Date.now() / 1000 + 31,
+          ...runtimeOverride };
+        feed({ map_position_x: frame.base?.x ?? base.x, map_position_y: frame.base?.y ?? base.y });
+        for (const h of [...handlers]) h({ measure_runtime_frame_respond: { result: 0, protocol: 'runtime-map-frame-v1',
+          runtime_frame: frame, frame_fingerprint: signature, operation_id: params.operation_id } });
+      }, 6000);
+      return;
     }
     for (const h of [...handlers]) h({ [`${command}_respond`]: { ...result, operation_id: params.operation_id } });
   });
@@ -190,25 +215,71 @@ it('a conflicting mower anchor refuses before writing an origin', async () => {
   expect((await status()).phase).toBe('error'); expect(requestCount).toBe(0);
   expect(isFrameUnvalidated(SN)).toBe(true);
 });
-it('requires eight new GPS packets, a new off-dock relock and eight post-return samples under one lease', async () => {
+it('uses a fresh vehicle observation, one origin write, readback, off-dock relock and a new return measurement', async () => {
   vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
+  const oldX = loadedOrigin.x;
   expect((await action('auto')).status).toBe(200); await tick(1);
   expect((await action('auto')).status).toBe(409);
   expect((await action('continue_dock')).status).toBe(409);
-  // Polling cannot manufacture readings.
   await tick(2000); expect(requestCount).toBe(0);
-  for (let i = 0; i < 8; i++) { feed(); await tick(); }
+  await tick(5000);
   expect(requestCount).toBe(1);
+  expect(loadedOrigin.x).toBeCloseTo(oldX + .145, 8);
   expect((await status()).phase).toBe('needs_drive');
   expect(publishToDevice).not.toHaveBeenCalled();
-  // A post-load report still on the dock cannot count as a relock.
   feed(); await tick(); expect((await status()).relocked).toBe(false);
   feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: -1.52 }); await tick();
   expect((await status()).phase).toBe('needs_position');
   expect((await action('verify')).status).toBe(409);
   feed(); expect((await action('verify')).status).toBe(200); await tick();
   expect(isFrameUnvalidated(SN)).toBe(true);
-  for (let i = 0; i < 8; i++) { feed(); await tick(); }
+  await tick(7000);
   expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
+  expect(measurementCount).toBe(2);
   expect(requestCount).toBe(1); expect(publishToDevice).not.toHaveBeenCalled();
+});
+it('validates a matching settled frame without rewriting its origin', async () => {
+  vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
+  runtimeOverride = { base: { ...anchor, z: 0, yaw: 1.5 } };
+  await action('auto'); await tick(7000);
+  expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
+  expect(requestCount).toBe(0);
+});
+it.each([
+  { x: .06 }, { docked: false }, { base: undefined }, { base_spread_m: .04 },
+  { base: { ...anchor, z: 0, yaw: 2 } }, { capture_started: 100, capture_finished: 101 },
+])('refuses unsafe or old-script measurement before any origin write: %j', async bad => {
+  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); runtimeOverride = bad;
+  await action('auto'); await tick(7000);
+  expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
+  expect(requestCount).toBe(0);
+});
+it('retains the block when the mower rejects the second measurement', async () => {
+  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); rejectWrite = true;
+  await action('auto'); await tick(7000);
+  expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
+  expect(requestCount).toBe(1);
+});
+it.each([{ x: .07 }, { base: { x: anchor.x + .145, y: anchor.y, z: 0, yaw: 1.5 } }])(
+  'does not unlock after return with temporary compensation or 14.5cm dock error: %j', async bad => {
+    vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
+    await action('auto'); await tick(7000);
+    feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: -1.52 }); await tick();
+    feed(); runtimeOverride = bad;
+    await action('verify'); await tick(7000);
+    expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
+  });
+it('does not request a drive after readback shows changed map files', async () => {
+  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); corruptAfterWrite = true;
+  await action('auto'); await tick(7000);
+  expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
+  expect(requestCount).toBe(1); expect(publishToDevice).not.toHaveBeenCalled();
+});
+it('rejects a changed origin after returning to the dock', async () => {
+  vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
+  await action('auto'); await tick(7000);
+  feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: -1.52 }); await tick();
+  loadedOrigin = { ...loadedOrigin, x: loadedOrigin.x + .01 };
+  feed(); await action('verify'); await tick(1000);
+  expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
 });

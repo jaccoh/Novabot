@@ -116,19 +116,54 @@ class MapOperationTest(unittest.TestCase):
                 self.assertFalse(thread.is_alive())
         self.assertEqual([body["operation_id"] for _, body in self.responses], ["first", "second"])
 
-    def test_reanchor_requires_explicit_finite_anchor_before_touching_pos(self):
+    def test_reanchor_remeasures_before_writing_and_rejects_old_payloads(self):
+        origin = {"x": 310532.558502842, "y": 5780319.396453575, "z": 0, "utm_zone": 32}
+        self.pos.write_text(json.dumps({"time_stamp": 12, "utm_origin": origin}))
+        anchor = {"x": .03, "y": .73, "orientation": -1.518}
+        (self.home / "csv_file" / "map_info.json").write_text(json.dumps({"charging_pose": anchor}))
+        self.charger.write_text("charging_pose: [0.03, 0.73, -1.518]")
+        runtime = {"x": 0, "y": 0, "base": {"x": -.0437, "y": .8539, "yaw": -1.50},
+                   "docked": True, "northern": True, "capture_finished": 100}
+        expected = ext._reanchor_origin_from_observation(origin, runtime, anchor)
+        params = {"protocol": "base-link-reanchor-v1", "frame_fingerprint": ext._marker_frame_fingerprint(),
+                  "anchor_x": .03, "anchor_y": .73, "utm_origin": expected}
         original = self.pos.read_bytes()
-        for params in ({"lat": 52, "lng": 6}, {"lat": 52, "lng": 6, "anchor_x": float("nan"), "anchor_y": 0},
-                       {"lat": True, "lng": 6, "anchor_x": 0, "anchor_y": 0}):
+        for kind in ("old", "anchor", "frame", "offset", "moved", "expired", "undocked", "nan", "frame_during_capture"):
+            with self.subTest(kind=kind):
+                p, measurement = dict(params), dict(runtime)
+                if kind == "old": p = {"lat": 52, "lng": 6, "anchor_x": .03, "anchor_y": .73}
+                if kind == "anchor": p["anchor_x"] = 1
+                if kind == "frame": p["frame_fingerprint"] = "wrong"
+                if kind == "offset": measurement["x"] = .59
+                if kind == "moved": measurement["base"] = dict(runtime["base"], x=.2)
+                if kind == "expired": measurement["capture_finished"] = 90
+                if kind == "undocked": measurement["docked"] = False
+                if kind == "nan": p["utm_origin"] = dict(expected, x=float("nan"))
+                with patch.object(ext, "_capture_runtime_frame", return_value=measurement), \
+                     patch.object(ext.time, "time", return_value=101), patch.object(ext, "ros2_run") as reload:
+                    if kind == "frame_during_capture":
+                        with patch.object(ext, "_marker_frame_fingerprint", side_effect=[params["frame_fingerprint"], "changed"]):
+                            ext.handle_reanchor_pos(p, self.respond)
+                    else:
+                        ext.handle_reanchor_pos(p, self.respond)
+                    self.assertEqual(self.responses[-1][1]["result"], 1)
+                    self.assertEqual(self.pos.read_bytes(), original)
+                    reload.assert_not_called()
+        with patch.object(ext, "_capture_runtime_frame", return_value=runtime), \
+             patch.object(ext.time, "time", return_value=101), \
+             patch.object(ext, "ros2_run", return_value=SimpleNamespace(returncode=0, stdout="result=True")):
             ext.handle_reanchor_pos(params, self.respond)
-            self.assertEqual(self.responses[-1][1]["result"], 1)
-        self.assertEqual(self.pos.read_bytes(), original)
-        with patch.object(ext, "ros2_run", return_value=type("Result", (), {"returncode": 0, "stdout": "result=True"})()):
-            ext.handle_reanchor_pos({"lat": 52, "lng": 6, "anchor_x": 1.25, "anchor_y": -2}, self.respond)
         result = self.responses[-1][1]
         self.assertEqual(result["result"], 0)
-        self.assertEqual(result["anchor"], {"x": 1.25, "y": -2})
-        self.assertEqual(result["utm_origin"]["x"], json.loads(self.pos.read_text())["utm_origin"]["x"])
+        self.assertEqual(result["protocol"], "base-link-reanchor-v1")
+        saved = json.loads(self.pos.read_text())
+        self.assertEqual(saved["utm_origin"], expected)
+        self.assertEqual(saved["time_stamp"], 12)
+        gps = saved["wgs84_origin"]
+        zone, x, y = ext._gps_to_utm(gps["latitude"], gps["longitude"])
+        self.assertEqual(zone, 32)
+        self.assertAlmostEqual(x, expected["x"], delta=.002)
+        self.assertAlmostEqual(y, expected["y"], delta=.002)
 
     def test_correlated_sync_requires_pinned_payload_and_checks_hash_before_writing(self):
         params = {"sn": "A", "server": "localhost:3000", "operation_id": "sync-A"}

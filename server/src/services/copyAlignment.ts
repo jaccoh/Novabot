@@ -150,7 +150,7 @@ export function getCopyAlignment(alignmentId: string, targetSn: string, sourceSn
 /** Consume only after native install, runtime verification and the server commit succeed. */
 export function consumeCopyAlignment(alignmentId: string): void { sessions.delete(alignmentId); }
 
-function freshCapture(frame: { capture_started: number; capture_finished: number }, startedAt: number, maximumSpan: number, label: string): void {
+export function freshCapture(frame: { capture_started: number; capture_finished: number }, startedAt: number, maximumSpan: number, label: string): void {
   const span = frame.capture_finished - frame.capture_started;
   const elapsed = (performance.now() - startedAt) / 1000;
   // The command UUID binds a newly collected window to this request. Mower and
@@ -166,7 +166,7 @@ function newCapture(s: Session, side: CopyAlignmentSide, started: number): void 
   if (previous !== undefined && started <= previous) fail('The measurement is stale or repeats an earlier mower capture. Start the dock measurements again.');
 }
 
-function runtimeObservation(value: unknown, startedAt: number): RuntimeFrameObservation {
+export function runtimeObservation(value: unknown, startedAt: number): RuntimeFrameObservation {
   const raw = record(value);
   const fields = ['x', 'y', 'spread_m', 'sample_count', 'unique_stamps', 'max_pair_dt_s', 'capture_started', 'capture_finished'] as const;
   if (fields.some(k => !finite(raw[k]))) return fail('The runtime frame measurement is incomplete.');
@@ -187,7 +187,7 @@ function matchesRuntime(s: Session, side: CopyAlignmentSide, frame: RuntimeFrame
   }
 }
 
-function settledRuntime(frame: RuntimeFrameObservation): void {
+export function settledRuntime(frame: RuntimeFrameObservation): void {
   // In the verified native gps_link path the normal XY position is UTM minus
   // origin. A stable temporary compensation is not eligible for registration:
   // it can disappear on a later drive. Near zero does not prove ground accuracy.

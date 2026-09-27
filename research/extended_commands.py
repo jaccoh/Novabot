@@ -2978,10 +2978,15 @@ def _runtime_frame_result(samples, start_wall, end_wall, origin, marker=False):
         offsets.append((p[0] - (x - origin["x"]), p[1] - (y - origin["y"])))
     x, y = (sum(p[i] for p in offsets) / len(offsets) for i in (0, 1))
     spread = max(math.hypot(p[0] - x, p[1] - y) for p in offsets)
-    _, base_spread, yaw_spread = _measurement_summary(bases)
+    base, base_spread, yaw_spread = _measurement_summary(bases)
     if spread > .02 or base_spread > .03 or yaw_spread > .03:
         raise ValueError("runtime frame or vehicle pose unstable during capture")
+    robot_rows = [r for r in samples.get("/robot_decision/robot_status", [])
+                  if first - 1.5 <= r["received"]]
+    docked = bool(robot_rows) and all(int(r["data"]["merged_work_status"]) == 4 for r in robot_rows)
     return {"x": x, "y": y, "spread_m": spread, "sample_count": len(pairs), "unique_stamps": len(pairs),
+            "base": base, "base_spread_m": base_spread, "yaw_spread_rad": yaw_spread,
+            "docked": docked, "northern": gps["latitude"] >= 0,
             "max_pair_dt_s": 0, "capture_started": first, "capture_finished": last}
 
 
@@ -5024,45 +5029,56 @@ def handle_calibration_drive(params, respond):
     t.start()
 
 
+def _reanchor_origin_from_observation(origin, runtime, anchor):
+    """UTM vehicle point minus fixed dock, using full SE(3) in the runtime sampler."""
+    if runtime.get("docked") is not True or not isinstance(runtime.get("northern"), bool):
+        raise ValueError("fresh charging measurement required")
+    if math.hypot(runtime["x"], runtime["y"]) > .02:
+        raise ValueError("temporary localization offset active; do not reanchor")
+    if abs(_marker_angle_delta(runtime["base"]["yaw"], anchor["orientation"])) > .05:
+        raise ValueError("vehicle heading disagrees with saved dock")
+    # base already has the rotated antenna lever arm removed. Subtract only
+    # the measured near-zero odom/GNSS residual, never a large compensation.
+    return {"x": origin["x"] + runtime["base"]["x"] - runtime["x"] - anchor["x"],
+            "y": origin["y"] + runtime["base"]["y"] - runtime["y"] - anchor["y"],
+            "z": 0, "utm_zone": origin["utm_zone"]}
+
+
 def handle_reanchor_pos(params, respond):
-    """Re-anchor the localization UTM origin to a given GPS — NO lock, NO restart.
+    """Re-measure the docked base_link before writing a server-proposed origin.
 
-    Writes /userdata/pos.json (utm_origin + wgs84_origin) = the supplied GPS
-    (the charger/dock location, captured while docked on RTK Fixed) and then
-    calls /load_utm_origin_info so the RUNNING localization re-reads it live.
-    Unlike the older set_pos_origin this does NOT chmod 0444 (no lock — the
-    stock firmware never locks pos.json, and with a reliable RTK the GPS-fix
-    derive is correct anyway) and does NOT restart the node.
-
-    pos.json's utm_origin is used by loadUtmOriginInfoCallback verbatim (it sets
-    the in-memory origin x/y directly), so we write a PRECISE UTM here, not a
-    coarse seed.
-
-    The origin is shifted by the explicit, server-validated DOCK ANCHOR so
-    a docked mower lands on that anchor, NOT on (0,0). Writing the raw GPS as
-    origin put the charger at (0,0) while the polygons expect it at the anchor,
-    shifting the whole map ~2m (mis-anchor bug, LIVE-fixed 2026-07-01 on .244:
-    docked 2.14 -> 0.06m from anchor). Same approach as the server's
-    generatePosJson (dashboard.ts ~1780: xCharger - anchor.x). ~10cm residual
-    from the antenna lever-arm is corrected by the visual docker.
-
-    After this the localization goes "Not initialized"; drive ~1m on a CLEAN RTK
-    Fixed to re-lock, then the docked position lands on the dock anchor.
-    Full analysis: research/documents/reanchor-polygon-charging-pose-diagnosis.md
-
-    Payload: {"lat": float, "lng": float, "anchor_x": float, "anchor_y": float}
+    No drive, dock, map edit or node restart. Old antenna-only payloads fail
+    closed, including when an old server talks to this updated handler.
     """
     import json as _json, math as _math, os as _os
-    lat = params.get("lat")
-    lng = params.get("lng")
-    anchor_x = params.get("anchor_x")
-    anchor_y = params.get("anchor_y")
-    values = (lat, lng, anchor_x, anchor_y)
-    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not _math.isfinite(v) for v in values):
-        respond("reanchor_pos_respond", {"result": 1, "error": "finite lat/lng and explicit anchor_x/anchor_y required"})
-        return
-    if not (-80 <= lat <= 84 and -180 <= lng < 180):
-        respond("reanchor_pos_respond", {"result": 1, "error": "coordinates outside UTM range"})
+    try:
+        if params.get("protocol") != "base-link-reanchor-v1":
+            raise ValueError("base-link-reanchor-v1 protocol required; antenna-only reanchor retired")
+        expected = params["utm_origin"]
+        anchor_x, anchor_y = params["anchor_x"], params["anchor_y"]
+        values = [anchor_x, anchor_y] + [expected[k] for k in ("x", "y", "z", "utm_zone")]
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not _math.isfinite(v) for v in values):
+            raise ValueError("finite explicit origin and dock anchor required")
+        before = _marker_frame_fingerprint()
+        if params.get("frame_fingerprint") != before:
+            raise ValueError("native frame changed since server measurement")
+        origin = _runtime_origin()
+        with open(os.path.join(_map_home("home0"), "csv_file", "map_info.json")) as fh:
+            anchor = _json.load(fh)["charging_pose"]
+        if math.hypot(anchor_x - anchor["x"], anchor_y - anchor["y"]) > .001:
+            raise ValueError("requested anchor differs from saved dock")
+        runtime = _capture_runtime_frame(origin)
+        measured = _reanchor_origin_from_observation(origin, runtime, anchor)
+        if not 0 <= time.time() - runtime["capture_finished"] <= 2:
+            raise ValueError("dock observation expired before origin write")
+        if (expected["utm_zone"] != measured["utm_zone"] or expected["z"] != 0 or
+                math.hypot(expected["x"] - measured["x"], expected["y"] - measured["y"]) > .02):
+            raise ValueError("dock measurement changed since proposed origin; nothing written")
+        if _runtime_origin() != origin or _marker_frame_fingerprint() != before:
+            raise ValueError("native frame changed during dock measurement")
+        zone, x, y = expected["utm_zone"], expected["x"], expected["y"]
+    except Exception as error:
+        respond("reanchor_pos_respond", {"result": 1, "error": str(error)})
         return
 
     # UTM -> WGS84 inverse (Snyder), so wgs84_origin stays consistent with the
@@ -5070,7 +5086,7 @@ def handle_reanchor_pos(params, respond):
     def _u2g(xx, yy, zn):
         a = 6378137.0; f = 1 / 298.257223563; k0 = 0.9996
         e2 = f * (2 - f); e1 = (1 - _math.sqrt(1 - e2)) / (1 + _math.sqrt(1 - e2))
-        if lat < 0:
+        if not runtime["northern"]:
             yy -= 10000000.0
         xx -= 500000.0; M = yy / k0
         mu = M / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
@@ -5089,9 +5105,6 @@ def handle_reanchor_pos(params, respond):
                 + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * ep2 + 24 * T1 ** 2) * D ** 5 / 120) / _math.cos(phi1)
         return _math.degrees(lat_o), _math.degrees(lon_o)
 
-    zone, x, y = _gps_to_utm(float(lat), float(lng))
-    x -= anchor_x
-    y -= anchor_y
     olat, olon = _u2g(x, y, zone)
     ts = 0
     try:
@@ -5135,7 +5148,7 @@ def handle_reanchor_pos(params, respond):
             log(f"reanchor_pos: utm=({x:.2f},{y:.2f}) anchor=({anchor_x:.2f},{anchor_y:.2f}) zone={zone} attempt={attempt} load rc={r.returncode} out={r.stdout.strip()[:150]}")
             if ok:
                 respond("reanchor_pos_respond", {
-                    "result": 0,
+                    "result": 0, "protocol": "base-link-reanchor-v1",
                     "utm_origin": {"x": x, "y": y, "utm_zone": zone},
                     "wgs84_origin": {"latitude": olat, "longitude": olon},
                     "anchor": {"x": anchor_x, "y": anchor_y},
