@@ -47,6 +47,7 @@ type Session = CopyAlignmentView & {
   frames: Record<CopyAlignmentSide, Frame>;
   sourceGeometry: string;
   sourceDock: { x: number; y: number };
+  lastCaptureFinished: Partial<Record<CopyAlignmentSide, number>>;
 };
 
 const sessions = new Map<string, Session>();
@@ -134,7 +135,7 @@ export async function beginCopyAlignment(targetSn: string, sourceSn: string, can
   const s: Session = {
     alignmentId: randomUUID(), sourceSn, targetSn, canonical, expiresAt: Date.now() + TTL_MS,
     phase: 'source_first', captures: { source: [], target: [] }, frames: { source: source.frame, target: target.frame },
-    sourceGeometry: sourceGeometry(source.snapshot, canonical), sourceDock: snapshotDockPose(source.snapshot)!,
+    sourceGeometry: sourceGeometry(source.snapshot, canonical), sourceDock: snapshotDockPose(source.snapshot)!, lastCaptureFinished: {},
   };
   sessions.set(s.alignmentId, s);
   return getCopyAlignment(s.alignmentId, targetSn, sourceSn, canonical);
@@ -149,6 +150,22 @@ export function getCopyAlignment(alignmentId: string, targetSn: string, sourceSn
 /** Consume only after native install, runtime verification and the server commit succeed. */
 export function consumeCopyAlignment(alignmentId: string): void { sessions.delete(alignmentId); }
 
+function freshCapture(frame: { capture_started: number; capture_finished: number }, startedAt: number, maximumSpan: number, label: string): void {
+  const span = frame.capture_finished - frame.capture_started;
+  const elapsed = (performance.now() - startedAt) / 1000;
+  // The command UUID binds a newly collected window to this request. Mower and
+  // server wall clocks need not agree. All time outside the observed window is
+  // conservatively counted as age, including startup, transport and later awaits.
+  if (span < 5 || span > maximumSpan || span > elapsed + .75 || elapsed - span > 10) {
+    fail(`The ${label} measurement is stale.`);
+  }
+}
+
+function newCapture(s: Session, side: CopyAlignmentSide, started: number): void {
+  const previous = s.lastCaptureFinished[side];
+  if (previous !== undefined && started <= previous) fail('The measurement is stale or repeats an earlier mower capture. Start the dock measurements again.');
+}
+
 function runtimeObservation(value: unknown, startedAt: number): RuntimeFrameObservation {
   const raw = record(value);
   const fields = ['x', 'y', 'spread_m', 'sample_count', 'unique_stamps', 'max_pair_dt_s', 'capture_started', 'capture_finished'] as const;
@@ -159,9 +176,7 @@ function runtimeObservation(value: unknown, startedAt: number): RuntimeFrameObse
       frame.spread_m < 0 || frame.spread_m > RUNTIME_TOLERANCE_M) {
     return fail('The runtime frame measurement is not stable or exactly synchronized.');
   }
-  if (frame.capture_started < startedAt / 1000 - 0.75 || frame.capture_finished > Date.now() / 1000 + 1 ||
-      frame.capture_finished - frame.capture_started < 5 || frame.capture_finished - frame.capture_started > 15 ||
-      Date.now() / 1000 - frame.capture_finished > 10) return fail('The runtime frame measurement is stale.');
+  freshCapture(frame, startedAt, 15, 'runtime frame');
   return frame;
 }
 
@@ -193,13 +208,12 @@ function observation(raw: Record<string, unknown> | null, signature: string, sta
     o.spread_m < 0 || o.spread_m > 0.03 || o.yaw_spread_rad < 0 || o.yaw_spread_rad > 2 * DEGREE || o.max_pair_dt_s < 0 || o.max_pair_dt_s > 0.12) {
     return fail('The marker measurement is not stable or synchronized enough.');
   }
-  // Receiver stamps must cover this command, not a cached camera window.
-  if (o.capture_started < startedAt / 1000 - 0.75 || o.capture_finished > Date.now() / 1000 + 1 ||
-    o.capture_finished - o.capture_started < 5 || o.capture_finished - o.capture_started > 20 || Date.now() / 1000 - o.capture_finished > 10) {
-    return fail('The marker measurement is stale or its receiver clock is not synchronized.');
-  }
+  freshCapture(o, startedAt, 20, 'marker');
   if (Math.hypot(o.marker.x - o.base.x, o.marker.y - o.base.y) > 1.5) return fail('Move closer to the source dock marker before measuring.');
   o.runtime_frame = runtimeObservation(raw.runtime_frame, startedAt);
+  if (o.runtime_frame.capture_started < o.capture_started || o.runtime_frame.capture_finished > o.capture_finished) {
+    return fail('The runtime frame measurement is stale or outside the marker window.');
+  }
   return o;
 }
 
@@ -212,18 +226,20 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
   return withMowerMapOperation(sn, async operation => {
     if (!stablePosition(sn)) return fail('Stop the mower and wait for stable RTK Fixed localization before measuring.');
     matches(s, side, await readMowerMapSnapshot(sn, operation));
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     const raw = await operation.command('measure_dock_marker', {}, 50_000);
     const measured = observation(raw, s.frames[side].signature, startedAt);
     matches(s, side, await readMowerMapSnapshot(sn, operation));
     session(alignmentId);
     if (phase(s) !== expectedPhase) return fail('Another capture completed this step. Refresh the alignment wizard.');
     if (!stablePosition(sn)) return fail('Localization changed during the marker measurement.');
+    freshCapture(measured, startedAt, 20, 'marker');
+    freshCapture(measured.runtime_frame, startedAt, 15, 'runtime frame');
+    newCapture(s, side, measured.capture_started);
     matchesRuntime(s, side, measured.runtime_frame);
     settledRuntime(measured.runtime_frame);
     const previous = s.captures[side][0];
     if (previous) {
-      if (measured.capture_started <= previous.capture_finished) return fail('A repeated capture must contain new camera frames.');
       if (Math.hypot(measured.base.x - previous.base.x, measured.base.y - previous.base.y) < 0.15) return fail('Move at least 15 cm to a second viewpoint before measuring again.');
       if (Math.hypot(measured.marker.x - previous.marker.x, measured.marker.y - previous.marker.y, measured.marker.z - previous.marker.z) > 0.03 ||
         angleDifference(measured.marker.yaw, previous.marker.yaw) > DEGREE) return fail('The repeated marker measurements disagree. Start the dock measurements again.');
@@ -233,6 +249,7 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
       return fail('The marker headings disagree between mowers. Translation alone is not confirmed.');
     }
     s.captures[side].push(measured);
+    s.lastCaptureFinished[side] = measured.capture_finished;
     return view(s);
   });
 }
@@ -267,7 +284,7 @@ export async function validateCopyAlignment(alignmentId: string, input: {
     // command can outlive its map-operation lease when the caller unwinds.
     const results = await Promise.allSettled((['source', 'target'] as const).map(async side => {
       const sn = side === 'source' ? s.sourceSn : s.targetSn;
-      const startedAt = Date.now();
+      const startedAt = performance.now();
       const raw = await operations[side].command('measure_runtime_frame', {}, 25_000);
       assertCurrent();
       if (raw?.result !== 0 && typeof raw?.error === 'string') return fail(`Runtime frame measurement failed: ${raw.error.slice(0, 300)}`);
@@ -290,12 +307,16 @@ export async function validateCopyAlignment(alignmentId: string, input: {
     for (const result of snapshots) if (result.status === 'fulfilled') {
       const { side, frame, snapshot, startedAt } = result.value;
       runtimeObservation(frame, startedAt); // Both remain fresh after all awaits.
+      newCapture(s, side, frame.capture_started);
       matches(s, side, snapshot);
       matchesRuntime(s, side, frame);
       settledRuntime(frame);
       if (side === 'target') targetSnapshot = snapshot;
     }
     if (!targetSnapshot) return fail('The verified target map snapshot is missing.');
+    for (const result of snapshots) if (result.status === 'fulfilled') {
+      s.lastCaptureFinished[result.value.side] = result.value.frame.capture_finished;
+    }
     return targetSnapshot;
   }
 

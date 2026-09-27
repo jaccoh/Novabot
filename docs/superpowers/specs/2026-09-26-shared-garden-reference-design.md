@@ -1,6 +1,6 @@
 # Verplichte dockmeting bij zonekopieën
 
-Status: lokale testimplementatie, nog niet gedeployed. De eerste herhaalmetingen op .100 faalden; het laatste paar voldoet aan de geometrische herhaalgrenzen. Een volledige registratie en kopie tussen beide maaiers zijn nog niet fysiek gevalideerd. Er is geen nauwkeurigheidsgarantie en geen vrijgave voor autonoom maaien op basis van deze proef. Uitvoering wordt gevolgd onder Beads `Novabot-55f`.
+Status: serverbeta en beide Python-scripts zijn op 27 september geplaatst; de eerste live runtimecontroles antwoorden. Een aanvullende correctie voor verschillende systeemklokken wordt gevolgd onder `Novabot-55f.23.3`. De eerste herhaalmetingen op .100 faalden; het laatste paar voldoet aan de geometrische herhaalgrenzen. Een volledige registratie en kopie tussen beide maaiers zijn nog niet fysiek gevalideerd. Er is geen nauwkeurigheidsgarantie en geen vrijgave voor autonoom maaien op basis van deze proef. Uitvoering wordt gevolgd onder Beads `Novabot-55f`.
 
 ## Besluit en afbakening
 
@@ -175,9 +175,17 @@ Bij preview en vlak vóór installatie meet de server beide maaiers opnieuw. Ied
 
 Inkomende native/app-kaartuploads, aliaswijzigingen en MQTT-kaartmetadata mogen tijdens de operatie of een ongevalideerd frame de database niet alsnog wijzigen. De native upload overschrijft dan evenmin de laatste ZIP; commandobevestigingen blijven wel verwerkt worden. Dit sluit de omweg rond de bevestigde overdracht.
 
-De wijzigingen zijn lokaal getest, niet gedeployed. De cameralevensduurwijziging vereist `camera_stream.py` samen met de bijgewerkte `extended_commands.py` op beide maaiers; ook de server moet worden bijgewerkt. Oudere meetresultaten zonder runtime-referentie worden geweigerd. De fysieke dockafwijking van 8,735 cm, marker-headingcontrole en onafhankelijke controle van de gekopieerde grens blijven open; deze codewijziging verplaatst geen dock of kaart om die controles passend te maken.
+De cameralevensduurwijziging vereist `camera_stream.py` samen met de bijgewerkte `extended_commands.py` op beide maaiers en de bijbehorende servercode. Oudere meetresultaten zonder runtime-referentie worden geweigerd. De fysieke dockafwijking, marker-headingcontrole en onafhankelijke controle van de gekopieerde grens blijven open; deze codewijziging verplaatst geen dock of kaart om die controles passend te maken.
 
 Lokale verificatie: TypeScriptcontrole, 174 gerichte servertests, 27 Python-tests en de dashboardbuild geslaagd. De fotoreferentie blijft ook bij een mislukte CSV-installatie behouden; een echte framewijziging maakt haar nog steeds ongeldig. `release-beta.sh` werkt alleen de serverimage bij. De twee Python-bronbestanden moeten daarnaast naar `/root/novabot/scripts/` op beide maaiers, gevolgd door het gericht herladen van hun processen. Controleer eerst de bestaande launcher en eventuele respawnlus, zodat geen dubbele processen ontstaan. Een volledige firmwareflash of herstart van de maaier is hiervoor niet nodig.
+
+### Eerste live installatie en controle
+
+Op 27 september is de juiste serverbeta op de NAS bevestigd aan de aanwezige runtimecontrole en `installZoneCopy`. Beide maaiers kregen alleen de twee Python-scripts. De oude bestanden staan op iedere maaier in `/root/novabot/script-backups/20260927-runtime-frame/`; de bestaande cameraloop herstartte uitsluitend haar Python-kind en extended commands werd eenmaal via de bestaande ROS-launcher gestart. Bestandsinhoud, procesaantallen, camera-HTTP-status en gecorreleerde MQTT-runtimeantwoorden zijn gecontroleerd. De gecontroleerde oorsprong, dock-YAML en CSV-bestanden bleven gelijk. De volledige camerawizard is daarmee nog niet fysiek gevalideerd.
+
+Op het eigen dock gaf .244 een stabiele runtime-offset van 58,90 cm (59 exacte paren, 2,36 mm spreiding). Een afzonderlijke 30-secondenopname bevatte 152 exacte paren; de laatste 12 seconden hadden allemaal Fixed, correctieouderdom maximaal 1,4 s, lokalisatiestatus 200, foutstatus 0 en laadstatus 4. De uit volledige antenne-TF berekende gemiddelde voertuigpositie was `(-0,40421, 1,38961)` tegenover opgeslagen dock `(0,03, 0,73)`: **78,97 cm verschil**. Dat is groter dan de eerdere 8,735 cm; het is actuele lokalisatie, geen verandering van de opgeslagen kaart. Er is geen herankeractie uitgevoerd. .100 gaf op zijn dock een runtime-offset van 0,484 mm met 0,315 mm spreiding.
+
+De livecontrole vond tevens klokverschillen: .244 circa 4,3 s en .100 circa 31,7 s vóór de NAS/Mac, met circa 0,3 s meetonzekerheid. Absolute vergelijking van hun opnamestempels met de serverklok wijst daardoor actuele metingen af. De aanvullende servercorrectie gebruikt de bestaande unieke commandocorrelatie en monotone verstreken tijd. Alle tijd buiten het gemeten opnamevenster, inclusief start, transport en verdere teruglezing, telt conservatief mee als mogelijke ouderdom; meer dan 10 seconden wordt geweigerd. De server controleert dit opnieuw na alle awaits. Hergebruikte of teruglopende vensters worden per maaier geweigerd; de runtimeopname moet binnen het bijbehorende markervenster liggen. De Python-controle op lokaal verse samples blijft gelijk en de apparaatklokken worden niet verzet. Deze extra servercorrectie is lokaal getest en vereist nog een nieuwe beta. Ruwe antwoorden, voor-/na-hashes, klokvergelijking en de onafhankelijke dockopname staan lokaal onder `research/captures/2026-09-27-dock-marker/script-update/`.
 
 ## Vervolgprincipes, afzonderlijk van deze wizard
 
@@ -191,7 +199,7 @@ Een gedeelde RTK-basis is geen voorwaarde voor een gemeten lokale koppeling. De 
 
 - `dashboard/src/components/map/MowerMap.tsx`: verplichte vijfstappenwizard; `dashboard/src/api/client.ts`: alignment-, preview- en copyaanroepen.
 - `server/src/services/copyAlignment.ts`: tijdelijke sessie, vier metingen, herhaalcontrole en omrekening. `server/src/routes/dashboard.ts`: preview/apply accepteren alleen een passende voltooide `alignmentId`, geen clientcoördinaat als alternatief.
-- `research/extended_commands.py`: lokale meetopdracht voor de bestaande ArUco-voorziening; nog niet op de maaiers geplaatst.
+- `research/extended_commands.py`: lokale meetopdracht voor de bestaande ArUco-voorziening en cameravrije runtimecontrole; op beide maaiers geplaatst.
 - `server/src/services/zoneCopy.ts` en `dockChannelRepair.ts`: bestaande dock-, geometrie- en kanaalcontroles blijven de gedeelde basis.
 - `server/src/services/frameValidation.ts` en `dockPhotoReference.ts`: navigatieframe en optionele weergavekalibratie blijven afzonderlijk.
 

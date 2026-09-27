@@ -31,9 +31,14 @@ const snapshot = () => {
 let snapshots: Record<string, ReturnType<typeof snapshot>>;
 let counts: Record<string, number>;
 let override: (raw: Record<string, unknown>) => Record<string, unknown>;
+let elapsedMs: number;
+let clockOffsets: Record<string, number>;
+const advance = (ms: number) => { elapsedMs += ms; vi.setSystemTime(Date.now() + ms); };
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-09-26T10:00:00Z'));
+  elapsedMs = 0; clockOffsets = {};
+  vi.spyOn(performance, 'now').mockImplementation(() => elapsedMs);
   state.online = true; state.stable = true; state.leaseValid = true; state.unvalidated.clear(); state.revisions.clear(); state.command.mockReset();
   counts = {}; override = raw => raw;
   snapshots = { [sourceSn]: snapshot(), [targetSn]: snapshot() };
@@ -44,8 +49,8 @@ beforeEach(() => {
     const i = counts[sn] ?? 0;
     if (cmd === 'measure_dock_marker') counts[sn] = i + 1;
     const x = sn === sourceSn ? 2 : 12, y = sn === sourceSn ? 1 : 21;
-    const started = Date.now() / 1000 + .1;
-    vi.setSystemTime(Date.now() + 8_000);
+    const started = Date.now() / 1000 + (clockOffsets[sn] ?? 0) + .1;
+    advance(8_000);
     const runtime_frame = { x: 0, y: 0, spread_m: .005, sample_count: 30, unique_stamps: 30,
       max_pair_dt_s: 0, capture_started: started, capture_finished: started + 7 };
     if (cmd === 'measure_runtime_frame') return override({ result: 0, protocol: 'runtime-map-frame-v1', runtime_frame,
@@ -57,7 +62,7 @@ beforeEach(() => {
     });
   });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 async function complete() {
   const s = await beginCopyAlignment(targetSn, sourceSn, canonical);
@@ -77,6 +82,15 @@ it('has the same normalized fingerprint as Python BE doubles and ignores only or
   expect(frameSnapshotSignature(s)).toBe(frameSnapshotSignature(snapshot()));
   s.charging_station_yaml = 'charging_pose: [0,0,0]';
   expect(() => frameSnapshotSignature(s)).toThrow('not confirmed');
+});
+
+it.each([[31.7, 4.3], [-35, 10], [60, -60]])('accepts independent mower clock offsets of %ss and %ss through post-install verification', async (sourceOffset, targetOffset) => {
+  clockOffsets = { [sourceSn]: sourceOffset, [targetSn]: targetOffset };
+  const id = await complete();
+  const checked = await validate(id);
+  expect(checked.dockAtB).toEqual({ x: 10.03, y: 20.73 });
+  state.unvalidated.add(targetSn); state.revisions.set(targetSn, 1);
+  await expect(checked.verifyRuntime()).resolves.toEqual(snapshots[targetSn]);
 });
 
 it('requires all four fresh viewpoints, translates the saved source dock rather than the marker, and does not mutate snapshots', async () => {
@@ -137,10 +151,11 @@ it.each([
   ['device error', (r: Record<string, unknown>) => ({ ...r, result: 1, error: 'fresh idle robot required' }), 'fresh idle robot required'],
   ['error result', (r: Record<string, unknown>) => ({ ...r, result: 1 }), 'verified'],
   ['wrong frame', (r: Record<string, unknown>) => ({ ...r, frame_fingerprint: 'other' }), 'different mower frame'],
-  ['cached frames', (r: Record<string, unknown>) => ({ ...r, capture_started: Number(r.capture_started) - 30, capture_finished: Number(r.capture_finished) - 30 }), 'stale'],
-  ['future frames', (r: Record<string, unknown>) => ({ ...r, capture_started: Number(r.capture_started) + 30, capture_finished: Number(r.capture_finished) + 30 }), 'stale'],
+  ['runtime after marker window', (r: Record<string, unknown>) => ({ ...r, capture_started: Number(r.capture_started) - 30, capture_finished: Number(r.capture_finished) - 30 }), 'stale'],
+  ['runtime before marker window', (r: Record<string, unknown>) => ({ ...r, capture_started: Number(r.capture_started) + 30, capture_finished: Number(r.capture_finished) + 30 }), 'stale'],
   ['repeated frames', (r: Record<string, unknown>) => ({ ...r, unique_stamps: 1 }), 'stable'],
   ['too brief', (r: Record<string, unknown>) => ({ ...r, capture_finished: Number(r.capture_started) + 1 }), 'stale'],
+  ['window longer than request', (r: Record<string, unknown>) => ({ ...r, capture_finished: Number(r.capture_started) + 12 }), 'stale'],
   ['position spread', (r: Record<string, unknown>) => ({ ...r, spread_m: .031 }), 'stable'],
   ['yaw spread', (r: Record<string, unknown>) => ({ ...r, yaw_spread_rad: .04 }), 'stable'],
   ['unsynchronized pose', (r: Record<string, unknown>) => ({ ...r, max_pair_dt_s: .13 }), 'synchronized'],
@@ -155,6 +170,49 @@ it.each([
   override = change;
   await expect(captureCopyAlignment(s.alignmentId, 'source')).rejects.toThrow(message);
   expect(getCopyAlignment(s.alignmentId, targetSn, sourceSn, canonical).phase).toBe('source_first');
+});
+
+it.each([0, -30])('rejects repeated or backward marker windows (%ss) even with a newly correlated command', async offset => {
+  clockOffsets[sourceSn] = 31.7;
+  const s = await beginCopyAlignment(targetSn, sourceSn, canonical);
+  const first = (await captureCopyAlignment(s.alignmentId, 'source')).captures.source[0];
+  override = raw => ({ ...raw, capture_started: first.capture_started + offset, capture_finished: first.capture_finished + offset,
+    runtime_frame: { ...(raw.runtime_frame as object), capture_started: first.capture_started + offset, capture_finished: first.capture_finished + offset } });
+  await expect(captureCopyAlignment(s.alignmentId, 'source')).rejects.toThrow('repeats an earlier');
+  expect(getCopyAlignment(s.alignmentId, targetSn, sourceSn, canonical).phase).toBe('source_second');
+});
+
+it.each(['measure_dock_marker', 'measure_runtime_frame'])('rejects a delayed %s response, not just time spent after receiving it', async delayedCommand => {
+  const id = delayedCommand === 'measure_dock_marker'
+    ? (await beginCopyAlignment(targetSn, sourceSn, canonical)).alignmentId : await complete();
+  const original = state.command.getMockImplementation()!;
+  state.command.mockImplementation(async (sn: string, cmd: string, ...args: unknown[]) => {
+    const raw = await original(sn, cmd, ...args);
+    if (cmd === delayedCommand && sn === sourceSn) advance(11_000);
+    return raw;
+  });
+  await expect(delayedCommand === 'measure_dock_marker' ? captureCopyAlignment(id, 'source') : validate(id)).rejects.toThrow('measurement is stale');
+});
+
+it('uses monotonic command time if the server wall clock changes while receiving a response', async () => {
+  const s = await beginCopyAlignment(targetSn, sourceSn, canonical);
+  const original = state.command.getMockImplementation()!;
+  state.command.mockImplementation(async (...args: unknown[]) => {
+    const raw = await original(...args);
+    vi.setSystemTime(Date.now() - 60_000);
+    return raw;
+  });
+  await expect(captureCopyAlignment(s.alignmentId, 'source')).resolves.toHaveProperty('phase', 'source_second');
+});
+
+it('rejects a marker observation that ages while reading its final native snapshot', async () => {
+  const s = await beginCopyAlignment(targetSn, sourceSn, canonical);
+  let reads = 0;
+  vi.mocked(readMowerMapSnapshot).mockImplementation(async sn => {
+    if (++reads === 2) advance(10_000);
+    return structuredClone(snapshots[sn]);
+  });
+  await expect(captureCopyAlignment(s.alignmentId, 'source')).rejects.toThrow('marker measurement is stale');
 });
 
 it('requires a distinct second viewpoint and checks independent marker position and circular heading agreement', async () => {
@@ -304,10 +362,29 @@ it('compares target file mappings by keys and bytes, independent of key insertio
 it('rechecks freshness after waiting for both native file reads', async () => {
   const id = await complete();
   vi.mocked(readMowerMapSnapshot).mockImplementation(async sn => {
-    vi.setSystemTime(Date.now() + 15_000);
+    advance(15_000);
     return structuredClone(snapshots[sn]);
   });
   await expect(validate(id)).rejects.toThrow('runtime frame measurement is stale');
+});
+
+it.each([sourceSn, targetSn])('rejects reusing the preflight runtime window for %s after installation', async replaySn => {
+  const id = await complete();
+  const original = state.command.getMockImplementation()!;
+  let saved: Record<string, unknown>;
+  state.command.mockImplementation(async (sn: string, ...args: unknown[]) => {
+    const raw = await original(sn, ...args);
+    if (sn === replaySn) saved = structuredClone(raw.runtime_frame);
+    return raw;
+  });
+  const checked = await validate(id);
+  state.unvalidated.add(targetSn); state.revisions.set(targetSn, 1);
+  state.command.mockImplementation(async (sn: string, ...args: unknown[]) => {
+    const raw = await original(sn, ...args);
+    return sn === replaySn ? { ...raw, runtime_frame: saved } : raw;
+  });
+  await expect(checked.verifyRuntime()).rejects.toThrow('repeats an earlier');
+  expect(state.unvalidated.has(targetSn)).toBe(true);
 });
 
 it('does not release its caller while a second runtime command is still pending after the first fails', async () => {
