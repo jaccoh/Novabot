@@ -22,6 +22,7 @@ Endpoints:
 
 from typing import Optional, Dict, Any
 import os
+import json
 import signal
 import sys
 import threading
@@ -43,6 +44,7 @@ signal.signal(signal.SIGTERM, _sigterm_handler)
 HTTP_PORT = 8000
 MAX_FPS = 10
 IDLE_TIMEOUT = 300  # seconden zonder viewers -> camera hardware uit (5 min)
+MARKER_USE_TIMEOUT = 30  # bounded protection for the 12s stationary measurement
 
 # Camera topic definities
 CAMERAS = {
@@ -94,9 +96,10 @@ class CameraManager:
     gestopt via de start_camera service.
     """
 
-    def __init__(self, key: str, config: dict):
+    def __init__(self, key: str, config: dict, owner):
         self.key = key
         self.config = config
+        self.owner = owner
         self._lock = threading.Lock()
         self._active = False
         self._activating = False
@@ -114,38 +117,36 @@ class CameraManager:
 
     def activate(self, node):
         """Activeer camera hardware + subscription. Idempotent, non-blocking."""
-        with self._lock:
-            if self._active or self._activating:
-                return
-            self._activating = True
+        with self.owner.lifecycle_lock:
+            if self.key == 'aruco' and self.owner.marker_use_until > time.monotonic():
+                raise RuntimeError("Dock marker measurement is using the detector")
+            with self._lock:
+                if self._active or self._activating:
+                    return
+                self._activating = True
 
         t = threading.Thread(target=self._do_activate, args=(node,), daemon=True)
         t.start()
 
-    def _do_activate(self, node):
+    def _do_activate(self, node, allow_fallback=True):
         """Interne activatie in eigen thread."""
-        # Eerste keer: subscription aanmaken (wordt nooit verwijderd)
-        if not self._subscribed:
-            self._create_subscription(node)
-            self._subscribed = True
-
-        # Camera hardware activeren
-        if self.config['start_service']:
-            print(f"[CAMERA:{self.key}] Camera hardware activeren...", flush=True)
-            self._call_start_camera(node)
-        else:
-            print(f"[CAMERA:{self.key}] Geen start service (altijd actief)", flush=True)
-
-        with self._lock:
-            self._active = True
-            self._activating = False
-
-        # Start watchdog
-        if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
-            self._watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
-            self._watchdog_thread.start()
-
-        print(f"[CAMERA:{self.key}] Actief", flush=True)
+        with self.owner.lifecycle_lock:
+            success = False
+            try:
+                if not self._subscribed:
+                    self._create_subscription(node)
+                    self._subscribed = True
+                success = self._call_start_camera(node, allow_fallback=allow_fallback)
+            except Exception as error:
+                print(f"[CAMERA:{self.key}] Activatie mislukt: {error}", flush=True)
+            finally:
+                with self._lock:
+                    self._active = success
+                    self._activating = False
+            if success and (self._watchdog_thread is None or not self._watchdog_thread.is_alive()):
+                self._watchdog_thread = threading.Thread(target=self._watchdog, daemon=True)
+                self._watchdog_thread.start()
+            return success
 
     def _create_subscription(self, node):
         """Maak ROS2 subscription aan op de gedeelde node.
@@ -199,15 +200,19 @@ class CameraManager:
 
     def viewer_start(self, node):
         """Registreer viewer, activeer indien nodig."""
-        self.active_viewers += 1
-        self.last_viewer_time = time.time()
-        if not self.is_active:
-            self.activate(node)
+        with self.owner.lifecycle_lock:
+            if self.key == 'aruco' and self.owner.marker_use_until > time.monotonic():
+                raise RuntimeError("Dock marker measurement is using the detector")
+            self.active_viewers += 1
+            self.last_viewer_time = time.monotonic()
+            if not self.is_active:
+                self.activate(node)
 
     def viewer_stop(self):
         """Deregistreer viewer."""
-        self.active_viewers = max(0, self.active_viewers - 1)
-        self.last_viewer_time = time.time()
+        with self.owner.lifecycle_lock:
+            self.active_viewers = max(0, self.active_viewers - 1)
+            self.last_viewer_time = time.monotonic()
 
     def _compressed_callback(self, msg):
         """CompressedImage callback — data is al JPEG."""
@@ -266,26 +271,27 @@ class CameraManager:
             if self.frame_count == 0:
                 print(f"[CAMERA:{self.key}] Raw conversie fout: {e}", flush=True)
 
-    def _call_start_camera(self, node):
+    def _call_start_camera(self, node, allow_fallback=True):
         """Activeer camera hardware via ROS service + subprocess fallback."""
         service_path = self.config['start_service']
         if not service_path:
-            return
+            return True
 
         success = False
         try:
             from std_srvs.srv import SetBool
             client = node.create_client(SetBool, service_path)
-            if client.wait_for_service(timeout_sec=5.0):
+            if client.wait_for_service(timeout_sec=5.0 if allow_fallback else 2.0):
                 req = SetBool.Request()
                 req.data = True
                 future = client.call_async(req)
-                deadline = time.time() + 5.0
-                while not future.done() and time.time() < deadline:
+                deadline = time.monotonic() + (5.0 if allow_fallback else 3.0)
+                while not future.done() and time.monotonic() < deadline:
                     time.sleep(0.1)
                 if future.done() and future.result() is not None:
                     print(f"[CAMERA:{self.key}] start_camera (rclpy): success={future.result().success}", flush=True)
-                    success = True
+                    # A negative acknowledgement is a failure, not a transport success.
+                    return bool(future.result().success)
                 else:
                     print(f"[CAMERA:{self.key}] start_camera (rclpy): timeout", flush=True)
             else:
@@ -293,7 +299,7 @@ class CameraManager:
         except Exception as e:
             print(f"[CAMERA:{self.key}] start_camera (rclpy) fout: {e}", flush=True)
 
-        if not success:
+        if allow_fallback and not success:
             try:
                 import subprocess
                 cmd = (
@@ -305,10 +311,12 @@ class CameraManager:
                 result = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=15, env=env)
                 if "success=True" in result.stdout or "success=true" in result.stdout:
                     print(f"[CAMERA:{self.key}] start_camera (subprocess): success", flush=True)
+                    success = True
                 else:
                     print(f"[CAMERA:{self.key}] start_camera (subprocess): {result.stdout.strip()}", flush=True)
             except Exception as e:
                 print(f"[CAMERA:{self.key}] start_camera (subprocess) fout: {e}", flush=True)
+        return success
 
     def _call_stop_camera(self, node):
         """Deactiveer camera hardware via ROS service."""
@@ -334,13 +342,7 @@ class CameraManager:
         """Controleer idle timeout."""
         while True:
             time.sleep(10)
-            if not self.is_active:
-                continue
-            if self.active_viewers == 0 and self.last_viewer_time > 0:
-                idle = time.time() - self.last_viewer_time
-                if idle > IDLE_TIMEOUT:
-                    print(f"[CAMERA:{self.key}] Geen viewers voor {idle:.0f}s, hardware stoppen...", flush=True)
-                    self.deactivate(registry.node)
+            self.owner.stop_if_idle(self)
 
 
 class CameraRegistry:
@@ -351,10 +353,63 @@ class CameraRegistry:
         self.node = None
         self._node_lock = threading.Lock()
         self._spin_thread = None
+        self.lifecycle_lock = threading.RLock()
+        self.marker_use_until = 0.0
 
         # Pre-create managers voor alle geconfigureerde camera's
         for key, config in CAMERAS.items():
-            self.managers[key] = CameraManager(key, config)
+            self.managers[key] = CameraManager(key, config, self)
+
+    def begin_marker_use(self):
+        """Wake front camera and reserve detector control for one bounded capture.
+
+        This coordinates this HTTP server, not independent native ROS consumers.
+        No asynchronous ArUco activation may outlive the capture's final disable.
+        """
+        with self.lifecycle_lock:
+            now = time.monotonic()
+            aruco = self.managers['aruco']
+            if self.marker_use_until > now or aruco.is_active or aruco.active_viewers:
+                raise RuntimeError("ArUco camera is busy; close its preview and wait for it to become idle")
+            front = self.managers['front']
+            if front._activating:
+                raise RuntimeError("Front camera is starting; retry the measurement shortly")
+            front.last_viewer_time = now
+            # Always demand a fresh positive camera-service ACK, even if our cached
+            # manager state says active. Do not invoke the CLI fallback for capture.
+            if not front._do_activate(self.node, allow_fallback=False):
+                raise RuntimeError("Front camera start was not acknowledged")
+            self.marker_use_until = time.monotonic() + MARKER_USE_TIMEOUT
+            return self.marker_use_until
+
+    def end_marker_use(self, expires_at):
+        with self.lifecycle_lock:
+            # A delayed cleanup must not clear a newer measurement's protection.
+            if self.marker_use_until == expires_at:
+                self.marker_use_until = 0.0
+                self.managers['front'].last_viewer_time = time.monotonic()
+
+    def stop_if_idle(self, manager):
+        with self.lifecycle_lock:
+            if not manager.is_active:
+                return
+            now = time.monotonic()
+            if manager.key in ('front', 'front_hd', 'aruco') and self.marker_use_until > now:
+                return
+            peers = [m for m in self.managers.values()
+                     if m.config['start_service'] == manager.config['start_service']]
+            users = peers + ([self.managers['aruco']] if manager.key in ('front', 'front_hd') else [])
+            last_activity = max(m.last_viewer_time for m in users)
+            if (any(m.active_viewers or m._activating for m in users) or
+                    not last_activity or now - last_activity <= IDLE_TIMEOUT):
+                return
+            manager.deactivate(self.node)
+            # Both aliases describe the same hardware. A later request must wake it.
+            for peer in peers:
+                with peer._lock:
+                    peer._active = False
+                with peer.frame_lock:
+                    peer.latest_frame = None
 
     def ensure_node(self):
         """Maak gedeelde ROS node aan (eenmalig, thread-safe)."""
@@ -401,6 +456,43 @@ registry = CameraRegistry()
 
 
 class StreamHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # Only the local stationary marker handler may reserve detector control.
+        if self.path != '/marker-camera-use':
+            self.send_error(404)
+            return
+        if self.client_address[0] not in ('127.0.0.1', '::1'):
+            self.send_error(403)
+            return
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 0 < size <= 256:
+                raise ValueError("invalid request size")
+            request = json.loads(self.rfile.read(size))
+            if not isinstance(request, dict):
+                raise ValueError("camera-use request must be an object")
+            if request.get('action') == 'begin':
+                registry.ensure_node()
+                expires_at = registry.begin_marker_use()
+                result = {'success': True, 'expires_at': expires_at}
+            elif request.get('action') == 'end':
+                registry.end_marker_use(float(request['expires_at']))
+                result = {'success': True}
+            else:
+                raise ValueError("invalid camera-use action")
+        except (ValueError, TypeError, KeyError) as error:
+            self.send_error(400, str(error))
+            return
+        except RuntimeError as error:
+            self.send_error(503, str(error))
+            return
+        body = json.dumps(result).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -422,7 +514,11 @@ class StreamHandler(BaseHTTPRequestHandler):
         """MJPEG stream voor opgegeven camera topic."""
         mgr = registry.get_or_default(topic_key)
         registry.ensure_node()
-        mgr.viewer_start(registry.node)
+        try:
+            mgr.viewer_start(registry.node)
+        except RuntimeError as error:
+            self.send_error(503, str(error))
+            return
         try:
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
@@ -437,6 +533,8 @@ class StreamHandler(BaseHTTPRequestHandler):
             deadline = time.time() + 15.0
             while mgr.get_frame() is None and time.time() < deadline:
                 time.sleep(0.2)
+            if mgr.get_frame() is None:
+                return
 
             while True:
                 frame = mgr.get_frame()
@@ -461,7 +559,11 @@ class StreamHandler(BaseHTTPRequestHandler):
         """Single JPEG frame."""
         mgr = registry.get_or_default(topic_key)
         registry.ensure_node()
-        mgr.viewer_start(registry.node)
+        try:
+            mgr.viewer_start(registry.node)
+        except RuntimeError as error:
+            self.send_error(503, str(error))
+            return
         try:
             deadline = time.time() + 15.0
             while mgr.get_frame() is None and time.time() < deadline:

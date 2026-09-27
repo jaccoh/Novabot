@@ -115,13 +115,37 @@ Een volgende opname ontvangt uitsluitend een circa 451 seconden oude markerpose 
 
 Een gewone frontsnapshot via de bestaande cameraserver wekt de camera. De daaropvolgende opname (`novabot-aruco-target-20260927-camera-wake.json`) levert 60 verse markerbeelden en 101/101 Fixed-berichten met correctieouderdom 0,8–2,6 seconden. Het middelste 12-secondenvenster slaagt met 36 beelden; de detector is daarna bevestigd uitgeschakeld. Het gemeten dockpunt verschilt 1,327 cm XY van het eerdere geldige terugvenster, terwijl de voertuigpose 1,353 cm verschilt. Dit is een herhaling vanuit vrijwel dezelfde standplaats en voldoet niet aan de vereiste 15 cm verplaatsing. De marker-yaw verandert circa 0,995°; de vergelijking met de bron blijft buiten de headinggrens. Er is geen registratie of kaartwijziging toegepast.
 
-De wizard moet de frontcamera zelfstandig kunnen activeren en gedurende de opname beschikbaar houden. Alleen de detector inschakelen laat nu een verborgen afhankelijkheid van een geopende cameraweergave bestaan. De bestaande `front`- en `front_hd`-watchdogs delen dezelfde fysieke camera; ook een oude ArUco-viewer kan een eigen uitschakeltimer hebben. Een oplossing moet die gedeelde gebruikers respecteren en bij cleanup geen frontcamera uitschakelen die een andere gebruiker nodig heeft. Deze lifecycle-correctie is nog niet geïmplementeerd en wordt gevolgd onder `Novabot-55f.23.1`.
+De wizard moet de frontcamera zelfstandig kunnen activeren en gedurende de opname beschikbaar houden. Alleen de detector inschakelen laat een verborgen afhankelijkheid van een geopende cameraweergave bestaan. De bestaande `front`- en `front_hd`-watchdogs delen dezelfde fysieke camera; ook een oude ArUco-viewer kan een eigen uitschakeltimer hebben.
+
+De lokale correctie onder `Novabot-55f.23.1` vraagt de bestaande cameraserver om bevestigde camera-activatie en maximaal 30 seconden bescherming tegen zijn uitschakeltimers. Actieve of nog startende ArUco-weergaven blokkeren een meting; gewone frontvideo blijft beschikbaar. Opruimen geeft alleen de eigen bescherming vrij, na bevestigde detectoruitschakeling, en zet de frontcamera niet uit. Bij ontbrekende uitschakelbevestiging mislukt de meting en verloopt de bescherming vanzelf. Gedeelde camera-aliassen gebruiken gezamenlijke kijkers en meest recente activiteit. Een stream zonder eerste beeld beëindigt na 15 seconden zijn viewerregistratie. Dit coördineert de HTTP-cameraserver, niet alle onafhankelijke native ROS-consumenten.
+
+De camerastart gebruikt maximaal 2 seconden service-discovery en 3 seconden ACK-wacht, zonder CLI-fallback; het HTTP-begin/einde maximaal 6/1 seconde. De serveropdracht heeft 50 seconden ruimte voor camerastart, gezondheid, meetvenster en cleanup. Verse ROS-markerbeelden en alle bestaande meetgrenzen blijven verplicht. De gerichte controles slagen: 7 camera-, 8 marker- en 22 registratiechecks. Deze wijziging vereist zowel `camera_stream.py` als `extended_commands.py`; zij is nog niet op de maaiers geplaatst of vanuit volledig uitgeschakelde camera via de echte wizard gevalideerd.
 
 ### Eerste zijwaartse standplaats
 
 De opname `novabot-aruco-target-20260927-angle-check.json` volgt op een echte zijwaartse verplaatsing. In het vaste middelste venster is de voertuigverplaatsing ten opzichte van de camera-wake-opname **15,083 cm XY**, waarvan **15,003 cm naar rechts** en 1,544 cm achteruit in de eerdere voertuigassen. De heading verandert 8,518°. Beide patronen zijn volledig zichtbaar. Het markercentrum verschilt **1,094 cm XY / 1,727 cm 3D**, maar de berekende marker-yaw verandert **5,619°** en de marker-pitch circa **27,29°**. Dit past bij een onzekere bordoriëntatie, terwijl het centrum veel minder verandert.
 
 Dit is geen geaccepteerde herhaalproef: de validator weigert wegens RTK-correctieouderdom. Alle 102 BestPos-berichten melden Fixed, maar 42 hebben correcties ouder dan 3 seconden, met een maximum van 7,4 seconden. Het middenvenster bevat eveneens te oude correcties. Detectoruitschakeling is bevestigd. De geometrische cijfers zijn uitsluitend diagnostisch; zij bewijzen geen nauwkeurigheid onder gezonde ontvangst. De gewijzigde kijklijn is circa 7° en biedt nog een beperkt ander perspectief. Een extra zijwaartse verplaatsing van ongeveer 20 cm is gevraagd voor de volgende opname.
+
+### Groter zijaanzicht en ontleding van het positieverschil
+
+De daaropvolgende `sidewide`-opname heeft ten opzichte van `camera-wake` een baseline van 43,76 cm, waarvan 40,78 cm zijwaarts, en een headingverandering van 24,463°. Dit is een duidelijk ander gezichtspunt. Een tweede `sidewide-repeat`-opname is zonder verplaatsing gemaakt. Beide vaste middelste vensters worden afgekeurd wegens correctieouderdom; de volledige opnamen bevatten respectievelijk 16/102 en 8/101 berichten met `diff_age > 3 s`, maximaal 4,6 seconden, ondanks uitsluitend Fixed. Beide opnamen eindigen met bevestigde detectoruitschakeling.
+
+Een onafhankelijke ontleding koppelt BestPos en `odom` op exact gelijke tijdstempels en projecteert GNSS met `pyproj` naar EPSG:32632. De verschillen hieronder zijn horizontaal, steeds tegenover het gezonde `camera-wake`-venster:
+
+| Grootheid | Sidewide | Herhaling zonder rijden |
+|---|---:|---:|
+| Markercentrum in native kaartframe | 5,16 cm | 7,45 cm |
+| Verandering effectieve offset `odom_gps_link - GNSS_UTM` | 6,12 cm | 6,14 cm |
+| Markercentrum bij uitsluitend vervangen van odompositie door GNSS | 1,70 cm | 1,38 cm |
+
+Voor sidewide is de vectorontleding `(-3,364; +3,908) = (-2,724; +5,478) + (-0,641; -1,570)` cm. De veranderde verhouding tussen GNSS en de effectieve navigatiepositie verklaart dus het grootste deel van het centrumverschil. Dit is niet rechtstreeks een uitgelezen interne compensatievariabele: de precieze oorzaak, waaronder referentiepunten of filtering, is hiermee niet vastgesteld. Het is ook geen bewijs dat ruwe GNSS fysiek correcter is of geschikt is als vervanging van de navigatiepositie.
+
+Bij de stilstaande herhaling verschuift GNSS 2,55 cm en het native markercentrum 2,57 cm, terwijl het ruwe cameracentrum slechts 0,029 mm verandert. De effectieve offset verandert daarbij circa 0,027 cm. Roll/pitchverandering tussen camera-wake en sidewide verklaart slechts circa 1,06 mm horizontaal. Er spelen dus zowel veranderende GNSS-/odom-verhoudingen tussen standplaatsen als GPS-variatie tijdens stilstand mee; de camera is niet de enige foutbron. De ruwe-GNSS-berekening blijft diagnostiek, met afgekeurde RTK-gezondheid en zonder onafhankelijke grondwaarheid.
+
+De bekende GPS-leverarm zou bij deze rotatie een verandering van `(-7,763; -1,422)` cm geven, tegenover de gemeten `(-2,724; +5,478)` cm. Alleen een ontbrekende of dubbel toegepaste bekende leverarm verklaart dit dus niet. Het reproduceerbare script `novabot-sidewide-frame-analysis.py`, de resultaten en een snapshot van de pure meetvalidator zijn lokaal bij de captures bewaard, inclusief inputhashes en exacte gekoppelde tijdstempels.
+
+De huidige herhaalcontrole blokkeert deze opnamen al. De continuïteit van het navigatieframe tijdens de volledige kopieerprocedure, inclusief terugrijden naar het eigen dock, vraagt afzonderlijke controle; uitsluitend dezelfde oorsprongbestanden bewijzen die niet. Dit wordt gevolgd onder `Novabot-55f.23.2`. Er zijn op basis van deze proeven geen geometrie, meetgrenzen of navigatiecoördinaten gewijzigd.
 
 ## Vervolgprincipes, afzonderlijk van deze wizard
 

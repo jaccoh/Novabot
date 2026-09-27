@@ -35,7 +35,7 @@ beforeEach(() => {
   snapshots = { [sourceSn]: snapshot(), [targetSn]: snapshot() };
   vi.mocked(readMowerMapSnapshot).mockReset().mockImplementation(async sn => structuredClone(snapshots[sn]));
   state.command.mockImplementation(async (sn: string, cmd: string, _params: unknown, timeout: number) => {
-    expect(cmd).toBe('measure_dock_marker'); expect(timeout).toBe(35_000);
+    expect(cmd).toBe('measure_dock_marker'); expect(timeout).toBe(50_000);
     const i = counts[sn] ?? 0; counts[sn] = i + 1;
     const x = sn === sourceSn ? 2 : 12, y = sn === sourceSn ? 1 : 21;
     const started = Date.now() / 1000 + .1;

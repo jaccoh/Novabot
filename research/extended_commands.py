@@ -2917,8 +2917,30 @@ def _marker_measurement_result(samples, start_wall, end_wall):
             "capture_started": first, "capture_finished": last}
 
 
+def _marker_camera_use(action, expires_at=None):
+    """Use the existing camera server's bounded idle protection; no camera stop here."""
+    from urllib.request import Request, urlopen
+    payload = {"action": action}
+    if expires_at is not None:
+        payload["expires_at"] = expires_at
+    request = Request("http://127.0.0.1:8000/marker-camera-use", method="POST",
+                      data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(request, timeout=6 if action == "begin" else 1) as response:
+            result = json.loads(response.read(1024))
+        if result.get("success") is not True:
+            raise ValueError("camera-use request not acknowledged")
+        if action == "begin":
+            until = float(result["expires_at"])
+            if not math.isfinite(until) or not 25 <= until - time.monotonic() <= 30:
+                raise ValueError("camera-use protection missing or expired")
+            return until
+    except Exception as error:
+        raise ValueError("Front camera use unavailable: " + str(error)) from error
+
+
 def _capture_dock_marker():
-    """Detector-only ROS session. Separate context leaves the telemetry executor untouched."""
+    """Stationary camera/detector session; its own ROS context preserves telemetry."""
     import rclpy
     from rclpy.context import Context
     from rclpy.executors import SingleThreadedExecutor
@@ -2935,6 +2957,8 @@ def _capture_dock_marker():
     samples = {}
     client = node.create_client(SetBool, "/enable_aruco_localization")
     toggle_attempted = False
+    detector_disabled = False
+    camera_use_until = None
 
     def toggle(value):
         if not client.wait_for_service(timeout_sec=2):
@@ -2990,12 +3014,17 @@ def _capture_dock_marker():
             executor.spin_once(timeout_sec=.1)
         if not health_ready():
             raise ValueError("fresh idle robot, RTK Fixed and LOC_SUCCESS required")
+        # Enabling ArUco alone does not wake a camera stopped by camera_stream's
+        # idle timer. The local hold also prevents a concurrent watchdog disable.
+        camera_use_until = _marker_camera_use("begin")
         toggle_attempted = True
         toggle(True)
         start_wall = time.time()
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
             executor.spin_once(timeout_sec=.1)
+            if time.monotonic() >= camera_use_until:
+                raise ValueError("camera-use protection expired during marker capture")
             if not health_ready():
                 raise ValueError("localization or idle state lost during marker capture")
         end_wall = time.time()
@@ -3003,16 +3032,23 @@ def _capture_dock_marker():
         deadline = time.monotonic() + .3
         while time.monotonic() < deadline:
             executor.spin_once(timeout_sec=.05)
+        if time.monotonic() + 5 >= camera_use_until:
+            raise ValueError("camera-use protection cannot cover detector cleanup")
         return _marker_measurement_result(samples, start_wall, end_wall)
     finally:
         try:
             if toggle_attempted:
                 toggle(False)
+                detector_disabled = True
         finally:
-            executor.remove_node(node)
-            node.destroy_node()
-            executor.shutdown()
-            context.shutdown()
+            try:
+                if camera_use_until is not None and (not toggle_attempted or detector_disabled):
+                    _marker_camera_use("end", camera_use_until)
+            finally:
+                executor.remove_node(node)
+                node.destroy_node()
+                executor.shutdown()
+                context.shutdown()
 
 
 def handle_measure_dock_marker(params, respond):

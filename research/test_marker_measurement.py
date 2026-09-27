@@ -163,6 +163,13 @@ class MarkerMeasurementTest(unittest.TestCase):
 
     def test_detector_is_disabled_after_capture_failure_without_motion_publishers(self):
         callbacks, toggles, cleanup = {}, [], []
+        camera_events = []
+        reject_disable = False
+        hold_until = 100
+
+        def camera_use(action, expires_at=None):
+            camera_events.append((action, list(toggles)))
+            return hold_until
 
         class Context:
             def shutdown(self):
@@ -174,7 +181,8 @@ class MarkerMeasurementTest(unittest.TestCase):
 
             def call_async(self, request):
                 toggles.append(request.data)
-                return types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(success=True))
+                success = request.data or not reject_disable
+                return types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(success=success))
 
         class Node:
             def create_subscription(self, kind, topic, callback, qos):
@@ -219,11 +227,61 @@ class MarkerMeasurementTest(unittest.TestCase):
                    "rosidl_runtime_py.utilities": ns(get_message=lambda kind: object),
                    "rosidl_runtime_py.convert": ns(message_to_ordereddict=lambda value: value),
                    "std_srvs.srv": ns(SetBool=ns(Request=lambda: ns(data=False)))}
-        with patch.dict("sys.modules", modules), patch.object(commands.time, "time", side_effect=itertools.count(100, .01)), patch.object(commands.time, "monotonic", side_effect=iter(range(100))):
+        with patch.dict("sys.modules", modules), patch.object(commands.time, "time", side_effect=itertools.count(100, .01)), patch.object(commands.time, "monotonic", side_effect=iter(range(100))), patch.object(commands, "_marker_camera_use", side_effect=camera_use):
             with self.assertRaisesRegex(ValueError, "static transform missing"):
                 commands._capture_dock_marker()
         self.assertEqual(toggles, [True, False])
+        self.assertEqual(camera_events, [("begin", []), ("end", [True, False])])
         self.assertEqual(cleanup, ["node", "executor", "context"])
+
+        # A failed disable must keep the server-side protection until its deadline.
+        toggles.clear()
+        cleanup.clear()
+        camera_events.clear()
+        reject_disable = True
+        with patch.dict("sys.modules", modules), patch.object(commands.time, "time", side_effect=itertools.count(100, .01)), patch.object(commands.time, "monotonic", side_effect=iter(range(100))), patch.object(commands, "_marker_camera_use", side_effect=camera_use):
+            with self.assertRaisesRegex(ValueError, "disable.*not acknowledged"):
+                commands._capture_dock_marker()
+        self.assertEqual(toggles, [True, False])
+        self.assertEqual(camera_events, [("begin", [])])
+        self.assertEqual(cleanup, ["node", "executor", "context"])
+
+        # Even healthy telemetry cannot yield a result after camera protection expires.
+        reject_disable = False
+        hold_until = 12
+        toggles.clear()
+        camera_events.clear()
+        with patch.dict("sys.modules", modules), patch.object(commands.time, "time", side_effect=itertools.count(100, .01)), patch.object(commands.time, "monotonic", side_effect=iter(range(100))), patch.object(commands, "_marker_camera_use", side_effect=camera_use):
+            with self.assertRaisesRegex(ValueError, "protection expired"):
+                commands._capture_dock_marker()
+        self.assertEqual(toggles, [True, False])
+        self.assertEqual(camera_events, [("begin", []), ("end", [True, False])])
+
+        # If the camera server is unavailable, do not even enable the detector.
+        toggles.clear()
+        with patch.dict("sys.modules", modules), patch.object(commands.time, "time", side_effect=itertools.count(100, .01)), patch.object(commands.time, "monotonic", side_effect=iter(range(100))), patch.object(commands, "_marker_camera_use", side_effect=ValueError("camera unavailable")):
+            with self.assertRaisesRegex(ValueError, "camera unavailable"):
+                commands._capture_dock_marker()
+        self.assertEqual(toggles, [])
+
+    def test_camera_use_requires_ack_and_current_bounded_protection(self):
+        from urllib.error import URLError
+        from unittest.mock import MagicMock
+        for payload in ({"success": False}, {"success": True, "expires_at": 100},
+                        {"success": True, "expires_at": 131}, {"success": True, "expires_at": float("nan")}):
+            response = MagicMock()
+            response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+            with patch("urllib.request.urlopen", return_value=response), patch.object(commands.time, "monotonic", return_value=100):
+                with self.assertRaises(ValueError):
+                    commands._marker_camera_use("begin")
+        response.__enter__.return_value.read.return_value = b'{"success": true, "expires_at": 130}'
+        with patch("urllib.request.urlopen", return_value=response) as request, patch.object(commands.time, "monotonic", return_value=100):
+            self.assertEqual(commands._marker_camera_use("begin"), 130)
+            self.assertEqual(request.call_args.kwargs["timeout"], 6)
+            self.assertEqual(request.call_args.args[0].full_url, "http://127.0.0.1:8000/marker-camera-use")
+        with patch("urllib.request.urlopen", side_effect=URLError("timeout")):
+            with self.assertRaisesRegex(ValueError, "unavailable"):
+                commands._marker_camera_use("begin")
 
 
 if __name__ == "__main__":

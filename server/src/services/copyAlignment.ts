@@ -168,7 +168,7 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
     if (!stablePosition(sn)) return fail('Stop the mower and wait for stable RTK Fixed localization before measuring.');
     matches(s, side, await readMowerMapSnapshot(sn, operation));
     const startedAt = Date.now();
-    const raw = await operation.command('measure_dock_marker', {}, 35_000);
+    const raw = await operation.command('measure_dock_marker', {}, 50_000);
     const measured = observation(raw, s.frames[side].signature, startedAt);
     matches(s, side, await readMowerMapSnapshot(sn, operation));
     session(alignmentId);
