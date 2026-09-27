@@ -34,9 +34,11 @@ export function loadFrameValidationFromDb(): void {
   }
 }
 
-export function markFrameUnvalidated(sn: string): void {
+export function markFrameUnvalidated(sn: string, options: { preservePhotoDock?: boolean } = {}): void {
   unvalidated.add(sn);
-  deviceSettingsRepo.remove(sn, 'photo_dock_pose');
+  // A CSV-only install blocks navigation while preserving the same origin/dock.
+  // Restores and re-anchors still invalidate the photographic reference by default.
+  if (!options.preservePhotoDock) deviceSettingsRepo.remove(sn, 'photo_dock_pose');
   revisions.set(sn, getFrameRevision(sn) + 1);
   // A restored or re-anchored frame is a new origin: the dock position
   // before it says nothing about the one after.

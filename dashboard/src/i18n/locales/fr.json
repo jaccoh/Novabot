@@ -460,7 +460,7 @@
       "source_second": "Déplacez {{source}} d’environ 20 cm en gardant le même motif en vue. Arrêtez-vous et mesurez à nouveau pour vérifier la répétabilité.",
       "target_first": "Éloignez {{source}}. Conduisez la tondeuse cible {{target}} devant la station de {{source}}, avec le même motif en vue. Ne vous amarrez pas. Arrêtez-vous et mesurez.",
       "target_second": "Déplacez {{target}} d’environ 20 cm devant cette même station de {{source}}. Gardez le motif en vue, arrêtez-vous et mesurez à nouveau.",
-      "ready": "Les mesures sont terminées. Replacez {{target}} sur sa PROPRE station avec contact de charge. Vérifiez ensuite l’aperçu et appliquez la copie."
+      "ready": "Les mesures sont terminées. Ramenez {{target}} sur sa PROPRE station jusqu’au contact de charge. Gardez aussi {{source}} immobile avec une bonne réception RTK. Vérifiez l’aperçu et appliquez la copie. Les deux tondeuses doivent rester immobiles jusqu’à confirmation de l’installation."
     },
     "copyAlignmentManual": "Conduisez vous-même les tondeuses avec le joystick existant. Cet assistant n’envoie aucune commande de déplacement.",
     "copyAlignmentConfirm": "Je confirme que la tondeuse regarde la station physique de {{source}}. Le motif seul n’identifie pas la station.",

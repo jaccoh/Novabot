@@ -2,6 +2,14 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-09-27 - map uploads and aliases respect pending map validation
+
+- `uploadEquipmentMap`, `fragmentUploadEquipmentMap` and `updateEquipmentMapAlias`
+  return HTTP 409 while the mower has an active map operation or an unvalidated
+  frame. Uploads cannot overwrite database rows or the latest ZIP before a
+  zone copy has been confirmed on the mower. Rejected temporary uploads are
+  removed; fragmented uploads recheck the guard after flushing the stream.
+
 ## 2026-09-19 — uploadEquipmentMap: an obstacle keeps its name
 
 - `matchesParsedArea` matched obstacles and unicoms by `map_name`, so a named

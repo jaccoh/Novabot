@@ -10,6 +10,8 @@ import { deriveCanonicalName, isCanonicalMapName } from '../../db/repositories/m
 import { authMiddleware } from '../../middleware/auth.js';
 import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
 import { parseMapZip, type LocalPoint, type GpsPoint, polygonArea, gpsToLocal } from '../../mqtt/mapConverter.js';
+import { isMowerMapOperationBusy } from '../../services/mowerMapOperation.js';
+import { isFrameUnvalidated } from '../../services/frameValidation.js';
 
 export const mapRouter = Router();
 
@@ -21,6 +23,15 @@ fs.mkdirSync(TRACKS_PATH, { recursive: true });
 
 // multer stores fragment files in the maps storage dir
 const upload = multer({ dest: STORAGE_PATH });
+
+/** Passive uploads must not commit a device operation before its verified readback. */
+function rejectLockedMapMutation(sn: string, req: Request, res: Response): boolean {
+  if (!isMowerMapOperationBusy(sn) && !isFrameUnvalidated(sn)) return false;
+  const files = Array.isArray(req.files) ? req.files : req.file ? [req.file] : [];
+  for (const file of files) fs.rmSync(file.path, { force: true });
+  res.status(409).json(fail('Map operation in progress or frame not validated', 409));
+  return true;
+}
 
 function csvBaseName(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -507,6 +518,7 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
 
   const equipment = equipmentRepo.findByMowerSn(sn);
   if (!equipment || equipment.user_id !== req.userId) { res.json(fail('Equipment not found', 404)); return; }
+  if (rejectLockedMapMutation(sn, req, res)) return;
 
   // App stuurt mapArea als GPS [{lat,lng}] — converteer naar lokaal [{x,y}] vóór opslag
   let localMapArea = mapArea ?? null;
@@ -620,6 +632,12 @@ mapRouter.post('/fragmentUploadEquipmentMap', authMiddleware, upload.single('fil
       out.on('error', reject);
       out.end();
     });
+    // A map operation can start while the fragment stream is being flushed.
+    if (rejectLockedMapMutation(sn, req, res)) {
+      fs.rmSync(finalPath, { force: true });
+      mapUploadRepo.deleteById(uploadId);
+      return;
+    }
 
     // Dedup op (sn, canonical_name) voor re-uploads vanuit Novabot app.
     const canonical = deriveCanonicalName({ file_name: finalFileName, map_name: mapName ?? null, map_type: 'work' });
@@ -714,6 +732,8 @@ mapRouter.post('/updateEquipmentMapAlias', authMiddleware, (req: AuthRequest, re
     return;
   }
 
+  const row = mapRepo.findById(resolvedMapId);
+  if (row && rejectLockedMapMutation(row.mower_sn, req, res)) return;
   mapRepo.updateName(resolvedMapId, newName ?? '');
   console.log(`[MAP] updateEquipmentMapAlias: ${resolvedMapId} → "${newName}"`);
   res.json(ok());
@@ -765,6 +785,7 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
     res.json(ok(null));
     return;
   }
+  if (rejectLockedMapMutation(sn, req, res)) return;
 
   const file = uploadedFile;
 

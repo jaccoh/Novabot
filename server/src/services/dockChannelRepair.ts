@@ -20,6 +20,14 @@ import { validateMapRasters } from '../maps/validateGrid.js';
 const DOCK_CHANNEL = /^map\d+tocharge_unicom\.csv$/;
 type Snapshot = Record<string, unknown>;
 type Pose = NonNullable<ReturnType<typeof snapshotDockPose>>;
+export interface ConfirmedCopyDocks {
+  source: Pose;
+  target: Pose;
+  sourceSnapshot: Snapshot;
+  targetSnapshot: Snapshot;
+  sourceOperation: MowerMapOperation;
+  targetOperation: MowerMapOperation;
+}
 
 function ready(sn: string, pose?: Pose) {
   const live = stablePosition(sn, { docked: true });
@@ -63,7 +71,7 @@ async function readDock(sn: string, operation: MowerMapOperation) {
 }
 
 /** The dashboard copy flow never derives either dock from an unverified channel or cached robot pose. */
-export async function withConfirmedCopyDocks<T>(target: string, source: string, run: (docks: { source: Pose; target: Pose; sourceSnapshot: Snapshot; targetSnapshot: Snapshot }) => T | Promise<T>, requireDocked = true): Promise<T> {
+export async function withConfirmedCopyDocks<T>(target: string, source: string, run: (docks: ConfirmedCopyDocks) => T | Promise<T>, requireDocked = true): Promise<T> {
   if (target === source) throw new Error('Kies een andere bronmaaier.');
   return withMowerMapOperation(target, targetOp => withMowerMapOperation(source, async sourceOp => {
     if (requireDocked) ready(target);
@@ -75,7 +83,7 @@ export async function withConfirmedCopyDocks<T>(target: string, source: string, 
     const hasChannels = Object.keys(csvOf(b.snapshot)).some(n => DOCK_CHANNEL.test(n));
     if (hasChannels && (!snapshotAnchorMatches(b.snapshot, b.pose) || !snapshotAnchorMatches({ ...b.snapshot, csv_files: b.snapshot.x3_csv_files }, b.pose))) throw new Error('Herstel eerst het bestaande dockkanaal van de doelmaaier.');
     if (requireDocked) ready(target, b.pose);
-    return run({ source: a.pose, target: b.pose, sourceSnapshot: a.snapshot!, targetSnapshot: b.snapshot! });
+    return run({ source: a.pose, target: b.pose, sourceSnapshot: a.snapshot!, targetSnapshot: b.snapshot!, sourceOperation: sourceOp, targetOperation: targetOp });
   }));
 }
 
@@ -109,7 +117,7 @@ export function planDockChannelRepair(snapshot: Snapshot) {
   return { pose, channels, csvFiles, secondaryMetadataChanged: x3['map_info.json'] !== csv['map_info.json'] };
 }
 
-async function csvZip(files: Record<string, string>): Promise<Buffer> {
+export async function csvZip(files: Record<string, string>): Promise<Buffer> {
   const archive = archiver('zip', { zlib: { level: 6 } });
   const chunks: Buffer[] = [];
   const result = new Promise<Buffer>((resolve, reject) => {

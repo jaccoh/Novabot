@@ -460,7 +460,7 @@
       "source_second": "Bewege {{source}} etwa 20 cm und halte dasselbe Dockmuster im Bild. Halte an und miss erneut, um die Wiederholbarkeit zu prüfen.",
       "target_first": "Fahre {{source}} aus dem Weg. Fahre den Zielmäher {{target}} vor das Dock von {{source}}, mit demselben Muster im Bild. Nicht andocken. Anhalten und messen.",
       "target_second": "Bewege {{target}} etwa 20 cm vor demselben Dock von {{source}}. Halte das Muster im Bild, halte an und miss erneut.",
-      "ready": "Die Messungen sind vollständig. Stelle {{target}} mit Ladekontakt auf sein EIGENES Dock zurück. Prüfe danach die Vorschau und übertrage die Kopie."
+      "ready": "Die Messungen sind vollständig. Stelle {{target}} zurück auf seine EIGENE Ladestation, bis Ladekontakt besteht. Lass auch {{source}} bei gutem RTK-Empfang stillstehen. Prüfe die Vorschau und übertrage die Kopie. Beide Mäher müssen stillstehen, bis die Installation bestätigt ist."
     },
     "copyAlignmentManual": "Steuere die Mäher selbst mit dem vorhandenen Joystick. Dieser Assistent sendet keine Fahrbefehle.",
     "copyAlignmentConfirm": "Ich bestätige, dass der Mäher auf das echte Dock von {{source}} blickt. Das Muster allein identifiziert die Station nicht.",

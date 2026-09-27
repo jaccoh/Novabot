@@ -94,7 +94,7 @@ export async function installVerifiedMapZip(
 ): Promise<Record<string, unknown> | null> {
   const { bytes, expectedCsv, before, anchor } = input;
   if (!freshPositionState(sn).docked || !isDeviceOnline(sn)) { apply.fail('sync_failed'); return null; }
-  markFrameUnvalidated(sn); // survives server failure while the device is replacing files
+  markFrameUnvalidated(sn, { preservePhotoDock: true }); // CSV-only; origin and dock must stay unchanged.
   syncSnapshots.set(operation.id, { sn, bytes });
   try {
     const sync = await operation.command('sync_map', {
@@ -104,7 +104,7 @@ export async function installVerifiedMapZip(
     if (!sync || sync.result !== 0 || sync.restart === false || sync.auto_recharge_restart === false) { apply.fail(sync ? 'sync_failed' : 'sync_timeout'); return null; }
     apply.phase('regenerating');
     const regen = await regeneratePerMapFiles(sn, operation);
-    if (regen !== 'ok') { markFrameUnvalidated(sn); apply.fail(regen); return null; }
+    if (regen !== 'ok') { markFrameUnvalidated(sn, { preservePhotoDock: true }); apply.fail(regen); return null; }
     apply.phase('settling');
     if (await waitForPlannerBack(sn) === 'timeout') { apply.fail('planner_timeout'); return null; }
     const after = await readMowerMapSnapshot(sn, operation);

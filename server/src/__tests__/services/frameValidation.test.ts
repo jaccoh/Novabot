@@ -32,6 +32,17 @@ describe('frameValidation', () => {
     loadFrameValidationFromDb();
     expect(isFrameUnvalidated(SN)).toBe(true);
   });
+
+  it('preserves the photo reference for CSV-only installs, but invalidates it for frame changes', () => {
+    const photo = '{"x":1,"y":2}';
+    deviceSettingsRepo.upsert(SN, 'photo_dock_pose', photo);
+    markFrameUnvalidated(SN, { preservePhotoDock: true });
+    loadFrameValidationFromDb();
+    expect(isFrameUnvalidated(SN)).toBe(true);
+    expect(deviceSettingsRepo.listAll().find(r => r.sn === SN && r.key === 'photo_dock_pose')?.value).toBe(photo);
+    markFrameUnvalidated(SN);
+    expect(deviceSettingsRepo.listAll().some(r => r.sn === SN && r.key === 'photo_dock_pose')).toBe(false);
+  });
 });
 
 // Verify-first na een restore: staat de maaier gedockt met RTK Fixed op het

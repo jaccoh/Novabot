@@ -30,8 +30,8 @@ import { emitDeviceBound, emitDevicePaired } from '../dashboard/socketHandler.js
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
 import { isSnBanned, isDeviceOnline } from './broker.js';
-import { isFrameNavBlocked, markFrameUnvalidated } from '../services/frameValidation.js';
-import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, type MowerMapOperation } from '../services/mowerMapOperation.js';
+import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated } from '../services/frameValidation.js';
+import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, isMowerMapOperationBusy, type MowerMapOperation } from '../services/mowerMapOperation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
 import { isOpenNovaMower } from '../services/mowerFileCapability.js';
@@ -1097,6 +1097,8 @@ function handleMapListResponse(sn: string, data: unknown): void {
  * - Of: { map_id, map_name, map_type, outline: [[lat,lng], ...] }
  */
 function handleMapOutlineResponse(sn: string, data: unknown): void {
+  // Correlated operation responses still flow; passive reports cannot commit its maps.
+  if (isMowerMapOperationBusy(sn) || isFrameUnvalidated(sn)) return;
   console.log(`${TAG} Ontvangen kaart-outline van ${sn}:`, JSON.stringify(data)?.slice(0, 500));
 
   if (!data || typeof data !== 'object') return;
@@ -1216,6 +1218,7 @@ function parsePositionArray(arr: unknown[]): { lat: number; lng: number }[] {
  * Sla kaart metadata op (naam, type) zonder polygoon data.
  */
 function upsertMapMetadata(sn: string, mapId: string, meta: Record<string, unknown>): void {
+  if (isMowerMapOperationBusy(sn) || isFrameUnvalidated(sn)) return;
   const mapName = String(meta.map_name ?? meta.mapName ?? meta.map_type ?? '');
 
   // Alleen inserteren als de kaart nog niet bestaat (create uses INSERT, not INSERT OR REPLACE)

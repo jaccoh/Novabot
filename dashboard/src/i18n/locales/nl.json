@@ -563,7 +563,7 @@
       "source_second": "Verplaats {{source}} ongeveer 20 cm en houd hetzelfde dockpatroon in beeld. Laat hem stilstaan en meet opnieuw om de herhaalbaarheid te controleren.",
       "target_first": "Rijd {{source}} weg. Rijd doelmaaier {{target}} vóór het dock van {{source}}, met hetzelfde patroon in beeld. Niet docken. Laat hem stilstaan en meet.",
       "target_second": "Verplaats {{target}} ongeveer 20 cm vóór datzelfde dock van {{source}}. Houd het patroon in beeld, laat de maaier stilstaan en meet opnieuw.",
-      "ready": "De metingen zijn compleet. Zet {{target}} terug op zijn EIGEN dock tot hij laadcontact heeft. Controleer daarna de voorvertoning en pas de kopie toe."
+      "ready": "De metingen zijn compleet. Zet {{target}} terug op zijn EIGEN dock tot hij laadcontact heeft. Laat ook {{source}} stilstaan met goede RTK-ontvangst. Controleer de voorvertoning en pas de kopie toe. Beide maaiers moeten blijven stilstaan totdat de installatie is bevestigd."
     },
     "copyAlignmentManual": "Bedien de maaiers zelf met de bestaande joystick. Deze wizard stuurt geen rijcommando’s.",
     "copyAlignmentConfirm": "Ik bevestig dat de maaier naar het fysieke dock van {{source}} kijkt. Het patroon alleen identificeert het station niet.",

@@ -13,7 +13,7 @@
  * test runs the upload TWICE precisely because the single-upload "fix" passed
  * while the real repro (mow → mow) still failed.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import { execSync } from 'node:child_process';
@@ -26,7 +26,10 @@ const STORAGE = fs.mkdtempSync(path.join(os.tmpdir(), 'novabot-maptest-'));
 process.env.STORAGE_PATH = STORAGE;
 
 const { mapRouter } = await import('../../routes/map.js');
-const { mapRepo } = await import('../../../db/repositories/index.js');
+const { mapRepo, userRepo, equipmentRepo } = await import('../../../db/repositories/index.js');
+const { signToken } = await import('../../../middleware/auth.js');
+const { withMowerMapOperation } = await import('../../../services/mowerMapOperation.js');
+const { markFrameUnvalidated, clearFrameUnvalidated } = await import('../../../services/frameValidation.js');
 
 const SN = 'LFIN2231000367';
 const SQUARE = '0,0\n2,0\n2,2\n0,2\n';
@@ -70,6 +73,7 @@ async function reuploadFromMower(): Promise<void> {
 
 describe('map rename survives repeated mowing / re-upload (#66)', () => {
   beforeEach(() => {
+    clearFrameUnvalidated(SN);
     // Start from the renamed state the user reported.
     mapRepo.deleteByMowerSn?.(SN);
     const seed = (slot: string, alias: string) => mapRepo.upsert({
@@ -85,6 +89,7 @@ describe('map rename survives repeated mowing / re-upload (#66)', () => {
       map_area: null, map_max_min: null, file_name: 'map0_0_obstacle.csv', file_size: 0, map_type: 'obstacle',
     });
   });
+  afterEach(() => { clearFrameUnvalidated(SN); vi.restoreAllMocks(); });
 
   it('keeps aliases + canonical slots after the FIRST re-upload', async () => {
     await reuploadFromMower();
@@ -100,5 +105,57 @@ describe('map rename survives repeated mowing / re-upload (#66)', () => {
     // No duplicate work rows crept in.
     const workRows = mapRepo.findByMowerSn(SN).filter(r => r.map_type === 'work');
     expect(workRows).toHaveLength(3);
+  });
+
+  it.each(['busy', 'unvalidated'])('rejects passive uploads and app mutations while %s without changing rows or the latest ZIP', async state => {
+    userRepo.create('map-owner', 'map-owner@example.test', 'unused', 'Map owner');
+    equipmentRepo.create({ equipment_id: 'map-equipment', user_id: 'map-owner', mower_sn: SN, charger_sn: null });
+    const token = signToken({ userId: 'map-owner', email: 'map-owner@example.test' });
+    const latest = path.join(STORAGE, 'maps', `${SN}_latest.zip`);
+    fs.writeFileSync(latest, 'previous verified ZIP');
+    const before = mapRepo.findByMowerSn(SN);
+    const files = fs.readdirSync(path.dirname(latest)).sort();
+    const check = async () => {
+      const native = await request(app).post('/api/nova-file-server/map/uploadEquipmentMap')
+        .field('sn', SN).attach('file', buildMapZip(), `${SN}.zip`);
+      expect(native.status).toBe(409);
+      const fragment = await request(app).post('/api/nova-file-server/map/fragmentUploadEquipmentMap')
+        .set('Authorization', token).field('sn', SN).field('uploadId', 'blocked-upload')
+        .field('mapName', 'map4').attach('file', Buffer.from(SQUARE), 'map4_work.csv');
+      expect(fragment.status).toBe(409);
+      const alias = await request(app).post('/api/nova-file-server/map/updateEquipmentMapAlias')
+        .set('Authorization', token).send({ mapId: 'map0-id', sn: 'unlocked-other-mower', mapName: 'Changed' });
+      expect(alias.status).toBe(409);
+      expect(mapRepo.findByMowerSn(SN)).toEqual(before);
+      expect(fs.readFileSync(latest, 'utf8')).toBe('previous verified ZIP');
+      expect(fs.readdirSync(path.dirname(latest)).sort()).toEqual(files);
+    };
+    if (state === 'busy') await withMowerMapOperation(SN, check);
+    else { markFrameUnvalidated(SN); await check(); }
+  });
+
+  it('rechecks the frame after asynchronous fragment assembly before inserting a map', async () => {
+    userRepo.create('map-owner', 'map-owner@example.test', 'unused', 'Map owner');
+    equipmentRepo.create({ equipment_id: 'map-equipment', user_id: 'map-owner', mower_sn: SN, charger_sn: null });
+    const token = signToken({ userId: 'map-owner', email: 'map-owner@example.test' });
+    const before = mapRepo.findByMowerSn(SN);
+    const createStream = fs.createWriteStream;
+    let assembling = false;
+    vi.spyOn(fs, 'createWriteStream').mockImplementation((...args) => {
+      const stream = createStream(...args);
+      if (String(args[0]).endsWith('finishing-upload.bin')) {
+        assembling = true;
+        stream.prependOnceListener('finish', () => markFrameUnvalidated(SN));
+      }
+      return stream;
+    });
+    const res = await request(app).post('/api/nova-file-server/map/fragmentUploadEquipmentMap')
+      .set('Authorization', token).field('sn', SN).field('uploadId', 'finishing-upload')
+      .field('mapName', 'map4').field('chunkIndex', '0').field('chunksTotal', '1')
+      .attach('file', Buffer.from(SQUARE), 'map4_work.csv');
+    expect(res.status).toBe(409);
+    expect(assembling).toBe(true);
+    expect(mapRepo.findByMowerSn(SN)).toEqual(before);
+    expect(fs.readdirSync(path.join(STORAGE, 'maps')).some(n => n.startsWith('finishing-upload'))).toBe(false);
   });
 });

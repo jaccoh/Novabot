@@ -327,8 +327,8 @@ function bounds(pts: XY[]): PersistResult['mapMaxMin'] {
 
 /**
  * Schrijft de kopie als DB-rijen (work + obstakels + geaccepteerde kanalen) in
- * één transactie, precies zoals de tekenroute dat doet (source 'drawn', geen
- * file_name). Pushen naar de maaier doet de route (autoPushMapsInBackground).
+ * één transactie (source 'drawn', geen file_name), nadat installZoneCopy de
+ * native installatie en runtime-registratie heeft bevestigd.
  */
 export function persistZoneCopy(
   targetSn: string,
@@ -337,7 +337,7 @@ export function persistZoneCopy(
 ): PersistResult {
   if (!plan.ok) throw new Error(`persistZoneCopy: plan is refused (${plan.refusal})`);
   const ts = Date.now();
-  const mapId = `copy_${plan.canonical}_${ts}`;
+  const mapId = `copy_${targetSn}_${plan.canonical}_${ts}`;
   const create = (canonical: string, mapType: 'work' | 'obstacle' | 'unicom', points: XY[], alias: string | null) => {
     // (mower_sn, canonical_name) is UNIQUE: een achtergebleven rij met deze
     // naam (dockkanaal, of een obstakel van een eerder gewiste zone) wordt
@@ -346,7 +346,7 @@ export function persistZoneCopy(
     if (old) mapRepo.deleteByIdAndMower(old.map_id, targetSn);
     mapRepo.create({
       source: 'drawn',
-      map_id: mapType === 'work' ? mapId : `copy_${canonical}_${ts}`,
+      map_id: mapType === 'work' ? mapId : `copy_${targetSn}_${canonical}_${ts}`,
       mower_sn: targetSn,
       map_name: alias,
       map_type: mapType,

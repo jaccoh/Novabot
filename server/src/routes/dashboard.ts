@@ -69,7 +69,8 @@ import { repairDockChannels, withConfirmedCopyDocks } from '../services/dockChan
 import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
 import { positionTelemetry, freshPositionState, stablePosition, POSITION_MAX_AGE_MS } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
-import { previewZoneCopy, persistZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
+import { previewZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
+import { installZoneCopy } from '../services/installZoneCopy.js';
 import { beginCopyAlignment, captureCopyAlignment, getCopyAlignment, validateCopyAlignment, consumeCopyAlignment } from '../services/copyAlignment.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
@@ -2013,8 +2014,8 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request,
     res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
   }
   try {
-    await withConfirmedCopyDocks(sn, source, docks => {
-      const alignment = validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks });
+    await withConfirmedCopyDocks(sn, source, async docks => {
+      const alignment = await validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks });
       const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       res.json({
@@ -2044,8 +2045,9 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
   }
   // Altijd server-side herberekenen: de client stuurt alleen de correspondentie, nooit geometrie.
   try {
-    const copied = await withConfirmedCopyDocks(sn, source, docks => {
-      const alignment = validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks });
+    await withConfirmedCopyDocks(sn, source, async docks => {
+      const alignment = getCopyAlignment(body.alignmentId, sn, source, String(body.canonical ?? ''));
+      if (!alignment.dockAtB) throw new Error('Meet het bronlaadstation eerst tweemaal met iedere maaier.');
       const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       if (!r.plan.ok) {
@@ -2055,7 +2057,8 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
       const typedName = (body.name ?? '').trim();
       const alias = typedName || (r.sourceAlias ? `${r.sourceAlias} (${T`kopie`})` : null);
       const acceptChannel = body.acceptChannel !== false;
-      const saved = persistZoneCopy(sn, r.plan, { alias, acceptChannel, dockOrientation: docks.target.orientation });
+      const saved = await installZoneCopy(sn, r.plan, { alias, acceptChannel }, docks,
+        () => validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks }));
       consumeCopyAlignment(body.alignmentId);
       res.json({
         ok: true,
@@ -2073,9 +2076,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
         needsChannel: acceptChannel ? r.plan.needsChannel : !r.plan.connectedVia,
         warnings: r.plan.warnings,
       });
-      return true;
     });
-    if (copied) void autoPushMapsInBackground(sn);
   } catch (error) {
     if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: error instanceof Error ? error.message : String(error) });
   }

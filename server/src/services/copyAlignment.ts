@@ -4,12 +4,22 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { getFrameRevision, isFrameUnvalidated } from './frameValidation.js';
 import { stablePosition } from './positionTelemetry.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
-import { readMowerMapSnapshot, withMowerMapOperation } from './mowerMapOperation.js';
+import { assertMowerMapOperation, readMowerMapSnapshot, withMowerMapOperation, type MowerMapOperation } from './mowerMapOperation.js';
 
 type Snapshot = Record<string, unknown> | null;
 type Pose = { x: number; y: number; z: number; yaw: number };
 export type CopyAlignmentSide = 'source' | 'target';
 export type CopyAlignmentPhase = 'source_first' | 'source_second' | 'target_first' | 'target_second' | 'ready';
+export interface RuntimeFrameObservation {
+  x: number;
+  y: number;
+  spread_m: number;
+  sample_count: number;
+  unique_stamps: number;
+  max_pair_dt_s: number;
+  capture_started: number;
+  capture_finished: number;
+}
 export interface MarkerObservation {
   marker: Pose;
   base: Pose;
@@ -20,6 +30,7 @@ export interface MarkerObservation {
   max_pair_dt_s: number;
   capture_started: number;
   capture_finished: number;
+  runtime_frame: RuntimeFrameObservation;
 }
 export interface CopyAlignmentView {
   alignmentId: string;
@@ -41,6 +52,7 @@ type Session = CopyAlignmentView & {
 const sessions = new Map<string, Session>();
 const TTL_MS = 20 * 60_000;
 const DEGREE = Math.PI / 180;
+const RUNTIME_TOLERANCE_M = 0.02;
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const digest = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
@@ -134,8 +146,40 @@ export function getCopyAlignment(alignmentId: string, targetSn: string, sourceSn
   return view(s);
 }
 
-/** A successful copy consumes its physical visit; retries use the existing map-apply route. */
+/** Consume only after native install, runtime verification and the server commit succeed. */
 export function consumeCopyAlignment(alignmentId: string): void { sessions.delete(alignmentId); }
+
+function runtimeObservation(value: unknown, startedAt: number): RuntimeFrameObservation {
+  const raw = record(value);
+  const fields = ['x', 'y', 'spread_m', 'sample_count', 'unique_stamps', 'max_pair_dt_s', 'capture_started', 'capture_finished'] as const;
+  if (fields.some(k => !finite(raw[k]))) return fail('The runtime frame measurement is incomplete.');
+  const frame = Object.fromEntries(fields.map(k => [k, raw[k]])) as unknown as RuntimeFrameObservation;
+  if (!Number.isInteger(frame.sample_count) || !Number.isInteger(frame.unique_stamps) ||
+      frame.unique_stamps < 20 || frame.sample_count < frame.unique_stamps || frame.max_pair_dt_s !== 0 ||
+      frame.spread_m < 0 || frame.spread_m > RUNTIME_TOLERANCE_M) {
+    return fail('The runtime frame measurement is not stable or exactly synchronized.');
+  }
+  if (frame.capture_started < startedAt / 1000 - 0.75 || frame.capture_finished > Date.now() / 1000 + 1 ||
+      frame.capture_finished - frame.capture_started < 5 || frame.capture_finished - frame.capture_started > 15 ||
+      Date.now() / 1000 - frame.capture_finished > 10) return fail('The runtime frame measurement is stale.');
+  return frame;
+}
+
+function matchesRuntime(s: Session, side: CopyAlignmentSide, frame: RuntimeFrameObservation): void {
+  if (s.captures[side].some(c => Math.hypot(frame.x - c.runtime_frame.x, frame.y - c.runtime_frame.y) > RUNTIME_TOLERANCE_M)) {
+    sessions.delete(s.alignmentId);
+    fail('The effective runtime mower frame changed. Start the dock measurements again.');
+  }
+}
+
+function settledRuntime(frame: RuntimeFrameObservation): void {
+  // In the verified native gps_link path the normal XY position is UTM minus
+  // origin. A stable temporary compensation is not eligible for registration:
+  // it can disappear on a later drive. Near zero does not prove ground accuracy.
+  if (Math.hypot(frame.x, frame.y) > RUNTIME_TOLERANCE_M) {
+    fail('Localization still differs from the native GPS frame. Let localization settle before starting new dock measurements.');
+  }
+}
 
 function observation(raw: Record<string, unknown> | null, signature: string, startedAt: number): MarkerObservation {
   if (raw?.result !== 0 && typeof raw?.error === 'string') return fail(`Marker measurement failed: ${raw.error.slice(0, 300)}`);
@@ -155,6 +199,7 @@ function observation(raw: Record<string, unknown> | null, signature: string, sta
     return fail('The marker measurement is stale or its receiver clock is not synchronized.');
   }
   if (Math.hypot(o.marker.x - o.base.x, o.marker.y - o.base.y) > 1.5) return fail('Move closer to the source dock marker before measuring.');
+  o.runtime_frame = runtimeObservation(raw.runtime_frame, startedAt);
   return o;
 }
 
@@ -174,6 +219,8 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
     session(alignmentId);
     if (phase(s) !== expectedPhase) return fail('Another capture completed this step. Refresh the alignment wizard.');
     if (!stablePosition(sn)) return fail('Localization changed during the marker measurement.');
+    matchesRuntime(s, side, measured.runtime_frame);
+    settledRuntime(measured.runtime_frame);
     const previous = s.captures[side][0];
     if (previous) {
       if (measured.capture_started <= previous.capture_finished) return fail('A repeated capture must contain new camera frames.');
@@ -190,13 +237,86 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
   });
 }
 
-/** Caller holds both leases. File identity cannot detect a later internal localization-compensation change. */
-export function validateCopyAlignment(alignmentId: string, input: {
+/** Both leases remain held through fresh observations, device install and the caller's commit. */
+export async function validateCopyAlignment(alignmentId: string, input: {
   targetSn: string; sourceSn: string; canonical: string; sourceSnapshot: Snapshot; targetSnapshot: Snapshot;
-}): CopyAlignmentView & { dockAtB: { x: number; y: number } } {
+  sourceOperation: MowerMapOperation; targetOperation: MowerMapOperation;
+}): Promise<CopyAlignmentView & { dockAtB: { x: number; y: number }; verifyRuntime: () => Promise<Record<string, unknown>> }> {
   getCopyAlignment(alignmentId, input.targetSn, input.sourceSn, input.canonical);
   const s = session(alignmentId);
   if (phase(s) !== 'ready') return fail('Measure the source dock twice with each mower before copying.');
   matches(s, 'source', input.sourceSnapshot); matches(s, 'target', input.targetSnapshot);
-  return view(s) as CopyAlignmentView & { dockAtB: { x: number; y: number } };
+  const operations = { source: input.sourceOperation, target: input.targetOperation };
+  // The copy ZIP was prepared from these exact bytes. Retain them independently
+  // of the caller's objects while both runtime observations are in flight.
+  const targetBefore = { pos_json: input.targetSnapshot?.pos_json, charging_station_yaml: input.targetSnapshot?.charging_station_yaml,
+    csv_files: { ...record(input.targetSnapshot?.csv_files) }, x3_csv_files: { ...record(input.targetSnapshot?.x3_csv_files) } };
+
+  function assertOwnedSession(): void {
+    assertMowerMapOperation(s.sourceSn, operations.source);
+    assertMowerMapOperation(s.targetSn, operations.target);
+    if (sessions.get(alignmentId) !== s || Date.now() >= s.expiresAt) {
+      sessions.delete(alignmentId);
+      fail('The alignment has expired or is unknown. Start the dock measurements again.');
+    }
+  }
+
+  async function verifyLive(assertCurrent: () => void): Promise<Record<string, unknown>> {
+    assertCurrent();
+    // Measure both mowers concurrently. Wait for both even on failure, so no
+    // command can outlive its map-operation lease when the caller unwinds.
+    const results = await Promise.allSettled((['source', 'target'] as const).map(async side => {
+      const sn = side === 'source' ? s.sourceSn : s.targetSn;
+      const startedAt = Date.now();
+      const raw = await operations[side].command('measure_runtime_frame', {}, 25_000);
+      assertCurrent();
+      if (raw?.result !== 0 && typeof raw?.error === 'string') return fail(`Runtime frame measurement failed: ${raw.error.slice(0, 300)}`);
+      if (raw?.result !== 0 || raw.protocol !== 'runtime-map-frame-v1') return fail('This mower did not return a verified runtime frame measurement.');
+      if (raw.frame_fingerprint !== s.frames[side].signature) return fail('The runtime measurement used a different mower frame.');
+      const frame = runtimeObservation(raw.runtime_frame, startedAt);
+      return { side, frame, startedAt };
+    }));
+    for (const result of results) if (result.status === 'rejected') throw result.reason;
+    assertCurrent();
+    // Native file writes are not all under our server lease. Read both again
+    // after both measurements, including complete source work/obstacle identity.
+    const snapshots = await Promise.allSettled(results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []).map(async value => ({
+      ...value,
+      snapshot: await readMowerMapSnapshot(value.side === 'source' ? s.sourceSn : s.targetSn, operations[value.side]),
+    })));
+    for (const result of snapshots) if (result.status === 'rejected') throw result.reason;
+    assertCurrent();
+    let targetSnapshot: Snapshot = null;
+    for (const result of snapshots) if (result.status === 'fulfilled') {
+      const { side, frame, snapshot, startedAt } = result.value;
+      runtimeObservation(frame, startedAt); // Both remain fresh after all awaits.
+      matches(s, side, snapshot);
+      matchesRuntime(s, side, frame);
+      settledRuntime(frame);
+      if (side === 'target') targetSnapshot = snapshot;
+    }
+    if (!targetSnapshot) return fail('The verified target map snapshot is missing.');
+    return targetSnapshot;
+  }
+
+  const targetCurrent = await verifyLive(() => { assertOwnedSession(); session(alignmentId); });
+  if (targetCurrent.pos_json !== targetBefore.pos_json || targetCurrent.charging_station_yaml !== targetBefore.charging_station_yaml ||
+      (['csv_files', 'x3_csv_files'] as const).some(key => {
+        const expected = targetBefore[key], actual = record(targetCurrent[key]);
+        const names = Object.keys(expected);
+        return !names.length || names.length !== Object.keys(actual).length ||
+          names.some(name => typeof expected[name] !== 'string' || actual[name] !== expected[name]);
+      })) return fail('The target map files changed during preflight. Read the mower maps again before copying.');
+  const verifyRuntime = async (): Promise<Record<string, unknown>> => {
+    return verifyLive(() => {
+      assertOwnedSession();
+      ready(s.sourceSn);
+      if (getFrameRevision(s.sourceSn) !== s.frames.source.revision ||
+          !isDeviceOnline(s.targetSn) || !isOpenNovaMower(s.targetSn) || !isFrameUnvalidated(s.targetSn) ||
+          getFrameRevision(s.targetSn) !== s.frames.target.revision + 1) {
+        fail('The mower frame changed outside the expected map installation.');
+      }
+    });
+  };
+  return { ...(view(s) as CopyAlignmentView & { dockAtB: { x: number; y: number } }), verifyRuntime };
 }
