@@ -2805,7 +2805,9 @@ def _marker_robot_idle(msg):
     # Explicit stock merged states FREE, CHARGING, STOP; never infer idle from no data.
     # Code 8 can outlive the raw LoRa fault; only use with the mandatory
     # fresh chassis flags and correction-age checks below. Never clear the status.
-    return int(msg["merged_work_status"]) in (0, 4, 5) and int(msg["error_status"]) in (0, 8)
+    # 113 is a completed autodock result (rechargeFinishedDeal), not current
+    # camera health. This only permits observing; fresh marker success is mandatory.
+    return int(msg["merged_work_status"]) in (0, 4, 5) and int(msg["error_status"]) in (0, 8, 113)
 
 
 def _marker_rtk_fixed(msg):

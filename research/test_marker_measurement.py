@@ -117,6 +117,23 @@ class MarkerMeasurementTest(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         commands._marker_measurement_result(samples, 100, 106)
 
+    def test_completed_dock_failure_still_requires_new_marker_success_and_idle(self):
+        for kind in ("healthy", "no_marker", "cached_marker", "docking"):
+            with self.subTest(kind=kind):
+                samples, _ = capture()
+                for row in samples["/robot_decision/robot_status"]:
+                    row["data"]["error_status"] = 113
+                    if kind == "docking": row["data"]["merged_work_status"] = 2
+                if kind == "no_marker": samples["/aruco/pose"] = []
+                if kind == "cached_marker":
+                    for row in samples["/aruco/pose"]:
+                        row["data"]["header"] = header(99, "aruco_tag")
+                if kind == "healthy":
+                    self.assertEqual(commands._marker_measurement_result(samples, 100, 106)["result"], 0)
+                else:
+                    with self.assertRaises(ValueError):
+                        commands._marker_measurement_result(samples, 100, 106)
+
     def test_fingerprint_checks_native_dock_and_dispatcher_checks_frame(self):
         with tempfile.TemporaryDirectory() as directory:
             home = os.path.join(directory, "maps", "home0")
