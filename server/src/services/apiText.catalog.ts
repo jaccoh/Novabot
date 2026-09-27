@@ -10,10 +10,10 @@
 import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
-  "Wachten op acht verse, stabiele Fixed-metingen op het dock.": {
-    en: "Waiting for eight fresh, stable Fixed readings on the dock.",
-    fr: "Attente de huit mesures Fixed fraîches et stables sur la station.",
-    de: "Warten auf acht neue, stabile Fixed-Messungen auf der Ladestation.",
+  "Verse gedockte voertuigpositie en antennetransformatie meten.": {
+    en: "Measuring the fresh docked vehicle position and the antenna transform.",
+    fr: "Mesure de la position actuelle du véhicule sur la station et de la transformation de l’antenne.",
+    de: "Neue angedockte Fahrzeugposition und Antennentransformation messen.",
   },
   "Rij onder toezicht met de joystick ongeveer één meter van het dock. Wacht op verse RUNNING + RTK Fixed.": {
     en: "Under supervision, use the joystick to drive about one metre away from the dock. Wait for fresh RUNNING + RTK Fixed.",
@@ -25,10 +25,15 @@ export const CATALOG: Catalog = {
     fr: "Localisation rétablie. Revenez sur la station avec le joystick et appuyez sur Vérifier.",
     de: "Lokalisierung wiederhergestellt. Fahren Sie mit dem Joystick auf die Ladestation zurück und drücken Sie Prüfen.",
   },
-  "Acht verse dockmetingen en de geladen oorsprong controleren.": {
-    en: "Checking eight fresh dock readings and the loaded origin.",
-    fr: "Vérification de huit nouvelles mesures sur la station et de l’origine chargée.",
-    de: "Acht neue Dockmessungen und den geladenen Ursprung prüfen.",
+  "Verse voertuigmeting, dockanker en geladen oorsprong controleren.": {
+    en: "Checking the fresh vehicle reading, the dock anchor and the loaded origin.",
+    fr: "Vérification de la nouvelle mesure du véhicule, du point fixe de la station et de l’origine chargée.",
+    de: "Neue Fahrzeugmessung, Dockanker und geladenen Ursprung prüfen.",
+  },
+  "Frame gecontroleerd zonder oorsprongwijziging: {0} m van het vaste dockanker.": {
+    en: "Frame verified without changing the origin: {0} m from the fixed dock anchor.",
+    fr: "Repère vérifié sans modifier l’origine : {0} m du point fixe de la station.",
+    de: "Koordinatenrahmen ohne Ursprungsänderung geprüft: {0} m vom festen Dockanker.",
   },
   "Frame gecontroleerd: {0} m van het vaste dockanker.": {
     en: "Frame verified: {0} m from the fixed dock anchor.",
