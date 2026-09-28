@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const h = vi.hoisted(() => ({ online: true, docked: true, publish: vi.fn(), command: vi.fn(), capture: vi.fn(), consume: vi.fn(), measureDock: vi.fn(), manual: undefined as (() => void) | undefined }));
+const h = vi.hoisted(() => ({ online: true, docked: true, poseX: 0, publish: vi.fn(), command: vi.fn(), capture: vi.fn(), consume: vi.fn(), measureDock: vi.fn(), manual: undefined as (() => void) | undefined }));
 vi.mock('../../mqtt/broker.js', () => ({ isDeviceOnline: () => h.online }));
 vi.mock('../../mqtt/mapSync.js', () => ({ publishToExtended: h.publish }));
 vi.mock('../../services/frameValidation.js', () => ({ isFrameUnvalidated: () => false }));
-vi.mock('../../services/positionTelemetry.js', () => ({ freshPositionState: () => ({ docked: h.docked }), stablePosition: () => ({ x: 0, y: 0 }) }));
+vi.mock('../../services/positionTelemetry.js', () => ({ freshPositionState: () => ({ docked: h.docked }), stablePosition: (_sn: string, options?: { docked?: boolean }) => options?.docked && !h.docked ? null : ({ x: h.poseX, y: 0 }) }));
 vi.mock('../../services/dockPhotoReference.js', () => ({ snapshotDockPose: () => ({ x: 0, y: 0, orientation: 0 }) }));
 vi.mock('../../services/reanchorGps.js', () => ({ measureReanchorDock: h.measureDock }));
 vi.mock('../../services/scheduleRunner.js', () => ({ disarmEdgeWatch: vi.fn() }));
@@ -23,12 +23,12 @@ const tick = (action: 'pulse' | 'stop' = 'pulse') => sourceDockCycle(id, 'target
 beforeEach(() => {
   vi.useFakeTimers(); elapsed = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
-  id = crypto.randomUUID(); h.online = true; h.docked = true;
+  id = crypto.randomUUID(); h.online = true; h.docked = true; h.poseX = 0;
   h.publish.mockReset(); h.command.mockReset(); h.capture.mockReset(); h.consume.mockReset();
   h.measureDock.mockReset().mockImplementation(async () => ({ dist: 0, latestDist: 0, runtime: { x: 0, y: 0, capture_started: Date.now(), capture_finished: Date.now() - 1 } }));
   h.command.mockImplementation(async (cmd, params) => {
-    if (cmd === 'dock_measurement_move') h.docked = params.action === 'dock';
-    return { result: 0, protocol: 'dock-measurement-motion-v1', docked: h.docked, frame_fingerprint: 'fingerprint' };
+    if (cmd === 'dock_measurement_move') { h.docked = params.action === 'dock'; h.poseX = 0; }
+    return { result: 0, protocol: 'dock-measurement-motion-v2', docked: h.docked, frame_fingerprint: 'fingerprint' };
   });
 });
 afterEach(async () => {
@@ -45,7 +45,7 @@ it('performs two distance-limited reverse steps, validated captures and a confir
   h.command.mockImplementation(async (cmd, params) => {
     events.push(`${cmd}:${params.action}`);
     if (cmd === 'dock_measurement_move') h.docked = params.action === 'dock';
-    return { result: 0, protocol: 'dock-measurement-motion-v1', docked: h.docked, frame_fingerprint: 'fingerprint' };
+    return { result: 0, protocol: 'dock-measurement-motion-v2', docked: h.docked, frame_fingerprint: 'fingerprint' };
   });
   h.capture.mockImplementation(async (_id, side, owner) => { expect(side).toBe('source'); expect(owner.sn).toBe('source'); events.push('capture'); });
   start(); tick(); await advance();
@@ -75,11 +75,11 @@ it.each(['stop', 'manual', 'disconnect', 'expired-browser', 'measurement-failure
 
 it('sends a stop for an in-flight movement and retains the cycle until its response', async () => {
   let release!: (value: unknown) => void;
-  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v1' } : new Promise(resolve => { release = resolve; }));
+  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v2' } : new Promise(resolve => { release = resolve; }));
   start(); tick(); await advance();
   expect(tick('stop').phase).toBe('reverse_first');
   expect(h.publish).toHaveBeenLastCalledWith('source', { dock_measurement_control: { action: 'stop', motion_id: expect.any(String) } });
-  release({ result: 0, protocol: 'dock-measurement-motion-v1' }); await advance();
+  release({ result: 0, protocol: 'dock-measurement-motion-v2' }); await advance();
   expect(tick('stop').phase).toBe('error'); expect(h.capture).not.toHaveBeenCalled();
 });
 
@@ -102,14 +102,26 @@ it('does not duplicate an active start or accept controls from a different mower
 });
 
 
-it('refuses departure when the independent dock observation disagrees', async () => {
-  h.measureDock.mockResolvedValue({ dist: .06, latestDist: .06 });
+it('refuses departure without charging contact', async () => {
+  h.docked = false;
   start(); tick(); await advance();
   expect(tick('stop').phase).toBe('error'); expect(h.command).not.toHaveBeenCalled();
 });
 
+it('checks saved dock accuracy only after departure has initialized heading and the mower returned', async () => {
+  h.poseX = .15;
+  h.measureDock.mockImplementation(async () => {
+    expect(h.command.mock.calls.filter(([cmd]) => cmd === 'dock_measurement_move')).toHaveLength(3);
+    expect(h.docked).toBe(true);
+    return { dist: 0, latestDist: 0, runtime: { x: 0, y: 0, capture_started: Date.now() } };
+  });
+  start(); tick(); await advance();
+  expect(tick().phase).toBe('done');
+  expect(h.measureDock).toHaveBeenCalledTimes(1);
+});
+
 it('discards both captures if the final file or dock check fails', async () => {
-  h.measureDock.mockImplementationOnce(async () => ({ dist: 0, latestDist: 0, runtime: { capture_finished: 1 } })).mockRejectedValueOnce(new Error('map files changed'));
+  h.measureDock.mockRejectedValueOnce(new Error('map files changed'));
   start(); tick(); await advance();
   expect(tick('stop')).toMatchObject({ phase: 'error', error: 'map files changed' });
   expect(tick('stop').alignment).toBeUndefined();
@@ -118,7 +130,7 @@ it('discards both captures if the final file or dock check fails', async () => {
 
 it('surfaces a failed native cancellation instead of hiding it behind the operator Stop label', async () => {
   let release!: (value: unknown) => void;
-  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v1' } : new Promise(resolve => { release = resolve; }));
+  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v2' } : new Promise(resolve => { release = resolve; }));
   start(); tick(); await advance(); tick('stop');
   release({ result: 1, error: 'visual docking cancellation not confirmed; use the mower STOP button' });
   await advance();

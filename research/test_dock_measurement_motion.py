@@ -47,8 +47,9 @@ class MotionTest(unittest.TestCase):
         del d['error_push_button_stop']
         self.assertFalse(c._dock_motion_chassis_ok(d))
 
-    def run_motion(self, action='reverse', failure=None):
-        sim = types.SimpleNamespace(now=100., x=0. if action == 'reverse' else -.7, velocity=0., homing=False, detector=False, calls=[], published=[], destroyed=False)
+    def run_motion(self, action='reverse', failure=None, from_dock=None):
+        if from_dock is None: from_dock = action == 'reverse'
+        sim = types.SimpleNamespace(now=100., next_map=100., x=0. if from_dock else -.5 if action == 'reverse' else -.7, velocity=0., homing=False, detector=False, calls=[], published=[], destroyed=False)
         subscriptions = {}
         state = {'created': 100., 'heartbeat': 100., 'cancelled': False, 'used': False}
         c._DOCK_MOTIONS[ID] = state
@@ -89,26 +90,35 @@ class MotionTest(unittest.TestCase):
             def spin_once(self, timeout_sec):
                 sim.now += .05
                 if failure != 'heartbeat': state['heartbeat'] = sim.now
-                if failure == 'stop' and sim.now > 101: state['cancelled'] = True
+                if failure == 'stop' and sim.now > 103: state['cancelled'] = True
                 speed = .15 if sim.homing else sim.velocity
+                if failure == 'moving-at-start' or (failure == 'creeping' and speed == 0 and any(v < 0 for v in sim.published)):
+                    speed = -.03
                 if failure != 'stalled': sim.x = min(0., sim.x + speed * .05)
                 if sim.x == 0 and sim.homing: sim.homing = False; speed = 0
                 stamp_ns = round((1000 + sim.now - .001) * 1e9)
                 h = {'stamp': {'sec': stamp_ns // 10**9, 'nanosec': stamp_ns % 10**9}}
                 p = {'position': {'x': sim.x, 'y': 0., 'z': 0.}, 'orientation': {'x': 0., 'y': 0., 'z': 0., 'w': 1.}}
+                if failure == 'initial-heading-correction' and sim.x > -.1:
+                    p['position']['x'] += .15
+                    p['orientation'].update(z=math.sin(.4 / 2), w=math.cos(.4 / 2))
                 chassis = {k: False for k in ('warning_push_button_stop', 'error_push_button_stop', 'warning_collision_stop', 'error_collision_stop', 'warning_upraise_stop', 'error_upraise_stop', 'error_turn_over', 'error_lora', 'warning_lora_rtk_data_overtime')}
-                if failure == 'bumper' and sim.now > 101: chassis['error_collision_stop'] = True
+                if failure == 'bumper' and sim.now > 103: chassis['error_collision_stop'] = True
                 values = {
                     '/robot_decision/map_position': p,
-                    '/robot_combination_localization/odom': {'header': h, 'twist': {'twist': {'linear': {'x': speed, 'y': 0., 'z': 0.}, 'angular': {'x': 0., 'y': 0., 'z': 0.}}}},
+                    '/robot_combination_localization/odom': {'header': h, 'twist': {'twist': {'linear': {'x': 0. if failure in ('moving-at-start', 'creeping') else speed, 'y': 0., 'z': 0.}, 'angular': {'x': 0., 'y': 0., 'z': 0.}}}},
                     '/robot_decision/robot_status': {'merged_work_status': 4 if sim.x > -.01 and failure != 'no-contact' else 2 if sim.homing else 0, 'error_status': 0, 'battery_power': 80},
-                    '/bestpos_parsed_data': {'qual': 5 if failure == 'rtk' and sim.now > 101 else 4, 'diff_age': 1.},
+                    '/bestpos_parsed_data': {'qual': 5 if failure == 'rtk' and sim.now > 103 else 4, 'diff_age': 1.},
                     '/chassis_incident': chassis,
                     '/robot_combination_localization/combination_status': {'status': 200},
                 }
                 if sim.detector and failure != 'missing-pattern': values['/aruco/pose'] = {'header': h}
-                if failure == 'manual' and sim.now > 101: values['/cloud_move_cmd'] = {}
-                if failure == 'stale' and sim.now > 101: values.pop('/robot_combination_localization/odom')
+                if failure == 'manual' and sim.now > 103: values['/cloud_move_cmd'] = {}
+                if failure == 'stale' and sim.now > 103: values.pop('/robot_combination_localization/odom')
+                if sim.now < sim.next_map:
+                    values.pop('/robot_decision/map_position')
+                else:
+                    sim.next_map = sim.now + .5
                 for topic, cb in list(subscriptions.items()):
                     if topic in values: cb(values[topic])
         modules = {}
@@ -128,18 +138,27 @@ class MotionTest(unittest.TestCase):
             with open(directory + '/csv_file/map_info.json', 'w') as f: json.dump({'charging_pose': {'x': 0, 'y': 0, 'orientation': 0}}, f)
             with patch.dict(sys.modules, modules), patch.object(c, '_marker_frame_fingerprint', return_value='frame'), patch.object(c, '_map_home', return_value=directory), patch.object(c, '_marker_camera_use', side_effect=lambda action, *args: sim.now + 30), patch.object(c.time, 'monotonic', side_effect=lambda: sim.now), patch.object(c.time, 'time', side_effect=lambda: sim.now + 1000):
                 try:
-                    c.handle_dock_measurement_move({'motion_id': ID, 'action': action, 'distance_m': .5 if action == 'reverse' else 0, 'from_dock': action == 'reverse', 'frame_fingerprint': 'frame'}, lambda name, data: results.append(data))
+                    c.handle_dock_measurement_move({'motion_id': ID, 'action': action, 'distance_m': (.5 if from_dock else .2) if action == 'reverse' else 0, 'from_dock': from_dock, 'frame_fingerprint': 'frame'}, lambda name, data: results.append(data))
                 except ValueError as error: sim.error = str(error)
         self.assertTrue(sim.destroyed)
         self.assertEqual(sim.published[-1], 0.)
         self.assertTrue(state['cancelled'])
         return sim, results
 
-    def test_real_handler_reverses_to_measured_distance_then_confirms_stop(self):
+    def test_real_handler_bounds_departure_then_uses_distance_for_second_step(self):
         sim, results = self.run_motion()
         self.assertEqual(results[0]['result'], 0)
         self.assertAlmostEqual(sim.x, -.5, delta=.02)
         self.assertNotIn('/robot_decision/auto_recharge', sim.calls)
+        sim, results = self.run_motion(from_dock=False)
+        self.assertEqual(results[0]['result'], 0)
+        self.assertAlmostEqual(sim.x, -.7, delta=.06)
+
+    def test_first_departure_accepts_heading_initialization(self):
+        sim, results = self.run_motion(failure='initial-heading-correction')
+        self.assertEqual(results[0]['result'], 0)
+        self.assertAlmostEqual(sim.x, -.5, delta=.02)
+        self.assertTrue(all(v in (0., -.08) for v in sim.published))
 
     def test_real_handler_visual_dock_requires_contact(self):
         sim, results = self.run_motion('dock')
@@ -148,6 +167,14 @@ class MotionTest(unittest.TestCase):
         sim, results = self.run_motion('dock', 'no-contact')
         self.assertFalse(results)
         self.assertIn('/robot_decision/cancel_recharge', sim.calls)
+
+    def test_zero_twist_does_not_prove_standstill(self):
+        sim, results = self.run_motion(failure='moving-at-start')
+        self.assertFalse(results)
+        self.assertFalse(any(v < 0 for v in sim.published), 'must not start while positions are moving')
+        sim, results = self.run_motion(failure='creeping')
+        self.assertFalse(results, 'must not confirm a stop while positions are moving')
+        self.assertNotIn('/robot_decision/auto_recharge', sim.calls)
 
     def test_real_handler_aborts_and_stops_for_fault_loss_or_operator_intervention(self):
         for failure in ('stop', 'heartbeat', 'stalled', 'rtk', 'bumper', 'manual', 'stale'):

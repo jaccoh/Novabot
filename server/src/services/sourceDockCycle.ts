@@ -85,9 +85,9 @@ async function run(c: Cycle): Promise<void> {
       const signature = frameSnapshotSignature(before);
       const dock = snapshotDockPose(before)!;
       const start = stablePosition(c.sourceSn, { docked: true });
-      if (!start || Math.hypot(start.x - dock.x, start.y - dock.y) > .05) throw new Error('Start on the source mower’s own dock with stable RTK Fixed within 5 cm of its saved dock.');
-      const initial = await measureReanchorDock(c.sourceSn, operation, before);
-      if (initial.dist > .05 || initial.latestDist > .05) throw new Error('Source dock position is not confirmed within 5 cm.');
+      // Leaving the dock initializes heading. Contact and stable telemetry
+      // qualify departure; saved-dock accuracy is checked after returning.
+      if (!start) throw new Error('Start stationary on the source mower’s own dock with fresh RTK Fixed and charging contact.');
       check(c);
       disarmEdgeWatch(c.sourceSn, 'automatic source dock measurement');
       const move = async (action: 'reverse' | 'dock', distance: number, fromDock: boolean) => {
@@ -96,9 +96,9 @@ async function run(c: Cycle): Promise<void> {
         try {
           const armed = await operation.command('dock_measurement_control', { action: 'arm', motion_id: c.motionId }, 5_000);
           check(c);
-          if (armed?.result !== 0 || armed.protocol !== 'dock-measurement-motion-v1') throw new Error('The mower does not support guarded dock measurement motion. Update extended_commands.py first.');
+          if (armed?.result !== 0 || armed.protocol !== 'dock-measurement-motion-v2') throw new Error('The mower does not support guarded dock measurement motion. Update extended_commands.py first.');
           const result = await operation.command('dock_measurement_move', { action, distance_m: distance, from_dock: fromDock, motion_id: c.motionId, frame_fingerprint: signature }, 60_000);
-          if (result?.result !== 0 || result.protocol !== 'dock-measurement-motion-v1' || result.frame_fingerprint !== signature || (action === 'dock' && result.docked !== true)) {
+          if (result?.result !== 0 || result.protocol !== 'dock-measurement-motion-v2' || result.frame_fingerprint !== signature || (action === 'dock' && result.docked !== true)) {
             // Preserve an unconfirmed native cancellation even if the operator
             // already pressed Stop; that is more urgent than our generic label.
             c.error = typeof result?.error === 'string' ? result.error : 'Movement stop was not confirmed. Check the mower and use its STOP button if needed.';
@@ -130,7 +130,7 @@ async function run(c: Cycle): Promise<void> {
       const confirmed = await measureReanchorDock(c.sourceSn, operation, before);
       check(c);
       c.alignment = getCopyAlignment(c.alignmentId!, c.targetSn, c.sourceSn, c.canonical);
-      if (confirmed.dist > .05 || confirmed.latestDist > .05 || confirmed.runtime.capture_started <= initial.runtime.capture_finished ||
+      if (confirmed.dist > .05 || confirmed.latestDist > .05 ||
           c.alignment.captures.source.some(m => confirmed.runtime.capture_started <= m.capture_finished ||
             Math.hypot(confirmed.runtime.x - m.runtime_frame.x, confirmed.runtime.y - m.runtime_frame.y) > .02)) {
         throw new Error('Source localization changed after returning to the dock. Start fresh measurements.');

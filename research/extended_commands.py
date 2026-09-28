@@ -4941,7 +4941,7 @@ def handle_set_pos_origin(params, respond):
 # cancellation stay outside the map lock so a running command can always stop.
 _DOCK_MOTIONS = {}
 _DOCK_MOTION_LOCK = threading.Lock()
-_DOCK_MOTION_PROTOCOL = "dock-measurement-motion-v1"
+_DOCK_MOTION_PROTOCOL = "dock-measurement-motion-v2"
 
 
 def handle_dock_measurement_control(params, respond):
@@ -5008,6 +5008,8 @@ def _dock_motion_chassis_ok(data):
 
 
 def handle_dock_measurement_move(params, respond):
+    from collections import deque
+
     action, distance = params.get("action"), params.get("distance_m")
     from_dock = params.get("from_dock")
     if action not in ("reverse", "dock") or not isinstance(from_dock, bool):
@@ -5045,6 +5047,7 @@ def handle_dock_measurement_move(params, respond):
     executor = SingleThreadedExecutor(context=context)
     executor.add_node(node)
     latest = {}
+    pose_samples = deque(maxlen=128)
     cmd = node.create_publisher(Twist, "/cmd_vel", 1)
     lock = node.create_publisher(UInt8, "/release_charge_lock", 1)
     clients = {name: node.create_client(Trigger, "/robot_decision/" + name) for name in ("cancel_recharge", "auto_recharge")}
@@ -5056,7 +5059,13 @@ def handle_dock_measurement_move(params, respond):
     completed = False
 
     def record(topic, msg):
-        latest[topic] = (time.monotonic(), message_to_ordereddict(msg))
+        now, data = time.monotonic(), message_to_ordereddict(msg)
+        latest[topic] = (now, data)
+        if topic == "/robot_decision/map_position":
+            p, q = _marker_pose(data)
+            pose_samples.append((now, p[0], p[1], _marker_yaw(q)))
+            while pose_samples and now - pose_samples[0][0] > 1.75:
+                pose_samples.popleft()
 
     def read(topic, age):
         entry = latest.get(topic)
@@ -5065,7 +5074,7 @@ def handle_dock_measurement_move(params, respond):
         return entry[1]
 
     def pose():
-        raw = read("/robot_decision/map_position", .5)
+        raw = read("/robot_decision/map_position", .75)
         q = _marker_quaternion(raw["orientation"])
         return (float(raw["position"]["x"]), float(raw["position"]["y"]), _marker_yaw(q))
 
@@ -5086,7 +5095,7 @@ def handle_dock_measurement_move(params, respond):
         if not 0 <= time.time() - stamp <= .5:
             raise ValueError("odometry source stamp stale")
         p = pose()
-        if not all(math.isfinite(v) for v in p) or math.hypot(p[0] - dock[0], p[1] - dock[1]) > 1.15:
+        if not all(math.isfinite(v) for v in p) or (not from_dock and math.hypot(p[0] - dock[0], p[1] - dock[1]) > 1.15):
             raise ValueError("mower left the bounded dock approach")
         return robot, odom, p
 
@@ -5118,6 +5127,14 @@ def handle_dock_measurement_move(params, respond):
             _dock_motion_lease(state)
 
     def stationary(odom):
+        # This firmware can report zero twist while driving. Require fresh
+        # observed poses spanning a full second before accepting standstill.
+        if len(pose_samples) < 3 or pose_samples[-1][0] - pose_samples[0][0] < 1:
+            return False
+        _, x, y, yaw = pose_samples[0]
+        if (any(math.hypot(p[1] - x, p[2] - y) > .02 or abs(_marker_angle_delta(p[3], yaw)) > .02 for p in pose_samples) or
+                any(b[0] - a[0] > .75 for a, b in zip(pose_samples, list(pose_samples)[1:]))):
+            return False
         twist = odom["twist"]["twist"]
         return all(math.isfinite(float(v)) and abs(float(v)) < .025 for part in ("linear", "angular") for v in twist[part].values())
 
@@ -5162,8 +5179,6 @@ def handle_dock_measurement_move(params, respond):
                     raise
         if (int(robot["merged_work_status"]) == 4) != from_dock:
             raise ValueError("unexpected dock contact at movement start")
-        if from_dock and (math.hypot(start[0] - dock[0], start[1] - dock[1]) > .05 or abs(_marker_angle_delta(start[2], dock[2])) > .05):
-            raise ValueError("source mower does not match its own dock")
         if action == "reverse":
             if from_dock:
                 service(clients["cancel_recharge"], Trigger.Request())
@@ -5171,21 +5186,30 @@ def handle_dock_measurement_move(params, respond):
                     guard()
                     lock.publish(UInt8(data=1))
                     spin(.1)
-            speed = .12
-            deadline = time.monotonic() + distance / speed + 2
+            # map_position arrives at 2 Hz. At 0.08 m/s a normal update is
+            # 4 cm, leaving room below the 6 cm jump/overshoot limit.
+            speed = .08
+            # First departure initializes localization: steer only in body
+            # coordinates for a bounded duration. A heading correction must
+            # not be interpreted as a physical turn or sideways slip.
+            deadline = time.monotonic() + distance / speed + (0 if from_dock else 2)
             previous, progress = start, 0
             last_progress, stalled_at = 0, time.monotonic()
             while True:
                 spin()
                 _, _, current = guard()
-                progress = _dock_motion_progress(start, current, previous, distance)
-                previous = current
-                if progress >= distance:
-                    break
-                if progress >= last_progress + .005:
-                    last_progress, stalled_at = progress, time.monotonic()
-                if time.monotonic() >= deadline or time.monotonic() - stalled_at > 1.5:
-                    raise ValueError("reverse distance not reached before motion deadline")
+                if from_dock:
+                    if time.monotonic() >= deadline:
+                        break
+                else:
+                    progress = _dock_motion_progress(start, current, previous, distance)
+                    previous = current
+                    if progress >= distance:
+                        break
+                    if progress >= last_progress + .005:
+                        last_progress, stalled_at = progress, time.monotonic()
+                    if time.monotonic() >= deadline or time.monotonic() - stalled_at > 1.5:
+                        raise ValueError("reverse distance not reached before motion deadline")
                 twist = Twist()
                 twist.linear.x = -speed
                 cmd.publish(twist)
@@ -5213,7 +5237,8 @@ def handle_dock_measurement_move(params, respond):
             spin()
             robot, odom, current = guard(docking=action == "dock")
             if action == "reverse":
-                _dock_motion_progress(start, current, previous, distance)
+                if not from_dock:
+                    _dock_motion_progress(start, current, previous, distance)
                 previous = current
                 cmd.publish(Twist())
             elif int(robot["merged_work_status"]) != 4:
