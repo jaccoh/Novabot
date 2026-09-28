@@ -960,6 +960,8 @@
   "settings": {
     "title": "Settings",
     "obstacleSensitivity": "Obstacle Sensitivity",
+    "edgeObstacleLow": "Edge cutting with obstacle detection Low",
+    "edgeObstacleLowHint": "Only during the edge cut: the camera no longer treats hedges and overhanging plants along the edge as obstacles, so the edge gets mowed. People, animals and objects are still detected. OpenNova firmware.",
     "maxSpeed": "Max Speed",
     "handling": "Handling",
     "headlight": "Headlight",

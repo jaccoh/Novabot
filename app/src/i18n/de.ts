@@ -895,6 +895,8 @@ export default {
   msObstacleMedDesc: "Weicht Objekten aus",
   msObstacleHigh: "Hoch",
   msObstacleHighDesc: "Stoppt sogar bei Laub",
+  msEdgeObstacleLow: "Kantenmähen mit Hinderniserkennung Niedrig",
+  msEdgeObstacleLowSub: "Entlang der Kante sind Hecken und überhängende Pflanzen kein Hindernis; Personen, Tiere und Gegenstände werden weiterhin erkannt",
   msRainTitle: "Bei Regen pausieren",
   msRainOnSub: "Mindestens {{mm}} mm oder mindestens {{prob}}% innerhalb von {{min}} Min.",
   msRainOffSub: "Der Mäher mäht auch bei Regen weiter",

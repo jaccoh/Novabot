@@ -33,6 +33,7 @@ vi.mock('../../mqtt/mapSync.js', () => ({
 
 import { getMowerPhase, startEdgeCut } from '../../services/mowingService.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
+import { deviceSettingsRepo } from '../../db/repositories/deviceSettings.js';
 import { publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
 import { markFrameUnvalidated, clearFrameUnvalidated } from '../../services/frameValidation.js';
 
@@ -533,5 +534,31 @@ describe('startEdgeCut frame-guard (post bundle-restore)', () => {
     clearFrameUnvalidated(SN);
     startEdgeCut(SN, 'map0', 40, true);
     expect(publishToTopic).toHaveBeenCalledOnce();
+  });
+});
+
+// #142: edge cutting with obstacle detection Low is a per-mower setting; the
+// server passes it as obstacleLevel so extended_commands.py switches the
+// perception before the NTCP goal. Absent setting → no key, old firmware
+// (params.get) ignores an unknown key anyway.
+describe('startEdgeCut obstacle level (#142)', () => {
+  beforeEach(() => { vi.clearAllMocks(); deviceSettingsRepo.remove('ONLINE_SN', 'edge_obstacle_level'); });
+
+  it('sends obstacleLevel 1 when the mower is set to edge cut on Low', () => {
+    deviceSettingsRepo.upsert('ONLINE_SN', 'edge_obstacle_level', '1');
+    startEdgeCut('ONLINE_SN', 'map0', 40, true);
+    expect(vi.mocked(publishToTopic).mock.calls[0][1]).toMatchObject({
+      start_edge_cut: { mapName: 'map0', bladeHeight: 40, departFromDock: true, obstacleLevel: 1 },
+    });
+  });
+
+  it('sends no obstacleLevel without the setting or when it is off', () => {
+    startEdgeCut('ONLINE_SN', 'map0', 40);
+    const first = (vi.mocked(publishToTopic).mock.calls[0][1] as { start_edge_cut: Record<string, unknown> }).start_edge_cut;
+    expect('obstacleLevel' in first).toBe(false);
+    deviceSettingsRepo.upsert('ONLINE_SN', 'edge_obstacle_level', '0');
+    startEdgeCut('ONLINE_SN', 'map0', 40);
+    const second = (vi.mocked(publishToTopic).mock.calls[1][1] as { start_edge_cut: Record<string, unknown> }).start_edge_cut;
+    expect('obstacleLevel' in second).toBe(false);
   });
 });

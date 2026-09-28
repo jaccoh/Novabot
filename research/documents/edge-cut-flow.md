@@ -295,3 +295,29 @@ Documenting the paths we tried and abandoned so we don't re-try them:
   rejected. Our handler preemptively fires `cover_task_stop` via the
   clear-costmaps path — stop handler is same `stop_boundary_follow`
   we already had.
+
+## Obstacle detection during the edge cut (#142, 2026-09-28)
+
+The NTCP goal has no perception field, and stock `robot_decision` only calls
+`setPerceptionLevel` inside `StartCoverageTask` (live .100 log: every mow starts
+with `specify_perception_level: 1 perception_level: 3`; a task started through
+our own path logs `perception_level: 0`). So an edge cut inherits whatever the
+last mow left: on Medium/High the camera keeps a hedge or overhanging border
+plants as obstacles and the edge under them is skipped.
+
+`start_edge_cut` now takes `obstacleLevel: 1` (the server sends it when
+device_settings `edge_obstacle_level` is `'1'`; dashboard settings and app have
+the toggle). The handler then applies, before the goal:
+
+- `/perception/set_infer_model` 2 (detection model)
+- `/local_costmap/set_detection_mode` true
+- `/local_costmap/set_semantic_mode` 1 (FREE_MOVE: the lawn boundary is no obstacle)
+
+and when the action ends (finished, stopped or crashed, in the monitor thread's
+`finally`): model 1, detection off, FREE_MOVE, the configuration the object
+detection cadence restored after coverage so navigation and the auto-recharge
+keep terrain data. The next mow sets the mower's own level again. Only Low is
+supported: Medium/High depend on robot_decision's `set_seg_level` state and
+cannot be replicated from the script. Fast rclpy clients first, `ros2 service
+call` as fallback, same as the cadence.
+

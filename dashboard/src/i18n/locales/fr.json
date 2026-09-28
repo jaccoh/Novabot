@@ -879,6 +879,8 @@
   "settings": {
     "title": "Paramètres",
     "obstacleSensitivity": "Sensibilité obstacles",
+    "edgeObstacleLow": "Coupe des bords avec détection d'obstacles Faible",
+    "edgeObstacleLowHint": "Uniquement pendant la coupe des bords : la caméra ne considère plus les haies et les plantes qui dépassent le long du bord comme des obstacles, le bord est donc tondu. Les personnes, les animaux et les objets sont toujours détectés. Firmware OpenNova.",
     "maxSpeed": "Vitesse max",
     "handling": "Maniabilité",
     "headlight": "Phares",

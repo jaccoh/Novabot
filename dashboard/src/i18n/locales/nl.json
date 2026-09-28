@@ -1031,6 +1031,8 @@
   "settings": {
     "title": "Instellingen",
     "obstacleSensitivity": "Obstakelgevoeligheid",
+    "edgeObstacleLow": "Randmaaien met obstakeldetectie Laag",
+    "edgeObstacleLowHint": "Alleen tijdens het randmaaien: de camera ziet heggen en overhangende planten langs de rand niet meer als obstakel, zodat de rand wél gemaaid wordt. Mensen, dieren en voorwerpen worden nog steeds gedetecteerd. OpenNova-firmware.",
     "maxSpeed": "Max snelheid",
     "handling": "Wendbaarheid",
     "headlight": "Koplampen",

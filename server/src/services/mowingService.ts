@@ -369,13 +369,25 @@ export function getMowerPhase(sn: string): 'mowing' | 'charging' | 'aborted' | '
  *  achteruit een obstakel in rijden. Default false, gelijk aan de
  *  firmware-default; de rand-dag watcher (die per definitie op een gedockte
  *  maaier vuurt) geeft expliciet true mee. */
+/** device_settings key: '1' = edge cut with obstacle detection Low (#142). */
+export const EDGE_OBSTACLE_LEVEL_KEY = 'edge_obstacle_level';
+export function edgeObstacleLevel(sn: string): number {
+  const row = deviceSettingsRepo.findBySn(sn).find(r => r.key === EDGE_OBSTACLE_LEVEL_KEY);
+  return row?.value === '1' ? 1 : 0;
+}
+
 export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {
   if (!sn) return { ok: false, error: 'sn required' };
   if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);
   // start_edge_cut is een extended commando: op stock firmware hoort niemand het.
   if (!isOpenNovaMower(sn, deviceCache.get(sn))) return refuse(M`vereist OpenNova custom firmware`);
-  publishExtendedCommand(sn, { start_edge_cut: { mapName, bladeHeight: bladeHeightMm, departFromDock } });
-  console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm departFromDock=${departFromDock}`);
+  const cmd: Record<string, unknown> = { mapName, bladeHeight: bladeHeightMm, departFromDock };
+  // #142: edge cut with obstacle detection Low, a per-mower setting. The
+  // firmware switches the perception before the NTCP goal and restores it
+  // after; a firmware without the param ignores the key.
+  if (edgeObstacleLevel(sn) === 1) cmd.obstacleLevel = 1;
+  publishExtendedCommand(sn, { start_edge_cut: cmd });
+  console.log(`[MowingService] start_edge_cut: sn=${sn} map=${mapName} blade=${bladeHeightMm}mm departFromDock=${departFromDock}${cmd.obstacleLevel ? ' obstacleLevel=1' : ''}`);
   return { ok: true };
 }
 

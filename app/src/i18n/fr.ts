@@ -895,6 +895,8 @@ export default {
   msObstacleMedDesc: "Évite les objets",
   msObstacleHigh: "Élevé",
   msObstacleHighDesc: "S'arrête même pour des feuilles",
+  msEdgeObstacleLow: "Coupe des bords avec détection d'obstacles Faible",
+  msEdgeObstacleLowSub: "Le long du bord, les haies et les plantes qui dépassent ne sont pas des obstacles ; les personnes, les animaux et les objets sont toujours détectés",
   msRainTitle: "Pause en cas de pluie",
   msRainOnSub: "Au moins {{mm}} mm ou au moins {{prob}}% dans les {{min}} min",
   msRainOffSub: "La tondeuse continue de tondre sous la pluie",

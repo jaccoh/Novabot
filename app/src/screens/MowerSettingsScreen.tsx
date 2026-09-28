@@ -133,6 +133,8 @@ export default function MowerSettingsScreen() {
   const [frostGuard, setFrostGuard] = useState(false);
   const [frostC, setFrostC] = useState(3);
   // Border seam-fix — loaded from /api/dashboard/seam-fix/:sn, per-mower (opt-in).
+  // #142: edge cut with obstacle detection Low (device_settings edge_obstacle_level).
+  const [edgeLow, setEdgeLow] = useState(false);
   const [seamFixEnabled, setSeamFixEnabled] = useState(false);
   const [seamFixMargin, setSeamFixMargin] = useState(15);
 
@@ -170,6 +172,7 @@ export default function MowerSettingsScreen() {
         const api = new ApiClient(url);
         const { settings } = await api.getDeviceSettings(mowerSn);
         if (!active) return;
+        setEdgeLow(settings.edge_obstacle_level === '1');
 
         const next = {
           sensitivity: 2,
@@ -444,6 +447,20 @@ export default function MowerSettingsScreen() {
 
   const handleRainEnabled = (value: boolean) => saveRain({ enabled: value });
 
+  const handleEdgeLow = useCallback(async (value: boolean) => {
+    if (!mowerSn) return;
+    setEdgeLow(value);
+    try {
+      const url = await getServerUrl();
+      if (!url) return;
+      await fetch(`${url}/api/dashboard/sensor-override/${encodeURIComponent(mowerSn)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ edge_obstacle_level: value ? '1' : '0' }),
+      });
+    } catch { /* ignore */ }
+  }, [mowerSn]);
+
   const handleSoftRestart = useCallback(async () => {
     if (!mowerSn) return;
     appAlertCompat.alert(
@@ -608,6 +625,22 @@ export default function MowerSettingsScreen() {
                 </View>
               </TouchableOpacity>
             ))}
+            {!stockFw && (
+              <TouchableOpacity
+                style={styles.optionRow}
+                onPress={() => void handleEdgeLow(!edgeLow)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="cut-outline" size={20} color={edgeLow ? colors.emerald : colors.textMuted} />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.optionLabel}>{t('msEdgeObstacleLow')}</Text>
+                  <Text style={styles.optionSub}>{t('msEdgeObstacleLowSub')}</Text>
+                </View>
+                <View style={[styles.toggle, edgeLow && styles.toggleActive]}>
+                  <View style={[styles.toggleThumb, edgeLow && styles.toggleThumbActive]} />
+                </View>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 

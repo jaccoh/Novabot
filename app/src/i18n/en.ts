@@ -525,6 +525,8 @@ export default {
   msObstacleMedDesc: 'Avoids objects',
   msObstacleHigh: 'High',
   msObstacleHighDesc: 'Stops even for leaves',
+  msEdgeObstacleLow: 'Edge cutting with obstacle detection Low',
+  msEdgeObstacleLowSub: 'Along the edge, hedges and overhanging plants are not obstacles; people, animals and objects are still detected',
   msRainTitle: 'Pause when raining',
   msRainOnSub: 'At least {{mm}} mm or at least {{prob}}% within {{min}} min',
   msRainOffSub: 'Mower will keep mowing in the rain',

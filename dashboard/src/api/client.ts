@@ -717,6 +717,12 @@ export async function setMaxSpeed(sn: string, speed: number): Promise<CommandRes
  * screen re-open without waiting for a fresh sensor frame. Body fields sit at
  * the top level (same shape the app posts).
  */
+/** The user's saved per-mower settings (device_settings), a flat key→value map. */
+export async function fetchDeviceSettings(sn: string): Promise<Record<string, string>> {
+  const data = await (await get(`${BASE}/device-settings/${encodeURIComponent(sn)}`)).json();
+  return data.settings ?? {};
+}
+
 export async function setSensorOverride(sn: string, fields: Record<string, string | number>): Promise<{ ok?: boolean }> {
   return (await post(`${BASE}/sensor-override/${encodeURIComponent(sn)}`, fields)).json();
 }

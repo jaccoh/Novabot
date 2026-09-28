@@ -2335,6 +2335,12 @@ def handle_start_edge_cut(params, respond):
       bladeHeight:  NTCP goal `blade_height` in mm. Default 40 mm
                     (= 4 cm). Clamped to 20..90 here; coverage_planner
                     itself also clamps anything <20mm.
+      obstacleLevel: 1 = run the edge cut with obstacle detection Low
+                    (#142): detection model + costmap detection ON +
+                    semantic FREE_MOVE before the goal, restored to the
+                    nav-safe segmentation config when the action ends.
+                    Any other value (or absent) leaves the perception as
+                    the last mow set it.
 
     Response:
       accepted → {result: 0, map: <name>, blade_mm: <h>}
@@ -2367,6 +2373,8 @@ def handle_start_edge_cut(params, respond):
         if blade_mm < 20: blade_mm = 20
         if blade_mm > 90: blade_mm = 90
         depart_from_dock = bool((params or {}).get("departFromDock", False))
+        obstacle_level = (params or {}).get("obstacleLevel")
+        obstacle_level = int(obstacle_level) if obstacle_level is not None else None
     except (TypeError, ValueError) as e:
         respond("start_edge_cut_respond", {"result": 1, "error": f"param type error: {e}"})
         return
@@ -2437,6 +2445,12 @@ def handle_start_edge_cut(params, respond):
         "CYCLONEDDS_URI": "file:///root/novabot/shm_config/shm_cyclonedds.xml",
     }
 
+    # Only Low is supported: it is the one level whose configuration is known
+    # and proven on the mower (the cadence used the same calls live). Medium /
+    # High are set by robot_decision at StartCoverageTask and cannot be
+    # replicated here without its set_seg_level state machine.
+    perception_changed = obstacle_level == 1 and _apply_edge_perception_low()
+
     try:
         proc = subprocess.Popen(
             ["bash", "-c", cmd], env=env,
@@ -2445,14 +2459,18 @@ def handle_start_edge_cut(params, respond):
         )
     except Exception as e:
         log(f"start_edge_cut dispatch error: {e}")
+        if perception_changed:
+            _restore_edge_perception()
         respond("start_edge_cut_respond", {"result": 1, "error": f"dispatch_failed: {e}"})
         return
 
-    log(f"start_edge_cut dispatched: map={map_name} blade={blade_mm}mm pid={proc.pid}")
+    log(f"start_edge_cut dispatched: map={map_name} blade={blade_mm}mm "
+        f"obstacle_level={obstacle_level} pid={proc.pid}")
     respond("start_edge_cut_respond", {
         "result": 0,
         "map": map_name,
         "blade_mm": blade_mm,
+        "obstacle_level": obstacle_level if perception_changed else None,
     })
     # Start the running-state event so the app can flip activity → edge_cutting
     # immediately (don't wait for first Feedback block, which can lag ~2s).
@@ -2473,7 +2491,7 @@ def handle_start_edge_cut(params, respond):
     #   Result:
     #       result_status: 100
     #       ...
-    def _monitor_edge_cut(p, log_path="/tmp/edge_cut.log"):
+    def _monitor_edge_cut(p, restore_perception, log_path="/tmp/edge_cut.log"):
         import re as _re
         last_pub = 0.0
         cur_work_status = 150
@@ -2548,9 +2566,16 @@ def handle_start_edge_cut(params, respond):
                 "exit_code": p.returncode,
             })
             log(f"edge_cut monitor end: result_status={result_status} exit={p.returncode}")
+            # Finished, stopped or crashed: the perception must not stay on the
+            # edge-cut configuration for the return to the dock.
+            if restore_perception:
+                try:
+                    _restore_edge_perception()
+                except Exception as ex:
+                    log(f"[edge-perception] restore failed: {ex}")
 
     threading.Thread(
-        target=_monitor_edge_cut, args=(proc,),
+        target=_monitor_edge_cut, args=(proc, perception_changed),
         daemon=True, name="edge-cut-monitor",
     ).start()
 
@@ -6835,6 +6860,54 @@ def _set_semantic_mode_fast(mode, timeout=4.0):
         return _await_future(sem.call_async(req), timeout)
     except Exception:
         return False
+
+
+def _ros2_call_ok(args):
+    """`ros2 service call` fallback for the fast clients; True when it returned 0."""
+    try:
+        return ros2_run(args, timeout=10).returncode == 0
+    except Exception as ex:
+        log(f"[edge-perception] {args[3] if len(args) > 3 else args}: {ex}")
+        return False
+
+
+def _apply_edge_perception_low():
+    """Edge cut with obstacle detection Low (#142): the detection model with the
+    costmap's detection layer ON and the semantic (lawn) boundary ignored
+    (FREE_MOVE), so a hedge or overhanging border plants along the edge are not
+    obstacles while people, animals and objects still are. Stock robot_decision
+    only sets the perception level in StartCoverageTask; the NTCP edge goal
+    inherits whatever the last mow left, which is what made a Medium/High mow
+    skip the edge under the hedge. Returns True when any call went through, so
+    the monitor knows to restore afterwards."""
+    ok_model = _set_infer_model_fast(2) or _ros2_call_ok(
+        ["ros2", "service", "call", "/perception/set_infer_model",
+         "general_msgs/srv/SetUint8", "'{value: 2}'"])
+    ok_det = _set_detection_mode_fast(True) or _ros2_call_ok(
+        ["ros2", "service", "call", "/local_costmap/set_detection_mode",
+         "std_srvs/srv/SetBool", "'{data: true}'"])
+    ok_sem = _set_semantic_mode_fast(1) or _ros2_call_ok(
+        ["ros2", "service", "call", "/local_costmap/set_semantic_mode",
+         "nav2_msgs/srv/SemanticMode", "'{semantic_mode: 1}'"])
+    log(f"[edge-perception] Low applied: model={ok_model} detection={ok_det} free_move={ok_sem}")
+    return ok_model or ok_det or ok_sem
+
+
+def _restore_edge_perception():
+    """After the edge cut: segmentation model, detection layer OFF, FREE_MOVE —
+    the configuration the cadence restores after coverage so navigation and the
+    auto-recharge inherit terrain data (see start_obstacle_detection_cadence).
+    The next StartCoverageTask sets the mower's own level again."""
+    ok_model = _set_infer_model_fast(1) or _ros2_call_ok(
+        ["ros2", "service", "call", "/perception/set_infer_model",
+         "general_msgs/srv/SetUint8", "'{value: 1}'"])
+    ok_det = _set_detection_mode_fast(False) or _ros2_call_ok(
+        ["ros2", "service", "call", "/local_costmap/set_detection_mode",
+         "std_srvs/srv/SetBool", "'{data: false}'"])
+    ok_sem = _set_semantic_mode_fast(1) or _ros2_call_ok(
+        ["ros2", "service", "call", "/local_costmap/set_semantic_mode",
+         "nav2_msgs/srv/SemanticMode", "'{semantic_mode: 1}'"])
+    log(f"[edge-perception] restored: model={ok_model} detection={ok_det} free_move={ok_sem}")
 
 
 def start_obstacle_detection_cadence():

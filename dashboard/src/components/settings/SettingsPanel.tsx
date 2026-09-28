@@ -1,14 +1,15 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ShieldAlert, Gauge, Navigation, RotateCcw, Lightbulb, Volume2, VolumeX,
-  Lock, Search, KeyRound, Send, Brain, Eye, Route, Clock, CloudRain, Compass, Save, Minus, Plus,
+  Lock, Search, KeyRound, Send, Brain, Eye, Route, Clock, CloudRain, Compass, Save, Minus, Plus, Scissors,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { io, Socket } from 'socket.io-client';
 import {
   sendCommand, pinQuery, pinSet, pinVerify, pinRaw, setPerceptionMode, setSemanticMode, getPerceptionStatus,
-  fetchRainSettings, updateRainSettings, type RainSettings, getToken,
+  fetchRainSettings, updateRainSettings, type RainSettings, getToken, fetchDeviceSettings, setSensorOverride,
 } from '../../api/client';
+import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { useToast } from '../common/Toast';
 
 // Headlight brightness levels (set_para_info.headlight = 0..255; 0 = off). The
@@ -109,6 +110,26 @@ export function SettingsPanel({ sn, online, sensors }: Props) {
     setPara(p => ({ ...p, [k]: v }));
   }, []);
 
+  // #142: edge cutting with obstacle detection Low. A per-mower setting the
+  // server reads when it starts an edge cut (device_settings), separate from
+  // the para block above; extended command, so OpenNova firmware only.
+  const edgeLowSupported = isOpenNovaFirmware(sensors.sw_version ?? sensors.version);
+  const [edgeLow, setEdgeLow] = useState(false);
+  useEffect(() => {
+    fetchDeviceSettings(sn).then(s => setEdgeLow(s.edge_obstacle_level === '1')).catch(() => {});
+  }, [sn]);
+  const handleEdgeLow = useCallback(async () => {
+    const next = !edgeLow;
+    setEdgeLow(next);
+    try {
+      await setSensorOverride(sn, { edge_obstacle_level: next ? '1' : '0' });
+      toast(t('settings.saved', 'Instellingen opgeslagen'), 'success');
+    } catch {
+      setEdgeLow(!next);
+      toast(t('settings.mower.saveFailed', 'Kon instellingen niet opslaan'), 'error');
+    }
+  }, [sn, edgeLow, t, toast]);
+
   const handleSave = useCallback(async () => {
     setBusy(true);
     try {
@@ -149,6 +170,20 @@ export function SettingsPanel({ sn, online, sensors }: Props) {
         colors={['text-green-400', 'text-yellow-400', 'text-red-400']}
         onChange={(v) => setField('sensitivity', v)}
       />
+      {edgeLowSupported && (
+        <div className="space-y-1">
+          <div className="flex">
+            <ToggleRow
+              icon={Scissors}
+              label={t('settings.edgeObstacleLow')}
+              active={edgeLow}
+              disabled={!online}
+              onToggle={() => void handleEdgeLow()}
+            />
+          </div>
+          <p className="text-[11px] text-gray-500 px-1">{t('settings.edgeObstacleLowHint')}</p>
+        </div>
+      )}
 
       {/* Default mowing direction (path_direction 0..180°, 15° steps) */}
       <DirectionStepper

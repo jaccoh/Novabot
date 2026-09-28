@@ -523,6 +523,8 @@ export default {
   msObstacleMedDesc: 'Ontwijkt objecten',
   msObstacleHigh: 'Hoog',
   msObstacleHighDesc: 'Stopt zelfs voor blaadjes',
+  msEdgeObstacleLow: 'Randmaaien met obstakeldetectie Laag',
+  msEdgeObstacleLowSub: 'Langs de rand zijn heggen en overhangende planten geen obstakel; mensen, dieren en voorwerpen worden nog steeds gedetecteerd',
   msRainTitle: 'Pauzeren bij regen',
   msRainOnSub: 'Minstens {{mm}} mm of minstens {{prob}}% binnen {{min}} min',
   msRainOffSub: 'Maaier blijft maaien in de regen',
