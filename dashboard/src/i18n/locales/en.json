@@ -297,6 +297,27 @@
     "dragHint": "Drag to move"
   },
   "map": {
+    "copyAuto": {
+      "title": "Measure source mower automatically",
+      "description": "The source mower reverses about 50 cm, measures, reverses another 20 cm, measures again and docks using its camera. Keep this wizard open.",
+      "confirm": "I am beside the source mower. It is on its own dock and the straight 1.2 m departure path is clear.",
+      "start": "Start reversing, measuring and docking",
+      "stop": "Stop measurement cycle",
+      "stopping": "Stop requested; waiting for the mower.",
+      "stopped": "Measurement cycle stopped.",
+      "phases": {
+        "starting": "Starting",
+        "checking": "Checking own dock and localization",
+        "reverse_first": "Reversing about 50 cm",
+        "measure_first": "Settling and first dock measurement",
+        "reverse_second": "Reversing another 20 cm",
+        "measure_second": "Settling and second dock measurement",
+        "docking": "Visually returning to own dock",
+        "verifying": "Checking charging contact and position",
+        "done": "Source measurements completed",
+        "error": "Measurement cycle aborted"
+      }
+    },
     "workArea": "Work area",
     "obstacle": "Obstacle",
     "channel": "Channel",
@@ -497,7 +518,7 @@
       "target_second": "Move {{target}} about 20 cm in front of that same dock of {{source}}. Keep the pattern visible, stop and measure again.",
       "ready": "The measurements are complete. Return {{target}} to its OWN dock until it makes charging contact. Keep {{source}} stationary with good RTK reception too. Check the preview and apply the copy. Both mowers must remain stationary until installation is confirmed."
     },
-    "copyAlignmentManual": "Drive the mowers yourself with the existing joystick. This wizard sends no movement commands.",
+    "copyAlignmentManual": "Manual measurement with the joystick remains available. Drive the target mower yourself; do not dock it on the source station.",
     "copyAlignmentConfirm": "I confirm the mower is viewing the physical dock of {{source}}. The pattern alone does not identify the station.",
     "copyAlignmentCapture": "Stopped · Capture measurement",
     "copyAlignmentPreview": "On own dock · Check preview",

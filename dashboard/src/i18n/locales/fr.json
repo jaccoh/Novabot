@@ -265,6 +265,27 @@
     "dragHint": "Faire glisser pour déplacer"
   },
   "map": {
+    "copyAuto": {
+      "title": "Mesurer automatiquement la tondeuse source",
+      "description": "La tondeuse source recule d’environ 50 cm, mesure, recule encore de 20 cm, mesure à nouveau puis rejoint sa station avec la caméra. Gardez cet assistant ouvert.",
+      "confirm": "Je suis près de la tondeuse source. Elle est sur sa propre station et le trajet droit de sortie de 1,2 m est libre.",
+      "start": "Lancer le recul, les mesures et l’amarrage",
+      "stop": "Arrêter le cycle de mesure",
+      "stopping": "Arrêt demandé ; attente de la tondeuse.",
+      "stopped": "Cycle de mesure arrêté.",
+      "phases": {
+        "starting": "Démarrage",
+        "checking": "Vérification de la station et de la localisation",
+        "reverse_first": "Recul d’environ 50 cm",
+        "measure_first": "Immobilisation et première mesure",
+        "reverse_second": "Recul de 20 cm supplémentaires",
+        "measure_second": "Immobilisation et deuxième mesure",
+        "docking": "Retour visuel sur la station d’origine",
+        "verifying": "Vérification du contact de charge et de la position",
+        "done": "Mesures source terminées",
+        "error": "Cycle de mesure interrompu"
+      }
+    },
     "workArea": "Zone de travail",
     "obstacle": "Obstacle",
     "channel": "Canal",
@@ -465,7 +486,7 @@
       "target_second": "Déplacez {{target}} d’environ 20 cm devant cette même station de {{source}}. Gardez le motif en vue, arrêtez-vous et mesurez à nouveau.",
       "ready": "Les mesures sont terminées. Ramenez {{target}} sur sa PROPRE station jusqu’au contact de charge. Gardez aussi {{source}} immobile avec une bonne réception RTK. Vérifiez l’aperçu et appliquez la copie. Les deux tondeuses doivent rester immobiles jusqu’à confirmation de l’installation."
     },
-    "copyAlignmentManual": "Conduisez vous-même les tondeuses avec le joystick existant. Cet assistant n’envoie aucune commande de déplacement.",
+    "copyAlignmentManual": "La mesure manuelle au joystick reste disponible. Conduisez vous-même la tondeuse cible sans l’amarrer à la station source.",
     "copyAlignmentConfirm": "Je confirme que la tondeuse regarde la station physique de {{source}}. Le motif seul n’identifie pas la station.",
     "copyAlignmentCapture": "À l’arrêt · Enregistrer la mesure",
     "copyAlignmentPreview": "Sur sa station · Vérifier l’aperçu",

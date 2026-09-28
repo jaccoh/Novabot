@@ -348,6 +348,21 @@ export async function captureZoneCopyAlignment(sn: string, source: string, canon
   return res.json();
 }
 
+export interface SourceDockCycle {
+  cycleId: string;
+  phase: 'starting' | 'checking' | 'reverse_first' | 'measure_first' | 'reverse_second' | 'measure_second' | 'docking' | 'verifying' | 'done' | 'error';
+  error?: string;
+  alignment?: ZoneCopyAlignment;
+}
+export async function startSourceDockCycle(sn: string, source: string, canonical: string, cycleId: string): Promise<SourceDockCycle> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/alignment/auto-source`, { canonical, cycleId, supervised: true });
+  return res.json();
+}
+export async function controlSourceDockCycle(sn: string, source: string, cycleId: string, action: 'pulse' | 'stop'): Promise<SourceDockCycle> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/alignment/auto-source/${encodeURIComponent(cycleId)}`, { action });
+  return res.json();
+}
+
 /** Plan zonder te schrijven. Invoerfouten (400/404/409) komen als Error met de servertekst. */
 export async function previewZoneCopy(sn: string, source: string, canonical: string, alignmentId: string, withObstacles = true, replaceCanonical?: string): Promise<ZoneCopyPlan> {
   const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, alignmentId, withObstacles, replaceCanonical });

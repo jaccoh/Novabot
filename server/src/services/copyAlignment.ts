@@ -217,13 +217,14 @@ function observation(raw: Record<string, unknown> | null, signature: string, sta
   return o;
 }
 
-/** Each command observes only; the user drives between the four captures. */
-export async function captureCopyAlignment(alignmentId: string, side: CopyAlignmentSide): Promise<CopyAlignmentView> {
+/** Observation only; callers may hold the lease across supervised source movements. */
+export async function captureCopyAlignment(alignmentId: string, side: CopyAlignmentSide, owner?: MowerMapOperation): Promise<CopyAlignmentView> {
   const s = session(alignmentId);
   const expectedPhase = phase(s);
   if ((side !== 'source' && side !== 'target') || !expectedPhase.startsWith(side)) return fail('Complete the dock measurements in the shown order.');
   const sn = side === 'source' ? s.sourceSn : s.targetSn;
-  return withMowerMapOperation(sn, async operation => {
+  const capture = async (operation: MowerMapOperation) => {
+    assertMowerMapOperation(sn, operation);
     if (!stablePosition(sn)) return fail('Stop the mower and wait for stable RTK Fixed localization before measuring.');
     matches(s, side, await readMowerMapSnapshot(sn, operation));
     const startedAt = performance.now();
@@ -251,7 +252,8 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
     s.captures[side].push(measured);
     s.lastCaptureFinished[side] = measured.capture_finished;
     return view(s);
-  });
+  };
+  return owner ? capture(owner) : withMowerMapOperation(sn, capture);
 }
 
 /** Both leases remain held through fresh observations, device install and the caller's commit. */

@@ -75,3 +75,28 @@ describe('mower map operations', () => {
     });
   });
 });
+
+it('owns measurement motion and arm commands, while stop/manual control interrupts its cycle', async () => {
+  expect(isMapOperationCommandBlocked('A', { dock_measurement_move: {} })).toBe(true);
+  expect(isMapOperationCommandBlocked('A', { dock_measurement_control: { action: 'arm' } })).toBe(true);
+  await withMowerMapOperation('A', async operation => {
+    const interrupted = vi.fn(); operation.onManualControl = interrupted;
+    for (const cmd of ['dock_measurement_move', 'dock_measurement_control']) {
+      const count = mqtt.sent.length;
+      const pending = operation.command(cmd, { action: cmd === 'dock_measurement_control' ? 'arm' : 'reverse' }, 1000);
+      await vi.waitFor(() => expect(mqtt.sent).toHaveLength(count + 1));
+      const body = mqtt.sent.at(-1)!.body;
+      expect(isMapOperationCommandBlocked('A', body)).toBe(false);
+      for (const handler of mqtt.handlers.get('A') ?? []) handler({ [`${cmd}_respond`]: { result: 0, operation_id: body[cmd].operation_id } });
+      await pending;
+      expect(isMapOperationCommandBlocked('A', body)).toBe(true);
+    }
+    for (const command of ['start_move', 'stop_move', 'mst', 'stop_navigation', 'stop_task', 'stop_run', 'pause_navigation', 'pause_run', 'stop_to_charge', 'stop_mow_zone', 'stop_boundary_follow']) {
+      interrupted.mockClear();
+      expect(isMapOperationCommandBlocked('A', { [command]: {} })).toBe(false);
+      expect(interrupted).toHaveBeenCalledOnce();
+    }
+    expect(isMapOperationCommandBlocked('A', { dock_measurement_control: { action: 'stop' } })).toBe(false);
+    expect(isMapOperationCommandBlocked('A', { go_to_charge: {} })).toBe(true);
+  });
+});

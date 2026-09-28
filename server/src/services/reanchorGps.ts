@@ -51,6 +51,6 @@ export async function measureReanchorDock(sn: string, operation: MowerMapOperati
   // the full rotated lever arm; a large temporary offset was rejected above.
   const expected: Origin = { x: origin.x + base.x - runtime.x - dock.x,
     y: origin.y + base.y - runtime.y - dock.y, z: 0, utm_zone: origin.utm_zone };
-  return { expected, signature, base, dist: Math.hypot(base.x - dock.x, base.y - dock.y),
+  return { expected, signature, runtime, base, dist: Math.hypot(base.x - dock.x, base.y - dock.y),
     latestDist: Math.hypot(state.pose.x - dock.x, state.pose.y - dock.y) };
 }

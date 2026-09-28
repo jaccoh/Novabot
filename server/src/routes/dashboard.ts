@@ -72,6 +72,7 @@ import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
 import { installZoneCopy } from '../services/installZoneCopy.js';
 import { beginCopyAlignment, captureCopyAlignment, getCopyAlignment, validateCopyAlignment, consumeCopyAlignment } from '../services/copyAlignment.js';
+import { startSourceDockCycle, sourceDockCycle } from '../services/sourceDockCycle.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
@@ -1971,6 +1972,25 @@ dashboardRouter.get('/maps/:sn/measurement', (req: Request, res: Response) => {
   const measurementId = crypto.randomUUID();
   mapMeasurements.set(measurementId, { sn, x: sample.x, y: sample.y, at: Date.now(), signature: mapSignature(sn), revision: getFrameRevision(sn) });
   res.json({ ok: true, ...sample, measurementId });
+});
+
+dashboardRouter.post('/maps/:sn/copy-from/:source/alignment/auto-source', (req: Request, res: Response) => {
+  const { sn, source } = req.params;
+  if (rejectUnlessOpenNova(source, req, res, M`Een zone kopiëren`)) return;
+  const { canonical, cycleId, supervised } = req.body ?? {};
+  if (typeof canonical !== 'string' || typeof cycleId !== 'string' || supervised !== true) {
+    res.status(400).json({ error: 'Bevestig dat je bij de bronmaaier staat en de rechte uitrit vrij is.' }); return;
+  }
+  try { res.json(startSourceDockCycle(cycleId, sn, source, canonical)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
+
+dashboardRouter.post('/maps/:sn/copy-from/:source/alignment/auto-source/:cycleId', (req: Request, res: Response) => {
+  const { sn, source, cycleId } = req.params;
+  const action = req.body?.action;
+  if (action !== 'pulse' && action !== 'stop') { res.status(400).json({ error: 'Invalid cycle action.' }); return; }
+  try { res.json(sourceDockCycle(cycleId, sn, source, action)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
 });
 
 dashboardRouter.post('/maps/:sn/copy-from/:source/alignment', async (req: Request, res: Response) => {

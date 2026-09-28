@@ -9,12 +9,13 @@ export interface MowerMapOperation {
   readonly sn: string;
   readonly id: string;
   command(cmd: string, params: Record<string, unknown>, timeoutMs: number): Promise<Record<string, unknown> | null>;
+  onManualControl?: () => void;
 }
 
 const active = new Map<string, MowerMapOperation>();
 const ownedCommands = new Map<string, Set<string>>();
 const NAVIGATION_COMMANDS = new Set(['go_to_charge', 'start_navigation', 'start_run', 'start_edge_cut', 'mow_zone', 'auto_recharge', 'go_pile', 'nav_to_point', 'follow_unicom', 'return_to_dock', 'calibration_drive']);
-const MANAGED_WRITES = new Set(['write_map_files', 'sync_map', 'regenerate_per_map_files', 'reanchor_pos', 'set_pos_origin']);
+const MANAGED_COMMANDS = new Set(['write_map_files', 'sync_map', 'regenerate_per_map_files', 'reanchor_pos', 'set_pos_origin', 'dock_measurement_move']);
 const MAP_COMMANDS = new Set(['measure_dock_marker', 'measure_runtime_frame', 'read_map_files', 'write_map_files', 'sync_map', 'regenerate_per_map_files', 'reanchor_pos', 'set_pos_origin', 'restart_mapping', 'set_coverage_planner_radius', 'save_map', 'delete_map', 'save_recharge_pos', 'start_mapping']);
 
 export function isMowerMapOperationBusy(sn: string): boolean { return active.has(sn); }
@@ -23,8 +24,13 @@ export function isMowerMapOperationBusy(sn: string): boolean { return active.has
 export function isMapOperationCommandBlocked(sn: string, command: Record<string, unknown>): boolean {
   return Object.entries(command).some(([cmd, params]) => {
     const busy = active.has(sn);
+    if (busy && ['start_move', 'stop_move', 'mst', 'stop_navigation', 'stop_task', 'stop_run', 'pause_navigation', 'pause_run', 'stop_to_charge', 'stop_mow_zone', 'stop_boundary_follow'].includes(cmd)) active.get(sn)?.onManualControl?.();
+    if (cmd === 'dock_measurement_control' && (params as { action?: string } | null)?.action === 'arm') {
+      const id = (params as { operation_id?: string }).operation_id;
+      return !id || !ownedCommands.get(sn)?.has(id);
+    }
     if (busy && NAVIGATION_COMMANDS.has(cmd)) return true;
-    if (!MANAGED_WRITES.has(cmd) && (!busy || !MAP_COMMANDS.has(cmd))) return false;
+    if (!MANAGED_COMMANDS.has(cmd) && (!busy || !MAP_COMMANDS.has(cmd))) return false;
     const id = params && typeof params === 'object' ? (params as Record<string, unknown>).operation_id : undefined;
     return typeof id !== 'string' || !ownedCommands.get(sn)?.has(id);
   });

@@ -265,6 +265,27 @@
     "dragHint": "Zum Verschieben ziehen"
   },
   "map": {
+    "copyAuto": {
+      "title": "Quellmäher automatisch messen",
+      "description": "Der Quellmäher fährt etwa 50 cm rückwärts, misst, fährt weitere 20 cm zurück, misst erneut und dockt mit der Kamera an. Lassen Sie diesen Assistenten geöffnet.",
+      "confirm": "Ich stehe beim Quellmäher. Er steht auf seiner eigenen Station und der gerade Ausfahrweg von 1,2 m ist frei.",
+      "start": "Rückwärtsfahrt, Messung und Andocken starten",
+      "stop": "Messzyklus stoppen",
+      "stopping": "Stopp angefordert; auf den Mäher warten.",
+      "stopped": "Messzyklus gestoppt.",
+      "phases": {
+        "starting": "Starten",
+        "checking": "Eigene Station und Lokalisierung prüfen",
+        "reverse_first": "Etwa 50 cm rückwärts fahren",
+        "measure_first": "Stillstand und erste Dockmessung",
+        "reverse_second": "Weitere 20 cm rückwärts fahren",
+        "measure_second": "Stillstand und zweite Dockmessung",
+        "docking": "Visuell zur eigenen Station zurückkehren",
+        "verifying": "Ladekontakt und Position prüfen",
+        "done": "Quellmessungen abgeschlossen",
+        "error": "Messzyklus abgebrochen"
+      }
+    },
     "workArea": "Arbeitsbereich",
     "obstacle": "Hindernis",
     "channel": "Kanal",
@@ -465,7 +486,7 @@
       "target_second": "Bewege {{target}} etwa 20 cm vor demselben Dock von {{source}}. Halte das Muster im Bild, halte an und miss erneut.",
       "ready": "Die Messungen sind vollständig. Stelle {{target}} zurück auf seine EIGENE Ladestation, bis Ladekontakt besteht. Lass auch {{source}} bei gutem RTK-Empfang stillstehen. Prüfe die Vorschau und übertrage die Kopie. Beide Mäher müssen stillstehen, bis die Installation bestätigt ist."
     },
-    "copyAlignmentManual": "Steuere die Mäher selbst mit dem vorhandenen Joystick. Dieser Assistent sendet keine Fahrbefehle.",
+    "copyAlignmentManual": "Manuelle Messungen mit dem Joystick bleiben möglich. Steuern Sie den Zielmäher selbst; docken Sie ihn nicht an der Quellstation an.",
     "copyAlignmentConfirm": "Ich bestätige, dass der Mäher auf das echte Dock von {{source}} blickt. Das Muster allein identifiziert die Station nicht.",
     "copyAlignmentCapture": "Steht still · Messung aufnehmen",
     "copyAlignmentPreview": "Am eigenen Dock · Vorschau prüfen",

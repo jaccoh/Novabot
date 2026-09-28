@@ -368,6 +368,27 @@
     "dragHint": "Sleep om te verplaatsen"
   },
   "map": {
+    "copyAuto": {
+      "title": "Bronmaaier automatisch meten",
+      "description": "De bronmaaier rijdt circa 50 cm achteruit, meet, rijdt nog 20 cm achteruit, meet opnieuw en dockt via de camera. Houd deze wizard open.",
+      "confirm": "Ik sta bij de bronmaaier. Hij staat op zijn eigen dock en de rechte uitrit van 1,2 m is vrij.",
+      "start": "Start uitrijden, meten en docken",
+      "stop": "Stop meetcyclus",
+      "stopping": "Stop aangevraagd; wachten op de maaier.",
+      "stopped": "Meetcyclus gestopt.",
+      "phases": {
+        "starting": "Starten",
+        "checking": "Eigen dock en lokalisatie controleren",
+        "reverse_first": "Circa 50 cm achteruitrijden",
+        "measure_first": "Stilstand en eerste dockmeting",
+        "reverse_second": "Nog circa 20 cm achteruitrijden",
+        "measure_second": "Stilstand en tweede dockmeting",
+        "docking": "Visueel terugdocken op eigen dock",
+        "verifying": "Laadcontact en positie controleren",
+        "done": "Bronmetingen geslaagd",
+        "error": "Meetcyclus afgebroken"
+      }
+    },
     "workArea": "Werkgebied",
     "obstacle": "Obstakel",
     "channel": "Kanaal",
@@ -568,7 +589,7 @@
       "target_second": "Verplaats {{target}} ongeveer 20 cm vóór datzelfde dock van {{source}}. Houd het patroon in beeld, laat de maaier stilstaan en meet opnieuw.",
       "ready": "De metingen zijn compleet. Zet {{target}} terug op zijn EIGEN dock tot hij laadcontact heeft. Laat ook {{source}} stilstaan met goede RTK-ontvangst. Controleer de voorvertoning en pas de kopie toe. Beide maaiers moeten blijven stilstaan totdat de installatie is bevestigd."
     },
-    "copyAlignmentManual": "Bedien de maaiers zelf met de bestaande joystick. Deze wizard stuurt geen rijcommando’s.",
+    "copyAlignmentManual": "Handmatig meten blijft mogelijk met de joystick. De doelmaaier bedien je zelf; laat hem niet op het brondock docken.",
     "copyAlignmentConfirm": "Ik bevestig dat de maaier naar het fysieke dock van {{source}} kijkt. Het patroon alleen identificeert het station niet.",
     "copyAlignmentCapture": "Staat stil · Meting opnemen",
     "copyAlignmentPreview": "Op eigen dock · Voorvertoning controleren",

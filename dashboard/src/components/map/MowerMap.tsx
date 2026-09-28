@@ -12,6 +12,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { MapData, MapCalibration, GpsPoint, DeviceState, LocalPoint } from '../../types';
 import { DroneOverlayLayer } from './DroneOverlay';
+import { SourceDockMeasurement } from './SourceDockMeasurement';
 import { RenderPicture, type RenderOverlay } from './RenderPicture';
 import { RenderMaker } from './RenderMaker';
 import { useDialog } from '../common/Dialog';
@@ -113,7 +114,7 @@ interface CopyPanelState {
   replaceCanonical: string | null;
   withObstacles: boolean;
   plan: ZoneCopyPlan | null;
-  pending: 'source' | 'capture' | 'preview' | 'apply' | null;
+  pending: 'source' | 'capture' | 'preview' | 'apply' | 'auto' | null;
   error: string | null;
   alignment: ZoneCopyAlignment | null;
   atSourceDock: boolean;
@@ -5226,6 +5227,14 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                 </label>
                 {copyPanel.canonical && (
                   <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
+                    {copyPhase === 'source_first' && sn && copyPanel.sourceSn && <SourceDockMeasurement
+                      key={`${sn}:${copyPanel.sourceSn}:${copyPanel.canonical}`}
+                      sn={sn} source={copyPanel.sourceSn} canonical={copyPanel.canonical} disabled={!!copyPanel.pending}
+                      onBusy={busy => setCopyPanel(prev => prev ? { ...prev, pending: busy ? 'auto' : null, plan: null } : prev)}
+                      onComplete={alignment => setCopyPanel(prev => prev && prev.sourceSn === alignment.sourceSn && prev.canonical === alignment.canonical
+                        ? { ...prev, alignment, pending: null, atSourceDock: false, plan: null, error: null } : prev)}
+                    />}
+                    {copyPanel.pending !== 'auto' && <>
                     <p className="text-xs font-medium text-amber-300">{t('map.copyAlignmentStep', { step: copyStep })}</p>
                     <p className="text-[11px] leading-snug text-gray-200">{t(`map.copyAlignment.${copyPhase}`, { source: copySourceName, target: sn })}</p>
                     <p className="text-[11px] leading-snug text-gray-400">{t('map.copyAlignmentManual')}</p>
@@ -5247,6 +5256,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                         {t('map.copyAlignmentRestart')}
                       </button>
                     )}
+                    </>}
                     <p className="text-[11px] leading-snug text-amber-300">{t('map.copyAlignmentTestNotice')}</p>
                   </div>
                 )}
