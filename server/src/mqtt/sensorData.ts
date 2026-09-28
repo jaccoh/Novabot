@@ -414,6 +414,9 @@ const gpsTrails = new Map<string, TrailPoint[]>();
 // a fresh trail. Starts true so the first session after a server start is
 // clean.
 const trailSessionClosed = new Map<string, boolean>();
+/** recharge_status values that mean "driving back to the dock" (same set as
+ *  dashboard/src/utils/mowerActivity.ts RETURNING_RECHARGE_STATUS). */
+const RETURNING_RECHARGE_STATUS = new Set([1, 2, 50, 53, 191, 192, 193]);
 
 function isTaskClosed(msg: string, taskMode: string, active: boolean): boolean {
   if (active) return false;
@@ -483,9 +486,12 @@ export function _trackMowProgress(sn: string, snValues: Map<string, string>, act
 /** Called for every sensor batch. Closes the session on a terminal state and
  *  clears both trails on the first active sample after that. Exported for
  *  tests. */
-export function _trackTrailSession(sn: string, msg: string, taskMode: string, active: boolean): void {
+export function _trackTrailSession(sn: string, msg: string, taskMode: string, active: boolean, returning = false): void {
   if (isTaskClosed(msg, taskMode, active)) { trailSessionClosed.set(sn, true); return; }
-  if (active && (trailSessionClosed.get(sn) ?? true)) {
+  // The return to the dock after a finished task is still that session: stock
+  // 5.7.1 reports it as Work:MOVING with recharge_status 50/53 (#31), which
+  // wiped the trail right after finishing (#140). Only a new mow clears.
+  if (active && !returning && (trailSessionClosed.get(sn) ?? true)) {
     gpsTrails.delete(sn);
     localTrails.delete(sn);
     trailSessionClosed.set(sn, false);
@@ -1256,7 +1262,15 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
     || currentMsg.includes('Work:COVERING')
     || currentMsg.includes('Work:MOVING');
 
-  _trackTrailSession(sn, currentMsg, taskMode, isActive);
+  // Driving back to the dock (numeric recharge_status per #31, or the msg tags)
+  // is not a new task; a live mowing tag always wins so a fresh mow that starts
+  // while a stale recharge_status lingers still opens a new trail session.
+  const rechargeStatus = parseInt(snValues.get('recharge_status') ?? '0', 10) || 0;
+  const returning = !/Work:(RUNNING|NAVIGATING|COVERING|BOUNDARY_COVERING)\b/.test(currentMsg) && (
+    (RETURNING_RECHARGE_STATUS.has(rechargeStatus) && !/Recharge:\s*FINISHED/i.test(currentMsg))
+    || /Recharge:\s*(GOING|ALIGN_PILE|ALIGNING|MOVING|RUNNING|BACK|DOCKING|RETURN_TO_PILE)/i.test(currentMsg)
+    || /Work:(GO_PILE|BACK_CHARGER|DOCKING)\b/.test(currentMsg));
+  _trackTrailSession(sn, currentMsg, taskMode, isActive, returning);
   _trackMowProgress(sn, snValues, isActive);
 
   if (isActive) {

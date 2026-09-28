@@ -57,4 +57,22 @@ describe('trail session lifecycle', () => {
     move('Mode:COVERAGE Work:RUNNING Prev work:CANCELLED Recharge: FINISHED', { work_status: 1 });
     expect(getLocalTrail(SN).length).toBe(1);
   });
+
+  // #140 (stock 5.7.1, waltervl): after FINISHED the return to the dock is
+  // reported as Work:MOVING with recharge_status 50/53 (#31), which counted as
+  // the first sample of a new task and wiped the trail of the session just
+  // mowed. The return trip belongs to the session; only a new mow clears.
+  it('the return to the dock after finishing keeps the trail (stock 5.7.1)', () => {
+    move('Mode:COVERAGE Work:COVERING Prev work:RUNNING Recharge: WAIT', { work_status: 90 });
+    move('Mode:COVERAGE Work:COVERING Prev work:RUNNING Recharge: WAIT', { work_status: 90 });
+    report({ msg: 'Mode:COVERAGE Work:FINISHED Prev work:FINISHED_ONCE Recharge: WAIT', task_mode: 1, work_status: 9 });
+    const mowed = getLocalTrail(SN).length;
+    move('Mode:COVERAGE Work:MOVING Prev work:FINISHED Recharge: WAIT', { work_status: 92, recharge_status: 50 });
+    move('Mode:COVERAGE Work:MOVING Prev work:FINISHED Recharge: WAIT', { work_status: 92, recharge_status: 53 });
+    expect(getLocalTrail(SN).length).toBe(mowed + 2);
+    report({ msg: 'Mode:COVERAGE Work:FINISHED Prev work:MOVING Recharge: FINISHED', task_mode: 0, work_status: 0, recharge_status: 9, battery_state: 'CHARGING' });
+    expect(getLocalTrail(SN).length).toBe(mowed + 2);
+    move('Mode:COVERAGE Work:RUNNING Prev work:FINISHED Recharge: FINISHED', { work_status: 50, recharge_status: 0 });
+    expect(getLocalTrail(SN).length).toBe(1);
+  });
 });
