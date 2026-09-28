@@ -632,6 +632,7 @@ export type ReanchorPhase =
   | 'idle' | 'check' | 'anchor' | 'relock' | 'wait'
   | 'needs_drive' | 'needs_position' | 'dock' | 'verify' | 'done' | 'error';
 export interface ReanchorStatus {
+  protocol?: string; cycleId?: string; active?: boolean; installPending?: boolean; verificationPending?: boolean;
   phase: ReanchorPhase;
   message: string;
   msgKey?: string;
@@ -647,12 +648,13 @@ export interface ReanchorStatus {
 
 export async function reanchorAction(
   sn: string,
-  action: 'auto' | 'continue_dock' | 'verify',
-): Promise<{ ok: boolean; error?: string; message?: string }> {
+  action: 'auto' | 'pulse' | 'stop',
+  options: { cycleId?: string; mode?: 'supervised-v2'; ownDockUnmoved?: boolean } = {},
+): Promise<{ ok: boolean; error?: string; message?: string; cycleId?: string }> {
   const res = await apiFetch(`${BASE}/reanchor/${encodeURIComponent(sn)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action }),
+    body: JSON.stringify({ action, ...options }),
   });
   return res.json();
 }
@@ -730,26 +732,6 @@ export async function softRestartMower(sn: string, force = false): Promise<{ ok?
     body: JSON.stringify({ force }),
   });
   return res.json().catch(() => ({}));
-}
-
-export interface RecalibrateResult {
-  ok?: boolean;
-  error?: string;
-  batteryState?: string;
-  pose?: { x: number; y: number; theta: number };
-}
-
-/**
- * Overwrite map_info.json's charging pose with the mower's CURRENT reported
- * pose. The mower must be docked + charging; pass `{ force: true }` to override.
- */
-export async function recalibrateChargingPose(sn: string, opts?: { force?: boolean }): Promise<RecalibrateResult> {
-  const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/recalibrate-charging-pose`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ force: opts?.force === true }),
-  });
-  return res.json().catch(() => ({} as RecalibrateResult));
 }
 
 export async function previewPath(sn: string, polygonArea: Array<{ latitude: number; longitude: number }>, covDirection = 0): Promise<CommandResult> {

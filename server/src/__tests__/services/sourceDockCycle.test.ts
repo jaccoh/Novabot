@@ -18,6 +18,7 @@ vi.mock('../../services/copyAlignment.js', () => ({
   getCopyAlignment: () => ({ alignmentId: 'alignment', phase: 'target_first', captures: { source: [] } }),
 }));
 import { startSourceDockCycle, sourceDockCycle } from '../../services/sourceDockCycle.js';
+import { guardedDockMove } from '../../services/dockMotion.js';
 let id: string, elapsed: number;
 const tick = (action: 'pulse' | 'stop' = 'pulse') => sourceDockCycle(id, 'target', 'source', action);
 beforeEach(() => {
@@ -39,6 +40,20 @@ afterEach(async () => {
 });
 const start = () => startSourceDockCycle(id, 'target', 'source', 'map0');
 const advance = async (ms = 100) => { elapsed += ms; await vi.advanceTimersByTimeAsync(ms); };
+
+it.each(['dock-measurement-motion-v2', 'dock-measurement-motion-v3'])('recovery requires native v3 before any movement (%s)', async protocol => {
+  h.command.mockResolvedValue({ result: 0, protocol, docked: true, frame_fingerprint: 'fingerprint' });
+  const move = guardedDockMove('source', { sn: 'source', id: 'lease', reanchor: true, command: h.command },
+    { action: 'dock', distance: 0, fromDock: false, signature: 'fingerprint' }, () => {});
+  if (protocol.endsWith('v2')) {
+    await expect(move).rejects.toThrow('Update extended_commands.py');
+    expect(h.command).toHaveBeenCalledTimes(1);
+  } else {
+    await move;
+    expect(h.command).toHaveBeenLastCalledWith('dock_measurement_move', expect.objectContaining({ recovery: true }), 60_000);
+  }
+  expect(h.publish).toHaveBeenLastCalledWith('source', { dock_measurement_control: { action: 'stop', motion_id: expect.any(String) } });
+});
 
 it('performs two distance-limited reverse steps, validated captures and a confirmed visual dock in order', async () => {
   const events: string[] = [];

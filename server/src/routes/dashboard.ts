@@ -20,12 +20,14 @@ import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGp
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
 import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
-import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, patchLatestZipChargingPose, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
+import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
-import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, setReanchorRelocked } from '../services/frameValidation.js';
+import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
-import { assertReanchorFiles, measureReanchorDock, REANCHOR_TOLERANCE_M } from '../services/reanchorGps.js';
+import { frameSnapshotSignature } from '../services/copyAlignment.js';
+import { guardedDockMove, settleDockMotion } from '../services/dockMotion.js';
+import { assertReanchorFiles, measureReanchorDock, REANCHOR_TOLERANCE_M, type Origin } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
 import { areaFileName, generateMapZipFromDb, gridGpsToLocal, gridLocalToGps, parseMapZip, type GpsPoint, type LocalPoint } from '../mqtt/mapConverter.js';
@@ -119,7 +121,7 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
 }
 
 import { diagnoseConnection } from '../services/connectionDiagnosis.js';
-import { langOf, reqT, M, renderMsg, translator, type Msg, type Translate, type Lang } from '../services/serverText.js';
+import { langOf, reqT, M, renderMsg, type Msg, type Translate, type Lang } from '../services/serverText.js';
 import { droneOverlayRouter } from './droneOverlay.js';
 import { posJsonRequested } from '../services/posJsonGate.js';
 import { connectionEventRepo, mowProgressRepo, dockSamplesRepo } from '../db/repositories/index.js';
@@ -2856,166 +2858,10 @@ dashboardRouter.post('/maps/:sn/dock-and-save', (req: Request, res: Response) =>
   setTimeout(check, 3000);
 });
 
-// Re-anchor the charger pose from the mower's live localization. Reads the
-// latest map_position from the sensor cache, validates it hard (no 0/0/0, no
-// bad localization state, no report_state_robot x==y bug), pushes
-// `recalibrate_charging_pose` to the mower (rewrites map_info.json in csv_file/
-// + x3_csv_file/), and on success ALSO patches the server's `<sn>_latest.zip`
-// map_info.json + persists the theta. The ZIP patch is essential: the app's
-// queryEquipmentMap sources the charger MARKER from that ZIP, not the DB, so
-// without it the app keeps drawing the stale charger after recalibration.
-// Shared by the operator endpoint and the re-anchor 'dock' action.
-async function recalibrateChargingPoseFromCache(
-  sn: string,
-  opts: { force?: boolean },
-  T: Translate = translator('en'),
-): Promise<{ ok: boolean; httpStatus: number; body: Record<string, unknown>; pose?: { x: number; y: number; theta: number } }> {
-  if (!isDeviceOnline(sn)) {
-    return { ok: false, httpStatus: 404, body: { ok: false, error: T`Apparaat is offline` } };
-  }
-
-  const sensors = deviceCache.get(sn);
-  if (!sensors) {
-    return { ok: false, httpStatus: 404, body: { ok: false, error: T`Geen sensordata in de cache voor deze maaier` } };
-  }
-
-  // CRITICAL — use `map_position_*` from report_state_timer_data, NOT
-  // `x/y/theta` from report_state_robot. Stock mqtt_node has a bug where
-  // report_state_robot.y mirrors x verbatim (both fields equal), which
-  // corrupts the charger pose (y becomes wrong). Verified live on
-  // LFIN1231000211 (2026-04-23): robot.x==robot.y, but
-  // timer_data.localization.map_position reports distinct x/y.
-  const xRaw = sensors.get('map_position_x');
-  const yRaw = sensors.get('map_position_y');
-  const thetaRaw = sensors.get('map_position_orientation');
-  if (xRaw == null || yRaw == null || thetaRaw == null) {
-    return { ok: false, httpStatus: 400, body: {
-      ok: false,
-      error: T`De maaier heeft map_position nog niet gemeld: er is eerst een report_state_timer_data-bericht nodig. Probeer het over ~5 s opnieuw.`,
-    } };
-  }
-  const x = Number(xRaw);
-  const y = Number(yRaw);
-  const theta = Number(thetaRaw);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(theta)) {
-    return { ok: false, httpStatus: 400, body: { ok: false, error: T`Ongeldige pose: x=${xRaw} y=${yRaw} theta=${thetaRaw}` } };
-  }
-
-  // Critical — refuse (0, 0, 0). Stock firmware reports map_position as
-  // (0, 0, 0) when localization_state is "Not initialized" (placeholder
-  // value). Writing that as the charger pose corrupts the map frame and
-  // makes the mower drive off-target. Live evidence:
-  //   sensors{ localization_state: "Not initialized", map_position_*: 0 }
-  // Reproduced 2026-05-02 on LFIN1231000211.
-  if (x === 0 && y === 0 && theta === 0) {
-    return { ok: false, httpStatus: 400, body: {
-      ok: false,
-      error: T`De maaier meldde (0, 0, 0): een plaatshouder voor niet-geïnitialiseerde lokalisatie. Rij de maaier een klein stukje van het dock zodat de lokalisatie initialiseert (koersbepaling), laat hem terugkeren naar het dock en probeer het opnieuw.`,
-      hint: T`Stock firmware heeft een rit van het dock en terug nodig voordat de lokalisatie geldig is. Zolang de maaier bij het opstarten gedockt staat, is map_position altijd nul.`,
-    } };
-  }
-
-  // Hard guard on localization state — refuse known-bad states. Stock
-  // firmware reports a mix of literal strings (NOT_INITIALIZED, INITIALIZING,
-  // INITIALIZED, LOST) and free-form labels (RUNNING) depending on the
-  // active node. The server's translateLocalization() only normalises a
-  // subset; anything else passes through verbatim. We allow-pass anything
-  // that is NOT explicitly bad — combined with the (0, 0, 0) refusal above
-  // this is sufficient (a real localized pose is non-zero).
-  const locState = (sensors.get('localization_state') ?? '').toString();
-  const locBad = /^(not[ _]?initialized|initializing|lost|failed|error)$/i.test(locState) || locState === '';
-  if (locBad) {
-    return { ok: false, httpStatus: 400, body: {
-      ok: false,
-      error: T`De lokalisatie van de maaier is "${locState || 'unknown'}". De posewaarden zijn nog niet betrouwbaar. Rij de maaier kort van het dock, laat hem terugkeren en probeer het opnieuw.`,
-      localization_state: locState,
-    } };
-  }
-
-  // Defensive: if somehow x and y are bit-identical the caller hit the
-  // report_state_robot bug upstream. Refuse the write.
-  if (xRaw === yRaw && x !== 0) {
-    return { ok: false, httpStatus: 400, body: {
-      ok: false,
-      error: T`Verdachte pose: x en y zijn exact gelijk (${x}). De firmware van de maaier meldt een onjuiste lokalisatie. Wacht op een verse timer_data-update en probeer het opnieuw.`,
-    } };
-  }
-
-  // Safety: caller must confirm by passing force=true OR mower must be docked.
-  const batteryState = (sensors.get('battery_state') ?? '').toUpperCase();
-  const onDockNow = batteryState === 'CHARGING';
-  if (!onDockNow && !opts.force) {
-    return { ok: false, httpStatus: 400, body: {
-      ok: false,
-      error: T`Batterijstatus is '${batteryState}', niet CHARGING. Zet de maaier eerst op het dock, of POST met {"force": true} om dit te negeren.`,
-      batteryState,
-    } };
-  }
-
-  // Wire up extended-response listener BEFORE publishing to avoid race.
-  const { publishToExtended, onExtendedResponse, offExtendedResponse } = await import('../mqtt/mapSync.js');
-
-  const result = await new Promise<{ ok: boolean; respond?: Record<string, unknown>; timeout?: boolean }>((resolve) => {
-    let settled = false;
-    const handler = (data: Record<string, unknown>) => {
-      const respond = data.recalibrate_charging_pose_respond as Record<string, unknown> | undefined;
-      if (!respond) return;
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: respond.result === 0, respond });
-    };
-    onExtendedResponse(sn, handler);
-    publishToExtended(sn, { recalibrate_charging_pose: { x, y, theta } });
-    setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      offExtendedResponse(sn, handler);
-      resolve({ ok: false, timeout: true });
-    }, 8000);
-  });
-
-  console.log(`[CALIBRATE-POSE] ${sn}: x=${x} y=${y} theta=${theta} result=${JSON.stringify(result)}`);
-  if (result.timeout) {
-    return { ok: false, httpStatus: 504, body: { ok: false, error: T`De maaier antwoordde niet binnen 8 s`, pose: { x, y, theta } }, pose: { x, y, theta } };
-  }
-
-  let zipPatched = false;
-  if (result.ok) {
-    // Persist the operator-confirmed theta so subsequent sync_map / regenerate
-    // calls do NOT clobber the mower yaml with a freshly-drifted live IMU
-    // reading. Without this, getPolygonAnchor falls back to the live sensor
-    // value, which differs by tens of degrees on every reboot / drive cycle
-    // and makes the mower miss the dock or drive into off-polygon obstacles.
-    mapRepo.setPolygonChargingOrientation(sn, theta);
-    // Sync the app-facing charger marker (read from `<sn>_latest.zip`, not the
-    // DB polygon) so queryEquipmentMap immediately reflects the re-anchor.
-    zipPatched = patchLatestZipChargingPose(sn, { x, y, orientation: theta });
-    console.log(`[CALIBRATE-POSE] ${sn}: latest-zip charging_pose patched=${zipPatched}`);
-  }
-
-  return {
-    ok: result.ok,
-    httpStatus: 200,
-    body: { ok: result.ok, pose: { x, y, theta }, zipPatched, respond: result.respond },
-    pose: { x, y, theta },
-  };
-}
-
-// POST /api/dashboard/maps/:sn/recalibrate-charging-pose — overschrijf
-// map_info.json charging_pose met de huidige gerapporteerde mower pose.
-// Gebruik scenario: na ZIP-restore of post-heading-discovery blijkt het
-// map-frame gedraaid/verschoven t.o.v. de fysieke charger. Mower duwt
-// fysiek op dock, battery_state == CHARGING, dan triggert user dit endpoint.
-// Server leest de laatste x/y/theta uit de sensor cache en stuurt
-// extended_command `recalibrate_charging_pose` met die waarden. De mower
-// schrijft het naar csv_file/ én x3_csv_file/ map_info.json.
-dashboardRouter.post('/maps/:sn/recalibrate-charging-pose', async (req: Request, res: Response) => {
-  const { sn } = req.params;
-  const { force } = req.body as { force?: boolean };
-  if (rejectUnlessOpenNova(sn, req, res, M`De laadpositie herijken`)) return;
-  const out = await recalibrateChargingPoseFromCache(sn, { force: force === true }, reqT(req));
-  res.status(out.httpStatus).json(out.body);
+// Kept as an explicit rejection for older dashboards/apps.
+dashboardRouter.post('/maps/:sn/recalibrate-charging-pose', (req: Request, res: Response) => {
+  if (rejectUnlessOpenNova(req.params.sn, req, res, M`Herankeren`)) return;
+  res.status(410).json({ ok: false, error: 'Charging-pose recalibration was retired. Open the reanchor wizard to check the existing dock reference.' });
 });
 
 // POST /api/dashboard/maps/:sn/import-zip — importeer kaarten uit een Novabot ZIP
@@ -3270,130 +3116,174 @@ dashboardRouter.get('/demo/:sn', (req: Request, res: Response) => {
 
 // ── MQTT command publishing ─────────────────────────────────────
 
-// Herankeren verandert uitsluitend de GPS-oorsprong. Het dockanker en de
-// polygonen blijven vast. Alle beweging doet de aanwezige operator per joystick.
-type ReanchorPhase = 'idle' | 'check' | 'anchor' | 'needs_drive' | 'needs_position' | 'verify' | 'done' | 'error';
-interface ReanchorStat { phase: ReanchorPhase; message: Msg; msgKey?: string; ok?: boolean; error?: string; pose?: { x: number; y: number }; dist?: number; ts: number; }
-const reanchorStatus = new Map<string, ReanchorStat>();
-const reanchorCycles = new Map<string, { anchor: { x: number; y: number }; loadedAt: number; relockedAt: number; verify: boolean }>();
-function setReanchor(sn: string, phase: ReanchorPhase, message: Msg, extra: Partial<ReanchorStat> = {}): void {
-  reanchorStatus.set(sn, { phase, message, ts: Date.now(), ...extra });
+// Own-dock recovery uses bounded body-relative motion before trusting the heading.
+class ReanchorError extends Error {
+  constructor(readonly msg: Msg) { super(msg.key); }
 }
-const reanchorOnDock = (sn: string) => freshPositionState(sn).docked;
-const reanchorRtkFixed = (sn: string) => freshPositionState(sn).fixed;
+type ReanchorPhase = 'idle' | 'check' | 'relock' | 'dock' | 'anchor' | 'verify' | 'done' | 'error';
+interface ReanchorStat { phase: ReanchorPhase; message: Msg; ok?: boolean; error?: string; pose?: { x: number; y: number }; dist?: number; ts: number; revision: number; cycleId: string; }
+type ReanchorCycle = { id: string; revision: number; operatorAt: number; startedAt: number; cancelled: boolean; finished: boolean; motionId?: string };
+const reanchorStatus = new Map<string, ReanchorStat>();
+const reanchorCycles = new Map<string, ReanchorCycle>();
 const reanchorSleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+function setReanchor(sn: string, cycle: ReanchorCycle, phase: ReanchorPhase, message: Msg, extra: Partial<ReanchorStat> = {}): void {
+  reanchorStatus.set(sn, { phase, message, ts: Date.now(), revision: cycle.revision, cycleId: cycle.id, ...extra });
+}
+function stopReanchor(sn: string, cycle: ReanchorCycle): void {
+  cycle.cancelled = true;
+  if (cycle.motionId) publishToExtended(sn, { dock_measurement_control: { motion_id: cycle.motionId, action: 'stop' } });
+}
+function checkReanchor(sn: string, cycle: ReanchorCycle): void {
+  if (cycle.cancelled || performance.now() - cycle.operatorAt > 5_000 || performance.now() - cycle.startedAt > 300_000 ||
+      !isDeviceOnline(sn) || getFrameRevision(sn) !== cycle.revision || isMapInstallPending(sn)) {
+    stopReanchor(sn, cycle);
+    throw new ReanchorError(M`Procedure gestopt: toezicht, verbinding of kaartreferentie ontbreekt. Zet de maaier op zijn eigen dock en probeer opnieuw.`);
+  }
+}
+function sameReanchorOrigin(actual: unknown, expected: Origin): boolean {
+  const value = actual as Origin | undefined;
+  return !!value && value.utm_zone === expected.utm_zone && value.z === expected.z &&
+    Number.isFinite(value.x) && Number.isFinite(value.y) && Math.hypot(value.x - expected.x, value.y - expected.y) <= .002;
+}
 
-async function runAutoReanchor(sn: string): Promise<void> {
+async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> {
   try {
     await withMowerMapOperation(sn, async operation => {
-      setReanchorRelocked(sn, false);
+      operation.onManualControl = () => stopReanchor(sn, cycle);
+      // An old client or a lost HTTP start response must never start movement.
+      while (!Number.isFinite(cycle.operatorAt) && !cycle.cancelled && performance.now() - cycle.startedAt < 5_000) await reanchorSleep(100);
+      const check = () => checkReanchor(sn, cycle);
+      check();
       const anchor = getPolygonAnchor(sn);
-      if (!anchor) throw new Error('Dockanker ontbreekt of dockkanalen spreken elkaar tegen.');
-      const snapshot = await readMowerMapSnapshot(sn, operation);
-      if (!snapshot || !snapshotAnchorMatches(snapshot, anchor)) throw new Error('De dockankers in server, kanalen en maaierbestanden spreken elkaar tegen. Eerst onderzoeken; niets gewijzigd.');
-      const savedDock = snapshotDockPose(snapshot);
-      if (!savedDock || Math.hypot(savedDock.x - anchor.x, savedDock.y - anchor.y) > .001) throw new Error('Voor herankeren moeten kanaalanker en opgeslagen dockpositie hetzelfde punt zijn.');
-      const cycle = { anchor: { x: anchor.x, y: anchor.y }, loadedAt: 0, relockedAt: 0, verify: false };
-      reanchorCycles.set(sn, cycle);
-      setReanchor(sn, 'anchor', M`Verse gedockte voertuigpositie en antennetransformatie meten.`);
-      const measured = await measureReanchorDock(sn, operation, snapshot);
-      const currentAnchor = getPolygonAnchor(sn);
-      if (!currentAnchor || Math.hypot(currentAnchor.x - anchor.x, currentAnchor.y - anchor.y) > 0.001) throw new Error('Dockanker gewijzigd tijdens de procedure.');
-      if (measured.dist <= REANCHOR_TOLERANCE_M && measured.latestDist <= REANCHOR_TOLERANCE_M) {
-        clearFrameUnvalidated(sn);
-        setReanchor(sn, 'done', M`Frame gecontroleerd zonder oorsprongwijziging: ${measured.dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: measured.base, dist: measured.dist });
-        return;
+      if (!anchor) throw new ReanchorError(M`Dockanker ontbreekt of dockkanalen spreken elkaar tegen.`);
+      const before = await readMowerMapSnapshot(sn, operation);
+      check();
+      if (!before || !snapshotAnchorMatches(before, anchor)) throw new ReanchorError(M`De dockankers in server, kanalen en maaierbestanden spreken elkaar tegen. Eerst onderzoeken; niets gewijzigd.`);
+      const savedDock = snapshotDockPose(before);
+      if (!savedDock || Math.hypot(savedDock.x - anchor.x, savedDock.y - anchor.y) > .001) throw new ReanchorError(M`Kanaalanker en opgeslagen dockpositie moeten hetzelfde punt zijn.`);
+      const pending = getPendingReanchor(sn);
+      let needsPostWriteCheck = false;
+      if (pending) {
+        // Persisted before dispatch: a timeout/restart cannot erase an uncertain write.
+        const record = JSON.parse(pending) as { backupDir: string; expected: Origin };
+        const backup = JSON.parse(fs.readFileSync(path.join(record.backupDir, 'before.json'), 'utf8')) as { sn: string; snapshot: Record<string, unknown> };
+        if (backup.sn !== sn) throw new ReanchorError(M`Herankerbackup hoort bij een andere maaier.`);
+        assertReanchorFiles(backup.snapshot, before);
+        needsPostWriteCheck = sameReanchorOrigin(JSON.parse(String(before.pos_json)).utm_origin, record.expected);
+        if (!needsPostWriteCheck && before.pos_json !== backup.snapshot.pos_json) throw new ReanchorError(M`De oorsprong wijkt af van zowel de backup als het voorgestelde herstel. Eerst onderzoeken.`);
       }
-      // Exactly one write request. The firmware owns its bounded ROS reload retries.
-      const expected = measured.expected;
-      const backupDir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'reanchor', operation.id);
-      mkdirSync(backupDir, { recursive: true });
-      fs.writeFileSync(path.join(backupDir, 'before.json'), JSON.stringify({ sn, snapshot, measured }), { flag: 'wx' });
-      const response = await operation.command('reanchor_pos', { protocol: 'base-link-reanchor-v1',
-        frame_fingerprint: measured.signature, utm_origin: expected, anchor_x: anchor.x, anchor_y: anchor.y }, 90_000);
-      const actual = response?.utm_origin as { x?: number; y?: number; utm_zone?: number } | undefined;
-      const echoed = response?.anchor as { x?: number; y?: number } | undefined;
-      if (response?.result !== 0 || response.protocol !== 'base-link-reanchor-v1' || !actual || actual.utm_zone !== expected.utm_zone || !Number.isFinite(actual.x) || !Number.isFinite(actual.y) || Math.hypot(actual.x! - expected.x, actual.y! - expected.y) > 0.02 || echoed?.x !== anchor.x || echoed?.y !== anchor.y) {
-        throw new Error('Oorsprong niet aantoonbaar geladen. Uitkomst onzeker; frame blijft geblokkeerd.');
-      }
-      const loaded = await readMowerMapSnapshot(sn, operation);
-      assertReanchorFiles(snapshot, loaded);
-      const loadedOrigin = JSON.parse(String(loaded.pos_json)).utm_origin;
-      if (loadedOrigin.utm_zone !== expected.utm_zone || loadedOrigin.z !== expected.z ||
-          !Number.isFinite(loadedOrigin.x) || !Number.isFinite(loadedOrigin.y) ||
-          Math.hypot(loadedOrigin.x - expected.x, loadedOrigin.y - expected.y) > .002) {
-        throw new Error('Geladen oorsprong wijkt af van de bevestigde voertuigmeting.');
-      }
-      cycle.loadedAt = Date.now();
-      setReanchor(sn, 'needs_drive', M`Rij onder toezicht met de joystick ongeveer één meter van het dock. Wacht op verse RUNNING + RTK Fixed.`);
-      const deadline = Date.now() + 5 * 60_000;
-      while (Date.now() < deadline) {
-        if (!isDeviceOnline(sn)) throw new Error('Verbinding met de maaier verloren. Start de procedure opnieuw.');
-        const current = getPolygonAnchor(sn);
-        if (!current || Math.hypot(current.x - anchor.x, current.y - anchor.y) > 0.001) throw new Error('Dockanker gewijzigd tijdens de procedure.');
-        const state = freshPositionState(sn);
-        if (!cycle.relockedAt && state.dockKnown && !state.docked && state.fixed && state.running && state.pose && state.pose.at > cycle.loadedAt && state.pose.fixed && state.pose.running && !state.pose.docked && Math.hypot(state.pose.x - anchor.x, state.pose.y - anchor.y) >= 0.4) {
-          cycle.relockedAt = state.pose.at;
-          setReanchorRelocked(sn, true);
-          setReanchor(sn, 'needs_position', M`Lokalisatie hersteld. Rij met de joystick terug op het dock en druk op Verifieer.`);
+      disarmEdgeWatch(sn, 'own-dock reanchor');
+      const roundTrip = async (snapshot: Record<string, unknown>, afterWrite: boolean) => {
+        if (!stablePosition(sn, { docked: true })) throw new ReanchorError(M`Begin stilstaand op het eigen dock met vers laadcontact en RTK Fixed.`);
+        const signature = frameSnapshotSignature(snapshot);
+        const move = (action: 'reverse' | 'dock') => guardedDockMove(sn, operation,
+          { action, distance: action === 'reverse' ? .5 : 0, fromDock: action === 'reverse', signature }, check,
+          id => { cycle.motionId = id; });
+        setReanchor(sn, cycle, 'relock', M`De maaier rijdt begrensd achteruit om de richting te initialiseren. Blijf bij de maaier.`);
+        await move('reverse');
+        const outside = await settleDockMotion(sn, false, check);
+        if (afterWrite && Math.hypot(outside.x - anchor.x, outside.y - anchor.y) < .4) throw new ReanchorError(M`Na de oorsprongwijziging is geen verse gelokaliseerde positie minstens 40 cm van het dock gemeten.`);
+        setReanchor(sn, cycle, 'dock', M`De maaier keert met de camera terug op het eigen dock. Blijf toezicht houden.`);
+        await move('dock');
+        await settleDockMotion(sn, true, check);
+        const current = await readMowerMapSnapshot(sn, operation);
+        assertReanchorFiles(snapshot, current);
+        if (current.pos_json !== snapshot.pos_json || !snapshotAnchorMatches(current, anchor)) throw new ReanchorError(M`De kaartreferentie is tijdens de dockrit gewijzigd.`);
+        check();
+        setReanchor(sn, cycle, 'verify', M`Verse gedockte voertuigpositie en antennetransformatie meten.`);
+        const measured = await measureReanchorDock(sn, operation, current);
+        check();
+        const currentAnchor = getPolygonAnchor(sn);
+        if (!currentAnchor || Math.hypot(currentAnchor.x - anchor.x, currentAnchor.y - anchor.y) > .001) throw new ReanchorError(M`Dockanker gewijzigd tijdens de procedure.`);
+        return measured;
+      };
+      let measured = await roundTrip(before, needsPostWriteCheck);
+      if (measured.dist > REANCHOR_TOLERANCE_M || measured.latestDist > REANCHOR_TOLERANCE_M) {
+        if (needsPostWriteCheck) throw new ReanchorError(M`De eerdere oorsprongwijziging is nog niet bevestigd binnen 5 cm. Eerst de meetkwaliteit en het vaste dock onderzoeken.`);
+        check();
+        const expected = measured.expected;
+        const backupDir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'reanchor', operation.id);
+        mkdirSync(backupDir, { recursive: true });
+        fs.writeFileSync(path.join(backupDir, 'before.json'), JSON.stringify({ sn, snapshot: before, measured }), { flag: 'wx' });
+        setPendingReanchor(sn, JSON.stringify({ backupDir, expected }));
+        setReanchor(sn, cycle, 'anchor', M`De gemeten GPS-oorsprong herstellen; dockanker en zones blijven vast.`);
+        const response = await operation.command('reanchor_pos', { protocol: 'base-link-reanchor-v1',
+          frame_fingerprint: measured.signature, utm_origin: expected, anchor_x: anchor.x, anchor_y: anchor.y }, 90_000);
+        check();
+        const echoed = response?.anchor as { x?: number; y?: number } | undefined;
+        if (response?.result !== 0 || response.protocol !== 'base-link-reanchor-v1' || !sameReanchorOrigin(response.utm_origin, expected) || echoed?.x !== anchor.x || echoed?.y !== anchor.y) {
+          throw new ReanchorError(M`Oorsprong niet aantoonbaar geladen. De vervolgcontrole blijft opgeslagen; opnieuw starten leest eerst de uitkomst terug.`);
         }
-        if (cycle.verify && cycle.relockedAt) {
-          cycle.verify = false;
-          setReanchor(sn, 'verify', M`Verse voertuigmeting, dockanker en geladen oorsprong controleren.`);
-          const after = await readMowerMapSnapshot(sn, operation);
-          assertReanchorFiles(loaded, after);
-          if (after.pos_json !== loaded.pos_json || !snapshotAnchorMatches(after, anchor)) throw new Error('Dockanker of oorsprong gewijzigd na het herankeren.');
-          const final = await measureReanchorDock(sn, operation, after);
-          const confirmedAnchor = getPolygonAnchor(sn);
-          if (!confirmedAnchor || Math.hypot(confirmedAnchor.x - anchor.x, confirmedAnchor.y - anchor.y) > .001) throw new Error('Dockanker gewijzigd tijdens de eindmeting.');
-          const dist = final.dist;
-          if (dist > REANCHOR_TOLERANCE_M || final.latestDist > REANCHOR_TOLERANCE_M) throw new Error('Gedockte voertuigpositie wijkt meer dan 5 cm af van het vaste dockanker.');
-          clearFrameUnvalidated(sn);
-          setReanchor(sn, 'done', M`Frame gecontroleerd: ${dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: final.base, dist });
-          return;
-        }
-        await reanchorSleep(500);
+        const loaded = await readMowerMapSnapshot(sn, operation);
+        assertReanchorFiles(before, loaded);
+        if (!sameReanchorOrigin(JSON.parse(String(loaded.pos_json)).utm_origin, expected)) throw new ReanchorError(M`Geladen oorsprong wijkt af van de bevestigde voertuigmeting.`);
+        check();
+        measured = await roundTrip(loaded, true);
+        if (measured.dist > REANCHOR_TOLERANCE_M || measured.latestDist > REANCHOR_TOLERANCE_M) throw new ReanchorError(M`Gedockte voertuigpositie wijkt meer dan 5 cm af van het vaste dockanker.`);
       }
-      throw new Error('Procedure verlopen. Het frame blijft geblokkeerd; start opnieuw op het dock.');
-    });
+      check();
+      setPendingReanchor(sn, null);
+      clearFrameUnvalidated(sn);
+      setReanchor(sn, cycle, 'done', M`Frame gecontroleerd: ${measured.dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: measured.base, dist: measured.dist });
+    }, true);
   } catch (error) {
-    setReanchor(sn, 'error', M`${error instanceof Error ? error.message : String(error)}`, { error: 'reanchor_failed', ok: false });
+    setReanchor(sn, cycle, 'error', error instanceof ReanchorError ? error.msg : M`${error instanceof Error ? error.message : String(error)}`, { error: 'reanchor_failed', ok: false });
   } finally {
-    reanchorCycles.delete(sn);
-    setReanchorRelocked(sn, false);
+    stopReanchor(sn, cycle);
+    cycle.finished = true;
   }
 }
 
 dashboardRouter.get('/reanchor/:sn/status', (req: Request, res: Response) => {
   const { sn } = req.params;
-  const stored = reanchorStatus.get(sn);
-  res.json({ ok: true, status: { ...(stored ?? { phase: 'idle', ts: 0 }), message: stored ? renderMsg(langOf(req), stored.message) : '', onDock: reanchorOnDock(sn), rtkFixed: reanchorRtkFixed(sn), relocked: !!reanchorCycles.get(sn)?.relockedAt } });
+  const saved = reanchorStatus.get(sn);
+  const stored = saved?.revision === getFrameRevision(sn) && !(saved.phase === 'done' && isFrameUnvalidated(sn)) ? saved : undefined;
+  const state = freshPositionState(sn);
+  const cycle = reanchorCycles.get(sn);
+  res.json({ ok: true, status: { protocol: 'supervised-reanchor-v2', ...(stored ?? { phase: 'idle', ts: 0 }), message: stored ? renderMsg(langOf(req), stored.message) : '',
+    active: !!cycle && !cycle.finished, onDock: state.docked, rtkFixed: state.fixed, relocked: false,
+    installPending: isMapInstallPending(sn), verificationPending: !!getPendingReanchor(sn) } });
 });
 
 dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const action = req.body?.action ?? 'auto';
-  if (rejectUnlessOpenNova(sn, req, res, M`Her-ankeren`)) return;
-  if (['drive', 'spin', 'dock'].includes(action)) {
-    res.status(410).json({ ok: false, error: 'Gebruik de begeleide herankerprocedure.' }); return;
-  }
-  if (action === 'verify' || action === 'continue_dock') {
+  const T = reqT(req);
+  if (rejectUnlessOpenNova(sn, req, res, M`Herankeren`)) return;
+  if (action === 'pulse' || action === 'stop') {
     const cycle = reanchorCycles.get(sn);
-    if (!cycle?.relockedAt || cycle.verify || reanchorStatus.get(sn)?.phase !== 'needs_position' || !reanchorOnDock(sn) || !reanchorRtkFixed(sn)) {
-      res.status(409).json({ ok: false, error: 'Eerst binnen deze herankercyclus uitrijden, opnieuw lokaliseren en terugkeren op het dock met Fixed.' }); return;
+    if (!cycle || req.body.cycleId !== cycle.id) { res.status(409).json({ ok: false, error: T`Onbekende herankercyclus.` }); return; }
+    if (action === 'stop') stopReanchor(sn, cycle);
+    else if (!cycle.finished) {
+      if (cycle.cancelled || (Number.isFinite(cycle.operatorAt) ? performance.now() - cycle.operatorAt : performance.now() - cycle.startedAt) >= 5_000) {
+        stopReanchor(sn, cycle); res.status(409).json({ ok: false, error: T`Toezicht verlopen. Start een nieuwe cyclus.` }); return;
+      }
+      cycle.operatorAt = performance.now();
     }
-    cycle.verify = true;
-    res.json({ ok: true, action }); return;
+    res.json({ ok: true }); return;
   }
-  if (isMowerMapOperationBusy(sn)) { res.status(409).json({ ok: false, reason: 'map_operation_busy', error: 'Er loopt al een kaart- of herankeractie.' }); return; }
-  if (action === 'invalidate') { markFrameUnvalidated(sn); res.json({ ok: true, action }); return; }
-  if (action !== 'auto') { res.status(400).json({ ok: false, error: 'Unknown action' }); return; }
-  if (!isFrameUnvalidated(sn) || !isDeviceOnline(sn) || !reanchorOnDock(sn) || !reanchorRtkFixed(sn) || !getPolygonAnchor(sn)) {
-    res.status(409).json({ ok: false, error: 'Herankeren vereist een geblokkeerd frame, online maaier, verse Fixed-dockmeting en eenduidig dockanker.' }); return;
+  if (['drive', 'spin', 'dock', 'verify', 'continue_dock'].includes(action)) {
+    res.status(410).json({ ok: false, error: T`Open de actuele herankerwizard en start de volledige controle.` }); return;
   }
-  setReanchor(sn, 'check', M`Dockanker en maaierbestanden controleren.`);
-  void runAutoReanchor(sn);
-  res.json({ ok: true, action });
+  if (isMowerMapOperationBusy(sn)) { res.status(409).json({ ok: false, error: T`Er loopt al een kaart- of herankeractie.` }); return; }
+  if (action === 'invalidate') { markFrameUnvalidated(sn); reanchorStatus.delete(sn); res.json({ ok: true }); return; }
+  if (action !== 'auto') { res.status(400).json({ ok: false, error: T`Onbekende actie` }); return; }
+  if (req.body.mode !== 'supervised-v2' || req.body.ownDockUnmoved !== true) {
+    res.status(409).json({ ok: false, error: T`Open de bijgewerkte wizard en bevestig dat de maaier op zijn eigen onverplaatste dock staat. Deze procedure omvat rijden onder toezicht.` }); return;
+  }
+  if (isMapInstallPending(sn)) {
+    res.status(409).json({ ok: false, error: T`Een kaartinstallatie is niet bevestigd. Herstel die installatie eerst; herankeren kan deze fout niet oplossen.` }); return;
+  }
+  const state = freshPositionState(sn);
+  if (!isDeviceOnline(sn) || !state.docked || !state.fixed || !getPolygonAnchor(sn)) {
+    res.status(409).json({ ok: false, error: T`Herankeren vereist een online maaier op zijn eigen dock, verse RTK Fixed en een eenduidig dockanker.` }); return;
+  }
+  markFrameUnvalidated(sn, { preservePhotoDock: true });
+  const cycle: ReanchorCycle = { id: crypto.randomUUID(), revision: getFrameRevision(sn), operatorAt: -Infinity, startedAt: performance.now(), cancelled: false, finished: false };
+  reanchorCycles.set(sn, cycle);
+  setReanchor(sn, cycle, 'check', M`Dockanker en maaierbestanden controleren. Bevestiging van toezicht afwachten.`);
+  void runAutoReanchor(sn, cycle);
+  res.json({ ok: true, cycleId: cycle.id });
 });
 
 dashboardRouter.post('/command/:sn', (req: Request, res: Response) => {

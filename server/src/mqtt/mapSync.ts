@@ -30,7 +30,7 @@ import { emitDeviceBound, emitDevicePaired } from '../dashboard/socketHandler.js
 import { gpsToLocal, type GpsPoint, type LocalPoint } from './mapConverter.js';
 import { tryDecrypt } from './decrypt.js';
 import { isSnBanned, isDeviceOnline } from './broker.js';
-import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated } from '../services/frameValidation.js';
+import { isFrameNavBlocked, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending, setPendingReanchor } from '../services/frameValidation.js';
 import { withMowerMapOperation, assertMowerMapOperation, readMowerMapSnapshot, isMapOperationCommandBlocked, isMowerMapOperationBusy, type MowerMapOperation } from '../services/mowerMapOperation.js';
 import { hasPendingMapSync, clearPendingMapSync } from '../services/pendingMapSync.js';
 import { validateMapRasters, type BundleValidation } from '../maps/validateGrid.js';
@@ -766,6 +766,7 @@ export async function applyVerbatimToMower(
   const before = await readMowerMapSnapshot(sn, operation);
   if (!before || before.result !== 0 || before.snapshot_consistent !== true) return fail('snapshot_unavailable');
   if (!isDeviceOnline(sn) || !freshPositionState(sn).docked) return fail('mower_not_docked');
+  markMapInstallPending(sn);
   markFrameUnvalidated(sn);
   const written = await operation.command('write_map_files', {
     csv_files: files.csvFiles,
@@ -830,7 +831,16 @@ export async function pushMapToMowerVerbatim(
 
   if (!isDeviceOnline(sn)) return { ok: false, offline: true };
 
-  const res = await applyVerbatimToMower(sn, mowerFiles);
+  const res = await withMowerMapOperation(sn, async operation => {
+    const applied = await applyVerbatimToMower(sn, mowerFiles, operation);
+    if (applied.pushed) {
+      clearMapInstallPending(sn);
+      setPendingReanchor(sn, null); // This confirmed full restore replaces the prior recovery snapshot.
+      const { beginMapApply } = await import('../services/mapApplyStatus.js');
+      beginMapApply(sn).done();
+    }
+    return applied;
+  });
   if (!res.pushed) {
     console.error(`${TAG} pushMapToMowerVerbatim: ${sn} GEBLOKKEERD door kaartvalidatie — bundel NIET gepusht, maaier ongemoeid`);
     return { ok: false, invalidMap: true };

@@ -124,7 +124,7 @@ import { exportBundle, parseBundle } from '../../services/portableMap.js';
 import * as mapSyncMock from '../../mqtt/mapSync.js';
 import * as sensorDataMock from '../../mqtt/sensorData.js';
 import { getPolygonAnchor } from '../../services/anchor.js';
-import { isFrameUnvalidated, clearFrameUnvalidated, markFrameUnvalidated } from '../../services/frameValidation.js';
+import { isFrameUnvalidated, clearFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../../services/frameValidation.js';
 
 // Inject fake userId to bypass auth middleware
 const app = express();
@@ -754,15 +754,24 @@ describe('confirmed restore transaction and recovery', () => {
   it('preserves an unknown write outcome and retries with readback only', async () => {
     const stagingId = await stageVerbatimBundle(sn);
     const url = `/api/admin-status/maps/${sn}/import-portable/${stagingId}`;
+    markMapInstallPending(sn);
+    setPendingReanchor(sn, 'prior-origin-recovery');
+    sensorDataMock.deviceCache.set(sn, new Map([['map_apply_phase', 'failed']]));
     vi.mocked(mapSyncMock.applyVerbatimToMower).mockResolvedValue({ pushed: false, validation, uncertain: true, error: 'write_ack_timeout' });
     const first = await request(server).post(`${url}/apply-verbatim`);
     expect(first.status).toBe(409);
     expect(first.body.state).toBe('RECONCILE_REQUIRED');
+    expect(isMapInstallPending(sn)).toBe(true);
+    expect(getPendingReanchor(sn)).toBe('prior-origin-recovery');
     expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
     expect((await request(server).post(`${url}/cancel`)).status).toBe(409);
     vi.mocked(mapSyncMock.verifyMowerMapFiles).mockResolvedValue({ pushed: true, validation });
     const second = await request(server).post(`${url}/apply-verbatim`);
     expect(second.status).toBe(200);
+    expect(isMapInstallPending(sn)).toBe(false);
+    expect(getPendingReanchor(sn)).toBeUndefined();
+    expect(isFrameUnvalidated(sn)).toBe(true);
+    expect(sensorDataMock.deviceCache.get(sn)?.get('map_apply_phase')).toBe('');
     expect(mapSyncMock.applyVerbatimToMower).toHaveBeenCalledTimes(1);
     expect(mapSyncMock.verifyMowerMapFiles).toHaveBeenCalledTimes(1);
     expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toContain('map0');

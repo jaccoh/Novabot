@@ -10,30 +10,145 @@
 import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
+  "Herankeren": {
+    en: "Re-anchoring",
+    fr: "Réancrage",
+    de: "Neu verankern",
+  },
+  "De maaier rijdt begrensd achteruit om de richting te initialiseren. Blijf bij de maaier.": {
+    en: "The mower reverses a limited distance to initialize its heading. Stay with the mower.",
+    fr: "La tondeuse recule sur une distance limitée pour initialiser son cap. Restez à proximité.",
+    de: "Der Mäher fährt begrenzt rückwärts, um seine Richtung zu initialisieren. Bleiben Sie beim Mäher.",
+  },
+  "De maaier keert met de camera terug op het eigen dock. Blijf toezicht houden.": {
+    en: "The mower returns to its own dock using the camera. Keep supervising.",
+    fr: "La tondeuse retourne à sa propre station avec la caméra. Continuez à surveiller.",
+    de: "Der Mäher kehrt mithilfe der Kamera zu seiner eigenen Ladestation zurück. Beaufsichtigen Sie ihn weiterhin.",
+  },
+  "De gemeten GPS-oorsprong herstellen; dockanker en zones blijven vast.": {
+    en: "Restoring the measured GPS origin; the dock reference and zones remain fixed.",
+    fr: "Rétablissement de l’origine GPS mesurée ; la référence de la station et les zones restent fixes.",
+    de: "Gemessenen GPS-Ursprung wiederherstellen; Dockreferenz und Zonen bleiben unverändert.",
+  },
+  "Dockanker en maaierbestanden controleren. Bevestiging van toezicht afwachten.": {
+    en: "Checking the dock reference and mower files. Waiting for supervision confirmation.",
+    fr: "Vérification de la référence de la station et des fichiers. En attente de confirmation de la surveillance.",
+    de: "Dockreferenz und Mäherdateien prüfen. Auf Bestätigung der Aufsicht warten.",
+  },
+  "Procedure gestopt: toezicht, verbinding of kaartreferentie ontbreekt. Zet de maaier op zijn eigen dock en probeer opnieuw.": {
+    en: "Procedure stopped: supervision, connection or map reference is unavailable. Return the mower to its own dock and retry.",
+    fr: "Procédure arrêtée : surveillance, connexion ou référence de carte indisponible. Replacez la tondeuse sur sa propre station et réessayez.",
+    de: "Vorgang gestoppt: Aufsicht, Verbindung oder Kartenreferenz fehlt. Stellen Sie den Mäher auf seine eigene Ladestation und versuchen Sie es erneut.",
+  },
+  "Dockanker ontbreekt of dockkanalen spreken elkaar tegen.": {
+    en: "The dock reference is missing or dock channels disagree.",
+    fr: "La référence de la station manque ou les passages vers la station se contredisent.",
+    de: "Die Dockreferenz fehlt oder die Dockkanäle widersprechen sich.",
+  },
+  "De dockankers in server, kanalen en maaierbestanden spreken elkaar tegen. Eerst onderzoeken; niets gewijzigd.": {
+    en: "Dock references in the server, channels and mower files disagree. Investigate first; nothing was changed.",
+    fr: "Les références de station du serveur, des passages et des fichiers sont contradictoires. Vérifiez d’abord ; aucune modification effectuée.",
+    de: "Dockreferenzen in Server, Kanälen und Mäherdateien widersprechen sich. Zuerst untersuchen; nichts geändert.",
+  },
+  "Kanaalanker en opgeslagen dockpositie moeten hetzelfde punt zijn.": {
+    en: "The channel reference and saved dock position must be the same point.",
+    fr: "La référence du passage et la position enregistrée de la station doivent être le même point.",
+    de: "Kanalreferenz und gespeicherte Dockposition müssen derselbe Punkt sein.",
+  },
+  "Herankerbackup hoort bij een andere maaier.": {
+    en: "The re-anchor backup belongs to a different mower.",
+    fr: "La sauvegarde de réancrage appartient à une autre tondeuse.",
+    de: "Die Sicherung der Neuverankerung gehört zu einem anderen Mäher.",
+  },
+  "De oorsprong wijkt af van zowel de backup als het voorgestelde herstel. Eerst onderzoeken.": {
+    en: "The origin differs from both the backup and the proposed correction. Investigate first.",
+    fr: "L’origine diffère de la sauvegarde et de la correction proposée. Vérifiez d’abord.",
+    de: "Der Ursprung weicht sowohl von der Sicherung als auch von der vorgeschlagenen Korrektur ab. Zuerst untersuchen.",
+  },
+  "Begin stilstaand op het eigen dock met vers laadcontact en RTK Fixed.": {
+    en: "Start stationary on the own dock with fresh charging contact and RTK Fixed.",
+    fr: "Commencez à l’arrêt sur la station d’origine avec un contact de charge récent et RTK Fixed.",
+    de: "Starten Sie im Stillstand auf der eigenen Ladestation mit aktuellem Ladekontakt und RTK Fixed.",
+  },
+  "Na de oorsprongwijziging is geen verse gelokaliseerde positie minstens 40 cm van het dock gemeten.": {
+    en: "After changing the origin, no fresh localized position at least 40 cm from the dock was measured.",
+    fr: "Après modification de l’origine, aucune position localisée récente à au moins 40 cm de la station n’a été mesurée.",
+    de: "Nach der Ursprungsänderung wurde keine neue lokalisierte Position mindestens 40 cm vom Dock entfernt gemessen.",
+  },
+  "De kaartreferentie is tijdens de dockrit gewijzigd.": {
+    en: "The map reference changed during the dock trip.",
+    fr: "La référence de carte a changé pendant le trajet vers la station.",
+    de: "Die Kartenreferenz hat sich während der Dockfahrt geändert.",
+  },
+  "Dockanker gewijzigd tijdens de procedure.": {
+    en: "The dock reference changed during the procedure.",
+    fr: "La référence de la station a changé pendant la procédure.",
+    de: "Die Dockreferenz hat sich während des Vorgangs geändert.",
+  },
+  "De eerdere oorsprongwijziging is nog niet bevestigd binnen 5 cm. Eerst de meetkwaliteit en het vaste dock onderzoeken.": {
+    en: "The previous origin change has not been verified within 5 cm. Check measurement quality and the fixed dock first.",
+    fr: "La modification précédente de l’origine n’est pas confirmée à 5 cm près. Vérifiez d’abord la qualité des mesures et la station fixe.",
+    de: "Die vorherige Ursprungsänderung ist noch nicht innerhalb von 5 cm bestätigt. Zuerst Messqualität und feste Ladestation prüfen.",
+  },
+  "Oorsprong niet aantoonbaar geladen. De vervolgcontrole blijft opgeslagen; opnieuw starten leest eerst de uitkomst terug.": {
+    en: "Loading the origin was not confirmed. The pending verification is saved; restarting first reads back the outcome.",
+    fr: "Le chargement de l’origine n’est pas confirmé. La vérification reste enregistrée ; le redémarrage relit d’abord le résultat.",
+    de: "Das Laden des Ursprungs wurde nicht bestätigt. Die ausstehende Prüfung bleibt gespeichert; ein Neustart liest zuerst das Ergebnis zurück.",
+  },
+  "Geladen oorsprong wijkt af van de bevestigde voertuigmeting.": {
+    en: "The loaded origin differs from the confirmed vehicle measurement.",
+    fr: "L’origine chargée diffère de la mesure confirmée du véhicule.",
+    de: "Der geladene Ursprung weicht von der bestätigten Fahrzeugmessung ab.",
+  },
+  "Gedockte voertuigpositie wijkt meer dan 5 cm af van het vaste dockanker.": {
+    en: "The docked vehicle position differs by more than 5 cm from the fixed dock reference.",
+    fr: "La position du véhicule sur la station diffère de plus de 5 cm de la référence fixe.",
+    de: "Die angedockte Fahrzeugposition weicht um mehr als 5 cm von der festen Dockreferenz ab.",
+  },
+  "Onbekende herankercyclus.": {
+    en: "Unknown re-anchor cycle.",
+    fr: "Cycle de réancrage inconnu.",
+    de: "Unbekannter Neuverankerungszyklus.",
+  },
+  "Toezicht verlopen. Start een nieuwe cyclus.": {
+    en: "Operator supervision expired. Start a new cycle.",
+    fr: "La surveillance a expiré. Démarrez un nouveau cycle.",
+    de: "Die Aufsicht ist abgelaufen. Starten Sie einen neuen Zyklus.",
+  },
+  "Open de actuele herankerwizard en start de volledige controle.": {
+    en: "Open the current re-anchor wizard and start the full check.",
+    fr: "Ouvrez l’assistant de réancrage actuel et lancez la vérification complète.",
+    de: "Öffnen Sie den aktuellen Assistenten zur Neuverankerung und starten Sie die vollständige Prüfung.",
+  },
+  "Er loopt al een kaart- of herankeractie.": {
+    en: "A map or re-anchor operation is already running.",
+    fr: "Une opération de carte ou de réancrage est déjà en cours.",
+    de: "Ein Karten- oder Neuverankerungsvorgang läuft bereits.",
+  },
+  "Onbekende actie": {
+    en: "Unknown action",
+    fr: "Action inconnue",
+    de: "Unbekannte Aktion",
+  },
+  "Open de bijgewerkte wizard en bevestig dat de maaier op zijn eigen onverplaatste dock staat. Deze procedure omvat rijden onder toezicht.": {
+    en: "Open the updated wizard and confirm the mower is on its own unmoved dock. This procedure includes supervised movement.",
+    fr: "Ouvrez l’assistant à jour et confirmez que la tondeuse est sur sa propre station non déplacée. Cette procédure comprend des déplacements sous surveillance.",
+    de: "Öffnen Sie den aktualisierten Assistenten und bestätigen Sie, dass der Mäher auf seiner eigenen unverrückten Ladestation steht. Dieser Vorgang umfasst beaufsichtigte Fahrten.",
+  },
+  "Een kaartinstallatie is niet bevestigd. Herstel die installatie eerst; herankeren kan deze fout niet oplossen.": {
+    en: "A map installation is unconfirmed. Recover that installation first; re-anchoring cannot fix it.",
+    fr: "Une installation de carte n’est pas confirmée. Rétablissez d’abord cette installation ; le réancrage ne peut pas la réparer.",
+    de: "Eine Karteninstallation ist unbestätigt. Stellen Sie diese Installation zuerst wieder her; Neuverankerung kann diesen Fehler nicht beheben.",
+  },
+  "Herankeren vereist een online maaier op zijn eigen dock, verse RTK Fixed en een eenduidig dockanker.": {
+    en: "Re-anchoring requires an online mower on its own dock, fresh RTK Fixed and a consistent dock reference.",
+    fr: "Le réancrage nécessite une tondeuse en ligne sur sa propre station, des données RTK Fixed récentes et une référence de station cohérente.",
+    de: "Neuverankerung erfordert einen verbundenen Mäher auf seiner eigenen Ladestation, aktuelle RTK Fixed-Daten und eine eindeutige Dockreferenz.",
+  },
   "Verse gedockte voertuigpositie en antennetransformatie meten.": {
     en: "Measuring the fresh docked vehicle position and the antenna transform.",
     fr: "Mesure de la position actuelle du véhicule sur la station et de la transformation de l’antenne.",
     de: "Neue angedockte Fahrzeugposition und Antennentransformation messen.",
-  },
-  "Rij onder toezicht met de joystick ongeveer één meter van het dock. Wacht op verse RUNNING + RTK Fixed.": {
-    en: "Under supervision, use the joystick to drive about one metre away from the dock. Wait for fresh RUNNING + RTK Fixed.",
-    fr: "Sous surveillance, éloignez la tondeuse d’environ un mètre avec le joystick. Attendez de nouvelles données RUNNING + RTK Fixed.",
-    de: "Fahren Sie unter Aufsicht mit dem Joystick etwa einen Meter von der Ladestation weg. Warten Sie auf neue RUNNING + RTK Fixed-Daten.",
-  },
-  "Lokalisatie hersteld. Rij met de joystick terug op het dock en druk op Verifieer.": {
-    en: "Localization restored. Return onto the dock using the joystick and press Verify.",
-    fr: "Localisation rétablie. Revenez sur la station avec le joystick et appuyez sur Vérifier.",
-    de: "Lokalisierung wiederhergestellt. Fahren Sie mit dem Joystick auf die Ladestation zurück und drücken Sie Prüfen.",
-  },
-  "Verse voertuigmeting, dockanker en geladen oorsprong controleren.": {
-    en: "Checking the fresh vehicle reading, the dock anchor and the loaded origin.",
-    fr: "Vérification de la nouvelle mesure du véhicule, du point fixe de la station et de l’origine chargée.",
-    de: "Neue Fahrzeugmessung, Dockanker und geladenen Ursprung prüfen.",
-  },
-  "Frame gecontroleerd zonder oorsprongwijziging: {0} m van het vaste dockanker.": {
-    en: "Frame verified without changing the origin: {0} m from the fixed dock anchor.",
-    fr: "Repère vérifié sans modifier l’origine : {0} m du point fixe de la station.",
-    de: "Koordinatenrahmen ohne Ursprungsänderung geprüft: {0} m vom festen Dockanker.",
   },
   "Frame gecontroleerd: {0} m van het vaste dockanker.": {
     en: "Frame verified: {0} m from the fixed dock anchor.",
@@ -44,11 +159,6 @@ export const CATALOG: Catalog = {
     en: "{0}",
     fr: "{0}",
     de: "{0}",
-  },
-  "Dockanker en maaierbestanden controleren.": {
-    en: "Checking the dock anchor and mower files.",
-    fr: "Vérification du point de référence de la station et des fichiers de la tondeuse.",
-    de: "Dockanker und Mäherdateien prüfen.",
   },
   "Zet de kaartverschuiving van beide maaiers op nul voordat je een zone kopieert.": {
     en: "Set both mowers’ map offsets to zero before copying a zone.",
@@ -89,11 +199,6 @@ export const CATALOG: Catalog = {
     en: "Autonomous mapping",
     fr: "La cartographie autonome",
     de: "Das autonome Kartieren",
-  },
-  "Batterijstatus is '{0}', niet CHARGING. Zet de maaier eerst op het dock, of POST met {\"force\": true} om dit te negeren.": {
-    en: "Battery state is '{0}', not CHARGING. Put mower on dock first, or POST with {\"force\": true} to override.",
-    fr: "L'état de la batterie est '{0}', pas CHARGING. Placez d'abord la tondeuse sur le dock, ou envoyez un POST avec {\"force\": true} pour passer outre.",
-    de: "Der Akkustatus ist '{0}', nicht CHARGING. Stellen Sie den Mäher zuerst auf das Dock oder senden Sie einen POST mit {\"force\": true}, um dies zu übergehen.",
   },
   "Beide uiteinden liggen in map{0}; een kanaal verbindt twee verschillende gebieden. Om het laadstation te verbinden: begin het kanaal bij het station of typ de naam (bv. map0tocharge_unicom).": {
     en: "Both ends lie in map{0}; a channel connects two different areas. To connect the charging station, start the channel at the station or type the name (e.g. map0tocharge_unicom).",
@@ -145,25 +250,10 @@ export const CATALOG: Catalog = {
     fr: "Décaler la carte",
     de: "Das Verschieben der Karte",
   },
-  "De laadpositie herijken": {
-    en: "Recalibrating the charging position",
-    fr: "Recalibrer la position de charge",
-    de: "Das Neukalibrieren der Ladeposition",
-  },
-  "De lokalisatie van de maaier is \"{0}\". De posewaarden zijn nog niet betrouwbaar. Rij de maaier kort van het dock, laat hem terugkeren en probeer het opnieuw.": {
-    en: "Mower localization is \"{0}\". Pose values are not trustworthy yet. Drive the mower briefly off the dock, return, then retry.",
-    fr: "La localisation de la tondeuse est « {0} ». Les valeurs de pose ne sont pas encore fiables. Éloignez brièvement la tondeuse du dock, laissez-la revenir, puis réessayez.",
-    de: "Die Lokalisierung des Mähers ist „{0}“. Die Posenwerte sind noch nicht zuverlässig. Fahren Sie den Mäher kurz vom Dock weg, lassen Sie ihn zurückkehren und versuchen Sie es erneut.",
-  },
   "De maaier antwoordde niet (time-out)": {
     en: "Mower did not respond (timeout)",
     fr: "La tondeuse n'a pas répondu (délai dépassé)",
     de: "Der Mäher hat nicht geantwortet (Zeitüberschreitung)",
-  },
-  "De maaier antwoordde niet binnen 8 s": {
-    en: "Mower did not respond within 8s",
-    fr: "La tondeuse n'a pas répondu dans les 8 s",
-    de: "Der Mäher hat nicht innerhalb von 8 s geantwortet",
   },
   "De maaier antwoordde niet op het wiscommando: {0}": {
     en: "The mower did not respond to the delete command: {0}",
@@ -175,20 +265,10 @@ export const CATALOG: Catalog = {
     fr: "La tondeuse a renvoyé un trajet d'aperçu vide",
     de: "Der Mäher hat einen leeren Vorschaupfad geliefert",
   },
-  "De maaier heeft map_position nog niet gemeld: er is eerst een report_state_timer_data-bericht nodig. Probeer het over ~5 s opnieuw.": {
-    en: "Mower map_position not yet reported: need a report_state_timer_data message first. Try again in ~5s.",
-    fr: "La tondeuse n'a pas encore signalé map_position : un message report_state_timer_data est d'abord nécessaire. Réessayez dans ~5 s.",
-    de: "Der Mäher hat map_position noch nicht gemeldet: Zuerst ist eine report_state_timer_data-Nachricht nötig. Versuchen Sie es in ~5 s erneut.",
-  },
   "De maaier is bezig; stop de taak eerst en probeer het dan opnieuw.": {
     en: "The mower is busy; stop the task first and then try again.",
     fr: "La tondeuse est occupée ; arrêtez d'abord la tâche puis réessayez.",
     de: "Der Mäher ist beschäftigt; beenden Sie zuerst die Aufgabe und versuchen Sie es dann erneut.",
-  },
-  "De maaier meldde (0, 0, 0): een plaatshouder voor niet-geïnitialiseerde lokalisatie. Rij de maaier een klein stukje van het dock zodat de lokalisatie initialiseert (koersbepaling), laat hem terugkeren naar het dock en probeer het opnieuw.": {
-    en: "Mower reported (0, 0, 0): placeholder for uninitialized localization. Drive the mower a short distance off the dock so localization initializes (heading discovery), let it return to dock, then retry.",
-    fr: "La tondeuse a signalé (0, 0, 0) : valeur provisoire pour une localisation non initialisée. Éloignez un peu la tondeuse du dock pour que la localisation s'initialise (détermination du cap), laissez-la revenir au dock, puis réessayez.",
-    de: "Der Mäher meldete (0, 0, 0): ein Platzhalter für eine nicht initialisierte Lokalisierung. Fahren Sie den Mäher ein kurzes Stück vom Dock weg, damit die Lokalisierung initialisiert (Kursbestimmung), lassen Sie ihn zum Dock zurückkehren und versuchen Sie es erneut.",
   },
   "De maaier weigerde de kaart te wissen.": {
     en: "The mower refused to delete the map.",
@@ -330,11 +410,6 @@ export const CATALOG: Catalog = {
     fr: "Aucune tondeuse associée à ce compte.",
     de: "Kein Mäher mit diesem Konto verknüpft.",
   },
-  "Geen sensordata in de cache voor deze maaier": {
-    en: "No sensor data cached for this mower",
-    fr: "Aucune donnée de capteur en cache pour cette tondeuse",
-    de: "Keine Sensordaten für diesen Mäher im Cache",
-  },
   "Genereren van de preview mislukt": {
     en: "preview generation failed",
     fr: "Échec de la génération de l'aperçu",
@@ -344,11 +419,6 @@ export const CATALOG: Catalog = {
     en: "Size mismatch: expected {0}, got {1}",
     fr: "Taille non concordante : attendu {0}, obtenu {1}",
     de: "Größe stimmt nicht überein: erwartet {0}, erhalten {1}",
-  },
-  "Her-ankeren": {
-    en: "Re-anchoring",
-    fr: "Le réancrage",
-    de: "Das Neuverankern",
   },
   "Het andere uiteinde ligt niet in een werkgebied. Laat het kanaal binnen een gebied eindigen.": {
     en: "The other end does not lie in a work area. Let the channel end inside an area.",
@@ -550,11 +620,6 @@ export const CATALOG: Catalog = {
     fr: "Code de zone de tonte non valide.",
     de: "Ungültiger Mähbereichscode.",
   },
-  "Ongeldige pose: x={0} y={1} theta={2}": {
-    en: "Invalid pose: x={0} y={1} theta={2}",
-    fr: "Pose non valide : x={0} y={1} theta={2}",
-    de: "Ungültige Pose: x={0} y={1} theta={2}",
-  },
   "Ongeldige rol. Geldig: {0}": {
     en: "Invalid role. Valid: {0}",
     fr: "Rôle non valide. Valides : {0}",
@@ -630,11 +695,6 @@ export const CATALOG: Catalog = {
     fr: "Redémarrage logiciel envoyé ; la tondeuse passe hors ligne ~30-60 s puis revient",
     de: "Soft-Neustart gesendet; der Mäher geht ~30-60 s offline und kommt dann zurück",
   },
-  "Stock firmware heeft een rit van het dock en terug nodig voordat de lokalisatie geldig is. Zolang de maaier bij het opstarten gedockt staat, is map_position altijd nul.": {
-    en: "Stock firmware needs a drive-back cycle before localization is valid. While docked at boot, map_position is always zero.",
-    fr: "Le firmware d'origine a besoin d'un aller-retour depuis le dock avant que la localisation soit valide. Tant que la tondeuse est sur le dock au démarrage, map_position vaut toujours zéro.",
-    de: "Die Standard-Firmware braucht eine Fahrt vom Dock weg und zurück, bevor die Lokalisierung gültig ist. Solange der Mäher beim Start angedockt ist, ist map_position immer null.",
-  },
   "Stop de lopende of gepauzeerde maaitaak en probeer het opnieuw.": {
     en: "Stop the running or paused mowing task and try again.",
     fr: "Arrêtez la tâche de tonte en cours ou en pause et réessayez.",
@@ -654,11 +714,6 @@ export const CATALOG: Catalog = {
     en: "Upload import failed",
     fr: "Échec de l'import du fichier envoyé",
     de: "Import des Uploads fehlgeschlagen",
-  },
-  "Verdachte pose: x en y zijn exact gelijk ({0}). De firmware van de maaier meldt een onjuiste lokalisatie. Wacht op een verse timer_data-update en probeer het opnieuw.": {
-    en: "Suspicious pose: x and y are exactly equal ({0}). Mower firmware is reporting bogus localization. Wait for a fresh timer_data update and retry.",
-    fr: "Pose suspecte : x et y sont exactement égaux ({0}). Le firmware de la tondeuse signale une localisation erronée. Attendez une nouvelle mise à jour timer_data et réessayez.",
-    de: "Verdächtige Pose: x und y sind exakt gleich ({0}). Die Firmware des Mähers meldet eine fehlerhafte Lokalisierung. Warten Sie auf ein neues timer_data-Update und versuchen Sie es erneut.",
   },
   "Verschuiving groter dan {0} m: buiten ooit gescand gebied is het navigatiegedrag onbewezen": {
     en: "Displacement larger than {0} m: outside the area that was ever scanned, navigation behaviour is unproven",

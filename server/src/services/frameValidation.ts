@@ -7,12 +7,32 @@
  * does not silently unlock go_to_charge.
  */
 import { deviceSettingsRepo } from '../db/repositories/deviceSettings.js';
+import { isOwnedReanchorMotion } from './mowerMapOperation.js';
 import { dockSamplesRepo } from '../db/repositories/dockSamples.js';
 
 const KEY = 'frame_unvalidated';
 const AUTO_RECHARGE_KEY = 'frame_auto_recharge_seen';
 const RELOCKED_KEY = 'frame_relocked';
 const unvalidated = new Set<string>();
+const REANCHOR_KEY = 'reanchor_pending';
+const pendingReanchors = new Map<string, string>();
+export const getPendingReanchor = (sn: string): string | undefined => pendingReanchors.get(sn);
+export function setPendingReanchor(sn: string, value: string | null): void {
+  if (value === null) { deviceSettingsRepo.remove(sn, REANCHOR_KEY); pendingReanchors.delete(sn); }
+  else { deviceSettingsRepo.upsert(sn, REANCHOR_KEY, value); pendingReanchors.set(sn, value); }
+}
+const INSTALL_KEY = 'map_install_pending';
+const installing = new Set<string>();
+export const isMapInstallPending = (sn: string): boolean => installing.has(sn);
+export function markMapInstallPending(sn: string): void {
+  deviceSettingsRepo.upsert(sn, INSTALL_KEY, '1');
+  installing.add(sn);
+}
+/** Only the verified installer, after its server commit, can release this reason. */
+export function clearMapInstallPending(sn: string): void {
+  deviceSettingsRepo.remove(sn, INSTALL_KEY);
+  installing.delete(sn);
+}
 const revisions = new Map<string, number>();
 export const getFrameRevision = (sn: string): number => revisions.get(sn) ?? 0;
 // Re-anchor lifecycle latch: true once the mower has, since the current
@@ -26,8 +46,12 @@ const relocked = new Set<string>();
 
 export function loadFrameValidationFromDb(): void {
   unvalidated.clear();
+  installing.clear();
+  pendingReanchors.clear();
   relocked.clear();
   for (const row of deviceSettingsRepo.listAll()) {
+    if (row.key === REANCHOR_KEY) pendingReanchors.set(row.sn, row.value);
+    if (row.key === INSTALL_KEY && row.value === '1') installing.add(row.sn);
     if (row.key === KEY && row.value === '1') unvalidated.add(row.sn);
 
     // A restart loses the live cycle and its captured anchor. Require a new cycle.
@@ -58,7 +82,7 @@ export function clearFrameUnvalidated(sn: string): void {
 }
 
 export function isFrameUnvalidated(sn: string): boolean {
-  return unvalidated.has(sn);
+  return unvalidated.has(sn) || installing.has(sn) || pendingReanchors.has(sn);
 }
 
 /** Docked map_position must land this close to the dock anchor for the frame to count as right. */
@@ -141,5 +165,6 @@ const FRAME_BLOCKED_KEYS = ['go_to_charge', 'start_navigation', 'start_run', 'st
  */
 export function isFrameNavBlocked(sn: string, command: Record<string, unknown>): boolean {
   if (!isFrameUnvalidated(sn)) return false;
-  return FRAME_BLOCKED_KEYS.some((k) => k in command);
+  return FRAME_BLOCKED_KEYS.some(k => k in command &&
+    !(k === 'dock_measurement_move' && !isMapInstallPending(sn) && isOwnedReanchorMotion(sn, command[k])));
 }

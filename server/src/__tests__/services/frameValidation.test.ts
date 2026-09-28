@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  markMapInstallPending, clearMapInstallPending, getPendingReanchor, setPendingReanchor,
   markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated,
   loadFrameValidationFromDb, checkDockedFrame, FRAME_TOLERANCE_M,
 } from '../../services/frameValidation.js';
@@ -76,4 +77,17 @@ describe('checkDockedFrame', () => {
     expect(checkDockedFrame({ ...base, pose: null })).toMatchObject({ ok: false, reason: 'no_pose', distM: null });
     expect(checkDockedFrame({ ...base, anchor: null })).toMatchObject({ ok: false, reason: 'no_anchor', distM: null });
   });
+});
+
+it('frame validation cannot erase install or unverified origin-write reasons across restart', () => {
+  markMapInstallPending(SN);
+  setPendingReanchor(SN, '{"expected":"origin"}');
+  clearFrameUnvalidated(SN);
+  loadFrameValidationFromDb();
+  expect(isFrameUnvalidated(SN)).toBe(true);
+  expect(getPendingReanchor(SN)).toBeDefined();
+  clearMapInstallPending(SN);
+  expect(isFrameUnvalidated(SN)).toBe(true);
+  setPendingReanchor(SN, null);
+  expect(isFrameUnvalidated(SN)).toBe(false);
 });

@@ -2556,98 +2556,10 @@ def handle_start_edge_cut(params, respond):
 
 
 def handle_recalibrate_charging_pose(params, respond):
-    """Overwrite map_info.json charging_pose with a caller-supplied (x, y, theta).
-
-    Used after a map-frame drift event (e.g. heading-discovery happened at a
-    different starting point than the original mapping session). The server
-    reads the mower's own `report_state_robot` x/y/theta while the mower is
-    verified on its dock and passes them in as params. The handler updates
-    `map_info.json` in BOTH `csv_file/` and `x3_csv_file/` so the firmware's
-    two read paths stay consistent.
-
-    Required params:
-      x:     float — charger x in current map frame (meters)
-      y:     float — charger y in current map frame (meters)
-      theta: float — charger orientation in current map frame (radians)
-
-    Optional:
-      home: str — home dir under /userdata/lfi/maps. Default "home0".
-    """
-    home = params.get("home", "home0") if isinstance(params, dict) else "home0"
-    try:
-        x = float(params["x"])
-        y = float(params["y"])
-        theta = float(params["theta"])
-    except (KeyError, TypeError, ValueError) as e:
-        respond("recalibrate_charging_pose_respond", {
-            "result": 1,
-            "error": f"require numeric x/y/theta: {e}",
-        })
-        return
-
-    # Sanity bounds — map frame is meters, typical ~100m box.
-    if not all(-500 <= v <= 500 for v in (x, y)) or not -10 <= theta <= 10:
-        respond("recalibrate_charging_pose_respond", {
-            "result": 1,
-            "error": f"pose out of bounds: x={x} y={y} theta={theta}",
-        })
-        return
-
-    base = f"/userdata/lfi/maps/{home}"
-    json_targets = [f"{base}/csv_file/map_info.json", f"{base}/x3_csv_file/map_info.json"]
-    # auto_recharge_server reads the dock pose from this YAML at startup AND
-    # whenever it re-arms after a docking attempt. Without rewriting it the
-    # robot keeps driving toward the stale pose even though both map_info.json
-    # files already point at the new one — that's the "edit only takes effect
-    # after we change another file too" symptom.
-    yaml_target = "/userdata/lfi/charging_station_file/charging_station.yaml"
-
-    updated = {}
-    try:
-        for path in json_targets:
-            if not os.path.exists(path):
-                # One of the dirs may be missing — skip quietly, continue.
-                continue
-            with open(path) as f:
-                info = json.load(f)
-            info["charging_pose"] = {
-                "x": x,
-                "y": y,
-                "orientation": theta,
-            }
-            tmp = path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(info, f, indent=3)
-                f.write("\n")
-            os.replace(tmp, path)
-            updated[path] = info["charging_pose"]
-
-        if os.path.exists(yaml_target) or os.path.isdir(os.path.dirname(yaml_target)):
-            try:
-                os.makedirs(os.path.dirname(yaml_target), exist_ok=True)
-                tmp = yaml_target + ".tmp"
-                with open(tmp, "w") as f:
-                    f.write(f"charging_pose: [{x}, {y}, {theta}]\n")
-                os.replace(tmp, yaml_target)
-                updated[yaml_target] = {"x": x, "y": y, "orientation": theta}
-            except Exception as e:
-                log(f"recalibrate_charging_pose: yaml write failed: {e}")
-
-        if not updated:
-            respond("recalibrate_charging_pose_respond", {
-                "result": 1,
-                "error": f"no map_info.json found under {base}",
-            })
-            return
-
-        log(f"recalibrate_charging_pose: wrote x={x} y={y} theta={theta} to {list(updated.keys())}")
-        respond("recalibrate_charging_pose_respond", {
-            "result": 0,
-            "updated": updated,
-        })
-    except Exception as e:
-        log(f"recalibrate_charging_pose error: {e}")
-        respond("recalibrate_charging_pose_respond", {"result": 1, "error": str(e)})
+    """Reject legacy clients: a drifted pose must never replace the fixed dock."""
+    respond("recalibrate_charging_pose_respond", {
+        "result": 1, "error": "retired: use the verified reanchor procedure",
+    })
 
 
 def _map_home(home):
@@ -4941,7 +4853,7 @@ def handle_set_pos_origin(params, respond):
 # cancellation stay outside the map lock so a running command can always stop.
 _DOCK_MOTIONS = {}
 _DOCK_MOTION_LOCK = threading.Lock()
-_DOCK_MOTION_PROTOCOL = "dock-measurement-motion-v2"
+_DOCK_MOTION_PROTOCOL = "dock-measurement-motion-v3"
 
 
 def handle_dock_measurement_control(params, respond):
@@ -5007,11 +4919,24 @@ def _dock_motion_chassis_ok(data):
             not any(v is True for k, v in data.items() if k.startswith(("warning_", "error_", "classb_"))))
 
 
+def _recovery_marker_forward(marker):
+    """A shifted map cannot bound recovery docking; use the nearby front pattern."""
+    if marker["header"].get("frame_id") != "aruco_tag":
+        raise ValueError("unexpected dock pattern frame")
+    point, _ = _marker_inverse(_marker_pose(marker["pose"]))
+    if not (0 < point[0] <= 1.2 and abs(point[1]) <= .2 and abs(point[2]) <= .5):
+        raise ValueError("dock pattern is not close and in front of the mower")
+    return point[0]
+
+
 def handle_dock_measurement_move(params, respond):
     from collections import deque
 
     action, distance = params.get("action"), params.get("distance_m")
     from_dock = params.get("from_dock")
+    recovery = params.get("recovery", False)
+    if not isinstance(recovery, bool):
+        raise ValueError("invalid recovery mode")
     if action not in ("reverse", "dock") or not isinstance(from_dock, bool):
         raise ValueError("invalid dock measurement movement")
     if (isinstance(distance, bool) or not isinstance(distance, (int, float)) or not math.isfinite(distance) or
@@ -5057,6 +4982,8 @@ def handle_dock_measurement_move(params, respond):
     dock_attempted = False
     detector_attempted = False
     completed = False
+    approach_start = None
+    last_marker_forward = float("inf")
 
     def record(topic, msg):
         now, data = time.monotonic(), message_to_ordereddict(msg)
@@ -5095,7 +5022,8 @@ def handle_dock_measurement_move(params, respond):
         if not 0 <= time.time() - stamp <= .5:
             raise ValueError("odometry source stamp stale")
         p = pose()
-        if not all(math.isfinite(v) for v in p) or (not from_dock and math.hypot(p[0] - dock[0], p[1] - dock[1]) > 1.15):
+        boundary = approach_start if recovery else dock
+        if not all(math.isfinite(v) for v in p) or (not from_dock and boundary is not None and math.hypot(p[0] - boundary[0], p[1] - boundary[1]) > 1.15):
             raise ValueError("mower left the bounded dock approach")
         return robot, odom, p
 
@@ -5171,6 +5099,8 @@ def handle_dock_measurement_move(params, respond):
             spin()
             try:
                 robot, odom, start = guard()
+                if approach_start is None:
+                    approach_start = start
                 if not stationary(odom) or cmd.get_subscription_count() == 0:
                     raise ValueError("mower not stationary or chassis not connected")
                 break
@@ -5215,7 +5145,7 @@ def handle_dock_measurement_move(params, respond):
                 cmd.publish(twist)
             cmd.publish(Twist())
         else:
-            if math.hypot(start[0] - dock[0], start[1] - dock[1]) > .95 or abs(_marker_angle_delta(start[2], dock[2])) > .12:
+            if not recovery and (math.hypot(start[0] - dock[0], start[1] - dock[1]) > .95 or abs(_marker_angle_delta(start[2], dock[2])) > .12):
                 raise ValueError("mower is not facing its own nearby dock")
             camera_until = _marker_camera_use("begin")
             detector_attempted = True
@@ -5227,6 +5157,8 @@ def handle_dock_measurement_move(params, respond):
             marker = read("/aruco/pose", .5)
             if not 0 <= time.time() - _marker_stamp(marker) <= .5:
                 raise ValueError("no fresh dock pattern before docking")
+            if recovery:
+                last_marker_forward = _recovery_marker_forward(marker)
             dock_attempted = True
             service(clients["auto_recharge"], Trigger.Request())
         # Confirm a real stop (reverse) or stable contact (dock), with a bounded
@@ -5244,12 +5176,14 @@ def handle_dock_measurement_move(params, respond):
             elif int(robot["merged_work_status"]) != 4:
                 # The pattern can disappear in the final 15 cm; allow only a
                 # short final contact attempt there, never a blind search.
-                near = math.hypot(current[0] - dock[0], current[1] - dock[1]) < .15
+                near = last_marker_forward < .3 if recovery else math.hypot(current[0] - dock[0], current[1] - dock[1]) < .15
                 marker = read("/aruco/pose", 2 if near else .7)
                 if not 0 <= time.time() - _marker_stamp(marker) <= (2 if near else .7):
                     raise ValueError("dock pattern lost")
+                if recovery:
+                    last_marker_forward = _recovery_marker_forward(marker)
             contact = int(robot["merged_work_status"]) == 4
-            reached = (action == "reverse" and not contact) or (action == "dock" and contact and math.hypot(current[0] - dock[0], current[1] - dock[1]) <= .05)
+            reached = (action == "reverse" and not contact) or (action == "dock" and contact and (recovery or math.hypot(current[0] - dock[0], current[1] - dock[1]) <= .05))
             if reached and stationary(odom):
                 stopped_at = stopped_at or time.monotonic()
                 if time.monotonic() - stopped_at >= 1:

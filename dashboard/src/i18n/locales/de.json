@@ -825,7 +825,14 @@
     "btnLater": "Später",
     "startFailed": "Start fehlgeschlagen",
     "verifyFailed": "Überprüfung fehlgeschlagen",
-    "returnToDockHint": "Fahren Sie mit dem Joystick auf die Ladestation und drücken Sie Überprüfen."
+    "returnToDockHint": "Fahren Sie mit dem Joystick auf die Ladestation und drücken Sie Überprüfen.",
+    "supervisedIntro": "Der Mäher fährt etwa 50 cm rückwärts und kehrt über das Dockmuster zurück, um seine Richtung zu initialisieren. Falls der Ursprung korrigiert werden muss, wiederholt er diese Prüfung danach. Bleibe beim Mäher und halte den Weg frei.",
+    "confirmOwnDock": "Ich bin beim Mäher an seiner eigenen Station. Die Station wurde seit der Aufnahme dieser Zonen nicht versetzt.",
+    "stop": "Stoppen",
+    "retryHint": "Fahre den Mäher mit dem Joystick zurück auf seine eigene Station und starte die vollständige Prüfung erneut.",
+    "installPending": "Eine Karteninstallation ist unvollständig. Stelle diese Installation wieder her oder gleiche sie ab, bevor du neu verankerst.",
+    "pendingHint": "Eine frühere Änderung des Ursprungs muss noch geprüft werden. Ein neuer Versuch prüft zuerst das gespeicherte Ergebnis und wiederholt die Dockfahrt.",
+    "updateRequired": "Aktualisiere den OpenNova-Server für die beaufsichtigte Neuverankerung."
   },
   "sensors": {
     "connectivity": "Konnektivität",

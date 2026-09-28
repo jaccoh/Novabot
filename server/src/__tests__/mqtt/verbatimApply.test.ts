@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../../mqtt/broker.js', () => ({ isSnBanned: () => false, isDeviceOnline: vi.fn(() => true) }));
 vi.mock('../../dashboard/socketHandler.js', () => ({ emitDeviceBound: vi.fn(), emitDevicePaired: vi.fn() }));
 vi.mock('../../mqtt/sensorData.js', () => ({ deviceCache: new Map() }));
-vi.mock('../../services/frameValidation.js', () => ({ isFrameNavBlocked: () => false, markFrameUnvalidated: vi.fn() }));
+vi.mock('../../services/frameValidation.js', () => ({ isFrameNavBlocked: () => false, markFrameUnvalidated: vi.fn(), markMapInstallPending: vi.fn(), clearMapInstallPending: vi.fn() }));
 vi.mock('../../services/mowerMapOperation.js', () => ({
   assertMowerMapOperation: vi.fn(),
   readMowerMapSnapshot: vi.fn(),

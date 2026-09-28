@@ -30,6 +30,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStyles, useTheme, type Colors } from '../theme';
 import { MowingDirectionPreview } from '../components/MowingDirectionPreview';
+import ReanchorWizard from '../components/ReanchorWizard';
 import { SimpleSlider } from '../components/SimpleSlider';
 import { useActiveMower } from '../hooks/useActiveMower';
 import { useHeadlightBrightness } from '../hooks/useHeadlightBrightness';
@@ -138,7 +139,7 @@ export default function MowerSettingsScreen() {
   const { activeMower: mower, activeMowerSn } = useActiveMower();
   const mowerSn = activeMowerSn ?? '';
   const mowerOnline = mower?.online ?? false;
-  // Seam-fix, recalibrate charging pose and frame invalidate all go through
+  // Seam-fix and re-anchoring go through
   // extended_commands.py (OpenNova custom firmware only); the server answers
   // 409 unsupported_firmware on stock, so disable them up front and explain.
   const stockFw = !isOpenNovaFirmware(mower?.firmwareVersion);
@@ -443,71 +444,6 @@ export default function MowerSettingsScreen() {
 
   const handleRainEnabled = (value: boolean) => saveRain({ enabled: value });
 
-  const handleRecalibrateChargingPose = useCallback(async () => {
-    if (!mowerSn) return;
-    if (stockFw) {
-      appAlertCompat.alert(t('msRecalTitle'), t('requiresOpenNovaFirmware'));
-      return;
-    }
-    appAlertCompat.alert(
-      t('stRecalConfirmTitle'),
-      t('stRecalConfirmBody'),
-      [
-        { text: t('cancel'), style: 'cancel' },
-        {
-          text: t('stRecalibrate'),
-          style: 'destructive',
-          onPress: async () => {
-            const url = await getServerUrl();
-            if (!url) return;
-            const api = new ApiClient(url);
-            try {
-              let resp = await api.recalibrateChargingPose(mowerSn);
-              if (!resp.ok && (resp.batteryState ?? '').toUpperCase() !== 'CHARGING') {
-                appAlertCompat.alert(
-                  t('stNotChargingTitle'),
-                  t('stNotChargingBody', { state: resp.batteryState ?? t('stUnknown') }),
-                  [
-                    { text: t('cancel'), style: 'cancel' },
-                    {
-                      text: t('stOverride'),
-                      style: 'destructive',
-                      onPress: async () => {
-                        const forced = await api.recalibrateChargingPose(mowerSn, { force: true });
-                        if (forced.ok && forced.pose) {
-                          appAlertCompat.alert(
-                            t('stRecalibrated'),
-                            t('stNewChargingPose', { x: forced.pose.x.toFixed(3), y: forced.pose.y.toFixed(3), theta: forced.pose.theta.toFixed(3) }),
-                          );
-                        } else {
-                          appAlertCompat.alert(t('stRecalFailed'), forced.error ?? t('stUnknownError'));
-                        }
-                      },
-                    },
-                  ],
-                );
-                return;
-              }
-              if (resp.ok && resp.pose) {
-                appAlertCompat.alert(
-                  t('stRecalibrated'),
-                  t('stNewChargingPose', { x: resp.pose.x.toFixed(3), y: resp.pose.y.toFixed(3), theta: resp.pose.theta.toFixed(3) }),
-                );
-              } else {
-                appAlertCompat.alert(t('stRecalFailed'), resp.error ?? t('stUnknownError'));
-              }
-            } catch (e) {
-              appAlertCompat.alert(
-                t('stRecalFailed'),
-                isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : e instanceof Error ? e.message : String(e),
-              );
-            }
-          },
-        },
-      ],
-    );
-  }, [mowerSn, stockFw, t]);
-
   const handleSoftRestart = useCallback(async () => {
     if (!mowerSn) return;
     appAlertCompat.alert(
@@ -544,41 +480,7 @@ export default function MowerSettingsScreen() {
     );
   }, [mowerSn, t]);
 
-  const handleReanchorInvalidate = useCallback(() => {
-    if (!mowerSn) return;
-    if (stockFw) {
-      appAlertCompat.alert(t('msReanchorTitle'), t('requiresOpenNovaFirmware'));
-      return;
-    }
-    appAlertCompat.alert(
-      t('stReanchorConfirmTitle'),
-      t('stReanchorConfirmBody'),
-      [
-        { text: t('cancel'), style: 'cancel' },
-        {
-          text: t('stInvalidate'),
-          style: 'destructive',
-          onPress: async () => {
-            const url = await getServerUrl();
-            if (!url) return;
-            try {
-              const r = await new ApiClient(url).reanchor(mowerSn, 'invalidate');
-              if (r.ok) {
-                appAlertCompat.alert(t('stFrameInvalidated'), t('stFrameInvalidatedBody'));
-              } else {
-                appAlertCompat.alert(t('stFailed'), r.error ?? t('stUnknownError'));
-              }
-            } catch (e) {
-              appAlertCompat.alert(
-                t('stFailed'),
-                isUnsupportedFirmwareError(e) ? t('requiresOpenNovaFirmware') : e instanceof Error ? e.message : String(e),
-              );
-            }
-          },
-        },
-      ],
-    );
-  }, [mowerSn, stockFw, t]);
+  const [showReanchor, setShowReanchor] = useState(false);
 
   if (!mowerSn) {
     return (
@@ -933,19 +835,7 @@ export default function MowerSettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, styles.sectionTitleDanger]}>{t('msSectionRecovery')}</Text>
           <View style={[styles.card, styles.cardDanger]}>
-            <TouchableOpacity
-              style={[styles.optionRow, stockFw && { opacity: 0.5 }]}
-              onPress={() => handleRecalibrateChargingPose()}
-              activeOpacity={0.7}
-              disabled={stockFw}
-            >
-              <Ionicons name="compass-outline" size={20} color={colors.red} />
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.optionLabel}>{t('msRecalTitle')}</Text>
-                <Text style={styles.optionSub}>{stockFw ? t('requiresOpenNovaFirmware') : t('msRecalSub')}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-            </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.optionRow}
               onPress={() => handleSoftRestart()}
@@ -960,20 +850,22 @@ export default function MowerSettingsScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.optionRow, stockFw && { opacity: 0.5 }]}
-              onPress={() => handleReanchorInvalidate()}
+              onPress={() => setShowReanchor(true)}
               activeOpacity={0.7}
               disabled={stockFw}
             >
               <Ionicons name="navigate-circle-outline" size={20} color={colors.red} />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.optionLabel}>{t('msReanchorTitle')}</Text>
-                <Text style={styles.optionSub}>{stockFw ? t('requiresOpenNovaFirmware') : t('msReanchorSub')}</Text>
+                <Text style={styles.optionSub}>{stockFw ? t('requiresOpenNovaFirmware') : t('reanchorSupervisedIntro')}</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
+
+      <ReanchorWizard visible={showReanchor} sn={mowerSn} sensors={mower?.sensors} onClose={() => setShowReanchor(false)} />
 
       {/* Timezone picker modal */}
       <Modal

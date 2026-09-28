@@ -1,4 +1,12 @@
 export default {
+  reanchorUpdateRequired: "Aktualisiere den OpenNova-Server für die beaufsichtigte Neuverankerung.",
+  reanchorSupervisedIntro: "Der Mäher fährt etwa 50 cm rückwärts und kehrt über das Dockmuster zurück, um seine Richtung zu initialisieren. Falls der Ursprung korrigiert werden muss, wiederholt er diese Prüfung danach. Bleibe beim Mäher und halte den Weg frei.",
+  reanchorConfirmOwnDock: "Ich bin beim Mäher an seiner eigenen Station. Die Station wurde seit der Aufnahme dieser Zonen nicht versetzt.",
+  reanchorStop: "Stoppen",
+  reanchorRetryHint: "Fahre den Mäher mit dem Joystick zurück auf seine eigene Station und starte die vollständige Prüfung erneut.",
+  reanchorInstallPending: "Eine Karteninstallation ist unvollständig. Stelle diese Installation wieder her oder gleiche sie ab, bevor du neu verankerst.",
+  reanchorPendingHint: "Eine frühere Änderung des Ursprungs muss noch geprüft werden. Ein neuer Versuch prüft zuerst das gespeicherte Ergebnis und wiederholt die Dockfahrt.",
+
   // ── Beta firmware warning (OtaScreen) ─────────────────────────
   betaFwTitle: 'BETA CUSTOM-FIRMWARE',
   betaFwExperimental: 'Dies ist BETA / experimentelle Custom-Firmware.',
@@ -201,7 +209,7 @@ export default {
 
   // ── Re-anchor wizard (Novabot-cq3) ──
   // Static UI — app/src/components/ReanchorWizard.tsx
-  reanchorTitle: 'Neu verankern nach Wiederherstellung',
+  reanchorTitle: 'An der eigenen Ladestation neu verankern',
   reanchorIdleIntro: "Stellen Sie den Mäher auf seine unveränderte Ladestation und warten Sie auf RTK Fixed. Starten Sie die Neuverankerung und folgen Sie den Joystick-Schritten direkt beim Mäher.",
   reanchorRunningHint: "Der Ursprung wird geprüft und wiederhergestellt. Fahren Sie erst, wenn der Assistent dazu auffordert.",
   reanchorManualBackupHint: "Nach bestätigter Lokalisierung fahren Sie mit dem Joystick auf die Ladestation, bis der Mäher lädt. Drücken Sie dann Überprüfen.",

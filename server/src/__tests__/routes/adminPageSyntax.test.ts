@@ -22,6 +22,11 @@ describe('admin panel inline scripts', () => {
     expect(scripts.length).toBeGreaterThan(0);
   });
 
+  it('does not offer the retired charging-pose writer', () => {
+    expect(html).not.toMatch(/recalibrateChargingPose|recalibrate-charging-pose|mapRecalBtn/);
+    expect(html).toContain('positionValidationPanel');
+  });
+
   it('every inline script parses', () => {
     const problems: string[] = [];
     scripts.forEach((src, i) => {

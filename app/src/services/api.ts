@@ -55,9 +55,9 @@ export interface CommandResult {
 export type ReanchorPhase =
   | 'idle' | 'check' | 'anchor' | 'relock' | 'wait' | 'needs_drive' | 'needs_position' | 'dock' | 'verify' | 'done' | 'error';
 export interface ReanchorStatus {
+  protocol?: string; cycleId?: string; active?: boolean; installPending?: boolean; verificationPending?: boolean;
   phase: ReanchorPhase;
-  /** Dutch, human-readable. Kept for the (Dutch) dashboard + back-compat with
-   *  servers that predate msgKey. The app prefers msgKey when present. */
+  /** Human-readable status, translated by the server into the request language. */
   message: string;
   /** Stable i18n key for `message` so the app can translate it (en/nl/de/fr).
    *  Interpolated with pose ({{x}},{{y}}) and dist ({{dist}}) where relevant. */
@@ -516,23 +516,11 @@ export class ApiClient {
     );
   }
 
-  /** Post-restore re-anchor (server-orchestrated):
-   * - 'auto' (default): the whole sequence — reanchor_pos with the docked Fixed
-   *   GPS, drive ~1m back to re-lock, visual ArUco dock, then self-verify the
-   *   docked position is on the origin before clearing frame_unvalidated. Poll
-   *   getReanchorStatus() for progress.
-   * - 'verify': manual backup — re-check the docked position against the origin
-   *   alone (after the operator joysticked the mower back onto the dock).
-   * - 'drive'/'spin'/'dock': legacy single-step diagnostics. */
-  async reanchor(
-    sn: string,
-    action: 'auto' | 'verify' | 'drive' | 'spin' | 'dock' | 'continue_dock' | 'invalidate' = 'auto',
-  ): Promise<{ ok: boolean; error?: string; message?: string }> {
-    return this.request<{ ok: boolean; error?: string; message?: string }>(
-      'POST',
-      `/api/dashboard/reanchor/${encodeURIComponent(sn)}`,
-      { body: { action } },
-    );
+  /** Supervised own-dock recovery. Only an explicit new client can authorize movement. */
+  async reanchor(sn: string, action: 'auto' | 'pulse' | 'stop' | 'invalidate',
+    options: { cycleId?: string; mode?: 'supervised-v2'; ownDockUnmoved?: boolean } = {},
+  ): Promise<{ ok: boolean; error?: string; cycleId?: string }> {
+    return this.request('POST', `/api/dashboard/reanchor/${encodeURIComponent(sn)}`, { body: { action, ...options } });
   }
 
   /** Auto re-anchor progress, polled by the re-anchor wizard. */
@@ -980,27 +968,6 @@ export class ApiClient {
    */
   async setActiveMower(sn: string): Promise<{ ok: boolean; activeMowerSn?: string; error?: string }> {
     return this.request('POST', '/api/dashboard/equipment/set-active', { body: { sn } });
-  }
-
-  /**
-   * Recalibrate the charger pose stored in the mower's map_info.json with
-   * the mower's current reported x/y/theta. Use when coverage paths drift
-   * off-target because the map frame is mis-aligned with the physical
-   * dock. Mower must be physically on dock with battery_state=CHARGING,
-   * otherwise the server returns 400 unless `force: true` is passed.
-   */
-  async recalibrateChargingPose(
-    sn: string,
-    opts: { force?: boolean } = {},
-  ): Promise<{
-    ok: boolean;
-    pose?: { x: number; y: number; theta: number };
-    error?: string;
-    batteryState?: string;
-  }> {
-    return this.request('POST', `/api/dashboard/maps/${enc(sn)}/recalibrate-charging-pose`, {
-      body: { force: opts.force === true },
-    });
   }
 
   // ── Map geometry editing ─────────────────────────────────────────────

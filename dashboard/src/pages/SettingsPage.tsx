@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+import { ReanchorWizard } from '../components/dashboard/ReanchorWizard';
 import { useState, useEffect, useRef } from 'react';
 import {
   Tag, Bell, Check, Loader2, Smartphone, Radio, Home as HomeIcon, Mail,
@@ -9,7 +11,7 @@ import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
 import {
   updateMowerNickname, sendCommand, setSensorOverride, softRestartMower,
-  recalibrateChargingPose, fetchRainSettings, updateRainSettings, type RainSettings,
+  fetchRainSettings, updateRainSettings, type RainSettings,
   setMaxSpeed, setChargeThreshold, rebootMower,
 } from '../api/client';
 import { readWeekStart, writeWeekStart, type WeekStart } from '../utils/weekStart';
@@ -233,7 +235,7 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
   const { toast } = useToast();
   const sn = mower.sn;
   const online = mower.online;
-  // Recovery-acties (recalibrate/restart/reboot) zijn extended → alleen OpenNova firmware.
+  // Herstelacties gebruiken extended commands en vereisen OpenNova firmware.
   const firmwareSupported = isOpenNovaFirmware(mower.sensors?.sw_version ?? mower.sensors?.version);
 
   // Batched (set_para_info) state — all saved together by the Save button.
@@ -367,35 +369,7 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
     return () => clearTimeout(id);
   }, [maxSpeedVal, chargeThresholdVal, online, sn, t, toast]);
 
-  const handleRecalibrate = async () => {
-    if (!(await dialog.confirm({
-      title: t('settings.mower.recalibrateTitle', 'Recalibrate charging pose'),
-      message: t('settings.mower.recalibrateConfirm',
-        'Overwrite the charging pose with the mower\'s CURRENT pose? The mower must be physically on its dock and charging, or future coverage will drift.'),
-    }))) return;
-    try {
-      let resp = await recalibrateChargingPose(sn);
-      if (!resp.ok && (resp.batteryState ?? '').toUpperCase() !== 'CHARGING') {
-        if (!(await dialog.confirm({
-          title: t('settings.mower.recalibrateForceTitle', 'Not charging'),
-          message: t('settings.mower.recalibrateForce', {
-            defaultValue: 'Battery state is "{{state}}" — expected CHARGING. Override the safety check anyway?',
-            state: resp.batteryState ?? 'unknown',
-          }),
-          variant: 'danger',
-        }))) return;
-        resp = await recalibrateChargingPose(sn, { force: true });
-      }
-      if (resp.ok && resp.pose) {
-        toast(`✓ ${t('settings.mower.recalibrated', 'Charging pose recalibrated')}`, 'success');
-      } else {
-        toast(`✗ ${resp.error ?? t('settings.mower.recalibrateFailed', 'Recalibrate failed')}`, 'error');
-      }
-    } catch (e) {
-      if (isUnsupportedFirmwareError(e)) { toast(t('firmware.requiresOpenNova'), 'error'); return; }
-      toast(`✗ ${e instanceof Error ? e.message : t('settings.mower.recalibrateFailed', 'Recalibrate failed')}`, 'error');
-    }
-  };
+  const [showReanchor, setShowReanchor] = useState(false);
 
   const handleRestart = async () => {
     if (!(await dialog.confirm({
@@ -645,6 +619,11 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
         )}
       </div>
 
+      {showReanchor && createPortal(<div role="dialog" aria-modal="true" className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60 p-4">
+        <div className="max-w-md w-full max-h-[90vh] overflow-y-auto rounded-2xl bg-gray-900 p-5">
+          <ReanchorWizard sn={sn} online={online} sensors={mower.sensors} onClose={() => setShowReanchor(false)} />
+        </div>
+      </div>, document.body)}
       {/* Recovery */}
       <SettingCard icon={Wrench} title={t('settings.mower.recovery', 'Recovery')}>
         <div className="space-y-2">
@@ -652,15 +631,15 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
             <p className="text-xs text-amber-300/90 leading-snug">{t('firmware.requiresOpenNova')}</p>
           )}
           <button
-            onClick={handleRecalibrate}
+            onClick={() => setShowReanchor(true)}
             disabled={!online || !firmwareSupported}
             title={!firmwareSupported ? t('firmware.requiresOpenNova') : undefined}
             className="w-full flex items-center gap-3 rounded-xl border border-gray-700 bg-gray-800/40 hover:bg-gray-800/70 px-3 py-2.5 text-left transition-colors disabled:opacity-40"
           >
             <Compass className="w-4 h-4 text-rose-400 flex-shrink-0" />
             <span className="flex-1">
-              <span className="block text-sm font-semibold text-white">{t('settings.mower.recalibrate', 'Recalibrate charging pose')}</span>
-              <span className="block text-xs text-gray-500">{t('settings.mower.recalibrateDesc', 'Overwrites map_info.json with the current pose. Put the mower on its dock first — it must be CHARGING.')}</span>
+              <span className="block text-sm font-semibold text-white">{t('reanchor.title')}</span>
+              <span className="block text-xs text-gray-500">{t('reanchor.supervisedIntro')}</span>
             </span>
           </button>
           <button

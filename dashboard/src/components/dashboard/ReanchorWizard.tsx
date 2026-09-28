@@ -1,225 +1,99 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Anchor, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Anchor, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import {
-  reanchorAction, fetchReanchorStatus, type ReanchorStatus,
-} from '../../api/client';
+import { reanchorAction, fetchReanchorStatus, type ReanchorStatus } from '../../api/client';
 import { ManualControlPanel } from './ManualControlPanel';
 
-interface Props {
-  sn: string;
-  online: boolean;
-  sensors?: Record<string, string>;
-  onClose: () => void;
-}
+interface Props { sn: string; online: boolean; sensors?: Record<string, string>; onClose: () => void; }
 
-const PHASES_RUNNING: ReanchorStatus['phase'][] = ['check', 'anchor', 'relock', 'wait', 'dock', 'verify'];
-
-/**
- * Post-restore re-anchor wizard — dashboard mirror of the app ReanchorWizard.
- * After a bundle restore the saved map frame no longer agrees with the live UTM
- * frame; the server sets frame_unvalidated and this wizard drives the
- * server-orchestrated sequence (reanchor_pos -> drive back -> re-lock -> dock ->
- * verify). Two phases hand control to the operator (needs_drive / needs_position)
- * via the embedded joystick. We poll GET /reanchor/:sn/status for progress.
- */
+/** The server owns progress; this visible wizard owns only the operator heartbeat. */
 export function ReanchorWizard({ sn, online, sensors, onClose }: Props) {
   const { t } = useTranslation();
-  const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<ReanchorStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Live gating: prefer the server's status booleans, fall back to sensors so the
-  // idle screen shows correct preconditions before the first poll lands.
-  const rsStr = String(sensors?.recharge_status ?? '');
-  const bs = String(sensors?.battery_state ?? '').toLowerCase();
-  const sensorDocked = rsStr.includes('Charging') || rsStr === '9' || bs === 'charging';
-  const fixRaw = sensors?.rtk_fix_quality ?? '';
-  const sensorFixed = fixRaw === '4' || fixRaw === 'RTK Fixed';
-
-  const docked = status?.onDock ?? sensorDocked;
-  const rtkFixed = status?.rtkFixed ?? sensorFixed;
-  const relocked = status?.relocked ?? false;
-  const canStart = docked && rtkFixed;
-  const canVerify = docked && relocked;
-  const inError = status?.phase === 'error';
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }, []);
-
-  // Poll status continuously while the wizard is open (gives live onDock/rtkFixed/
-  // relocked for gating even before the auto flow starts). Closes on success.
+  const [confirmed, setConfirmed] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const owned = useRef<string | null>(null);
+  const generation = useRef(0);
   useEffect(() => {
-    let cancelled = false;
+    const session = ++generation.current;
+    setStatus(null); setErr(null); setConfirmed(false); setStarting(false);
+    let cancelled = false, polling = false;
     const tick = async () => {
+      if (polling) return;
+      polling = true;
+      const id = owned.current;
       try {
+        if (id) {
+          try {
+            const pulse = await reanchorAction(sn, 'pulse', { cycleId: id });
+            if (!cancelled && owned.current === id && !pulse.ok) owned.current = null;
+          } catch { if (!cancelled && owned.current === id) owned.current = null; }
+        }
+        if (cancelled) return;
         const s = await fetchReanchorStatus(sn);
         if (cancelled) return;
         setStatus(s);
-        if (s.phase === 'done' && s.ok) {
-          setRunning(false);
-          setTimeout(() => { if (!cancelled) onClose(); }, 1200);
-        } else if (s.phase === 'error') {
-          setRunning(false);
-        }
-      } catch { /* transient — keep polling */ }
+        if (!s.active && s.cycleId === id && owned.current === id) owned.current = null;
+      } catch { /* Expired supervision stops native motion; keep fetching recovery status. */ }
+      finally { polling = false; }
     };
+    const hide = () => {
+      if (document.hidden && owned.current) {
+        void reanchorAction(sn, 'stop', { cycleId: owned.current }).catch(() => {}); owned.current = null;
+      }
+    };
+    document.addEventListener('visibilitychange', hide);
     void tick();
-    pollRef.current = setInterval(tick, 2000);
-    return () => { cancelled = true; stopPolling(); };
-  }, [sn, onClose, stopPolling]);
-
-  const startAuto = useCallback(async () => {
-    setErr(null);
-    setStatus(null);
+    const timer = setInterval(tick, 1000);
+    return () => {
+      generation.current = session + 1; cancelled = true; clearInterval(timer);
+      document.removeEventListener('visibilitychange', hide);
+      if (owned.current) void reanchorAction(sn, 'stop', { cycleId: owned.current }).catch(() => {});
+      owned.current = null;
+    };
+  }, [sn]);
+  const start = async () => {
+    const attempt = generation.current;
+    setErr(null); setStarting(true);
     try {
-      const r = await reanchorAction(sn, 'auto');
-      if (!r.ok) { setErr(r.error ?? t('reanchor.startFailed', 'Starten mislukt')); return; }
-      setRunning(true);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : t('reanchor.startFailed', 'Starten mislukt'));
-    }
-  }, [sn, t]);
-
-  const startDock = useCallback(async () => {
-    setErr(null);
-    try {
-      const r = await reanchorAction(sn, 'verify');
-      if (!r.ok) { setErr(r.error ?? t('reanchor.startFailed', 'Starten mislukt')); return; }
-      setStatus(s => (s ? { ...s, phase: 'verify', msgKey: 'reanchorMsgVerify', message: '' } : s));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : t('reanchor.startFailed', 'Starten mislukt'));
-    }
-  }, [sn, t]);
-
-  const verifyManual = useCallback(async () => {
-    setErr(null);
-    try {
-      const r = await reanchorAction(sn, 'verify');
-      if (!r.ok) { setErr(r.error ?? t('reanchor.verifyFailed', 'Verifiëren mislukt')); return; }
-      setRunning(true);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : t('reanchor.verifyFailed', 'Verifiëren mislukt'));
-    }
-  }, [sn, t]);
-
-  // Live progress text: prefer the server's stable msgKey (interpolated with
-  // pose/dist), fall back to its Dutch `message`.
-  const liveMessage = (s: ReanchorStatus | null): string => {
-    if (!s) return t('reanchor.busy', 'Bezig...');
-    if (s.msgKey) {
-      return t(s.msgKey, {
-        x: s.pose ? s.pose.x.toFixed(2) : '',
-        y: s.pose ? s.pose.y.toFixed(2) : '',
-        dist: Number.isFinite(s.dist as number) ? (s.dist as number).toFixed(2) : '?',
-        defaultValue: s.message || t('reanchor.busy', 'Bezig...'),
-      });
-    }
-    return s.message || t('reanchor.busy', 'Bezig...');
+      const result = await reanchorAction(sn, 'auto', { mode: 'supervised-v2', ownDockUnmoved: confirmed });
+      if (!result.ok || !result.cycleId) throw new Error(result.error || t('reanchor.startFailed'));
+      if (attempt !== generation.current || document.hidden) { await reanchorAction(sn, 'stop', { cycleId: result.cycleId }); return; }
+      owned.current = result.cycleId;
+      const s = await fetchReanchorStatus(sn);
+      if (attempt === generation.current) setStatus(s);
+    } catch (e) { if (attempt === generation.current) setErr(e instanceof Error ? e.message : String(e)); }
+    finally { if (attempt === generation.current) setStarting(false); }
   };
-
-  const phaseRunning = status != null && PHASES_RUNNING.includes(status.phase);
-
-  const StatusBlock = (
-    <div className="flex items-center gap-3 text-xs">
-      <span className={rtkFixed ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>
-        RTK: {rtkFixed ? 'Fixed' : (fixRaw || '—')}
-      </span>
-      <span className={docked ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>
-        {docked ? t('reanchor.onDock', 'Op de dock') : t('reanchor.offDock', 'Niet op de dock')}
-      </span>
-    </div>
-  );
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Anchor className="w-5 h-5 text-amber-300" />
-        <span className="text-base font-semibold text-white">{t('reanchor.title', 'Opnieuw verankeren')}</span>
-      </div>
-
-      {status?.phase === 'needs_drive' ? (
-        <>
-          <div className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 text-amber-300 animate-spin" />
-            <span className="text-sm text-amber-300 font-semibold flex-1">{liveMessage(status)}</span>
-          </div>
-          <p className="text-xs text-gray-300">{t('reanchor.needsDriveHint', 'Rij met de joystick ~1 m recht achteruit; ik ga automatisch verder zodra de localisatie lockt.')}</p>
-          {StatusBlock}
-          <ManualControlPanel sn={sn} online={online} sensors={sensors} />
-        </>
-      ) : status?.phase === 'needs_position' ? (
-        <>
-          <span className="text-sm text-amber-300 font-semibold">{liveMessage(status)}</span>
-          <p className="text-xs text-gray-300">{t('reanchor.returnToDockHint', 'Rij met de joystick terug op het dock en druk op Verifieer.')}</p>
-          {StatusBlock}
-          {err && <span className="text-xs text-red-400 font-semibold">{err}</span>}
-          <ManualControlPanel sn={sn} online={online} sensors={sensors} />
-          <WizardButton label={t('reanchor.btnVerify', 'Verifieer')} onClick={startDock} />
-          <WizardButton label={t('reanchor.btnLater', 'Later')} onClick={onClose} secondary />
-        </>
-      ) : running || phaseRunning ? (
-        <>
-          <div className="flex items-center gap-2">
-            <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-            <span className="text-sm text-gray-200 flex-1">{liveMessage(status)}</span>
-          </div>
-          <p className="text-[11px] text-gray-500">{t('reanchor.waitingHint', 'Wacht op de controle. Rijden gebeurt met de joystick onder toezicht.')}</p>
-        </>
-      ) : status?.phase === 'done' && status.ok ? (
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-          <span className="text-sm text-emerald-400 font-semibold">{liveMessage(status)}</span>
-        </div>
-      ) : inError ? (
-        <>
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
-            <span className="text-sm text-red-400 font-semibold">{liveMessage(status)}</span>
-          </div>
-          <p className="text-xs text-gray-300">{t('reanchor.manualBackupHint', 'Dok de maaier handmatig met de joystick en druk Verifieer.')}</p>
-          {StatusBlock}
-          <ManualControlPanel sn={sn} online={online} sensors={sensors} />
-          <WizardButton label={t('reanchor.btnVerify', 'Verifieer')} onClick={verifyManual} disabled={!canVerify} />
-          <WizardButton label={t('reanchor.btnRetryAuto', 'Opnieuw proberen')} onClick={startAuto} disabled={!canStart} secondary />
-          <WizardButton label={t('reanchor.btnLater', 'Later')} onClick={onClose} secondary />
-        </>
-      ) : (
-        <>
-          <p className="text-sm text-gray-300">{t('reanchor.idleIntro', 'Zet de maaier op het onverplaatste dock en wacht op RTK Fixed. Start het herankeren en volg de stappen met de joystick, terwijl je bij de maaier staat.')}</p>
-          {StatusBlock}
-          {err && <span className="text-xs text-red-400 font-semibold">{err}</span>}
-          {canStart ? (
-            <span className="text-sm text-emerald-400 font-semibold">{t('reanchor.ready', 'Klaar om te starten')}</span>
-          ) : (
-            <span className="text-sm text-amber-400 font-semibold">
-              {!docked ? t('reanchor.needDock', 'Dok de maaier eerst (laden).') : t('reanchor.needFix', 'Wacht op RTK Fixed.')}
-            </span>
-          )}
-          <WizardButton label={t('reanchor.btnStart', 'Start verankeren')} onClick={startAuto} disabled={!canStart} />
-          <WizardButton label={t('reanchor.btnLater', 'Later')} onClick={onClose} secondary />
-        </>
-      )}
-    </div>
-  );
-}
-
-function WizardButton({ label, onClick, secondary, disabled }: {
-  label: string; onClick: () => void; secondary?: boolean; disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={`py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-        secondary
-          ? 'bg-white/10 text-gray-300 hover:bg-white/15'
-          : 'bg-blue-600 text-white hover:bg-blue-500'
-      }`}
-    >
-      {label}
-    </button>
-  );
+  const stop = async () => {
+    const id = owned.current ?? status?.cycleId;
+    if (id) await reanchorAction(sn, 'stop', { cycleId: id }).catch(e => setErr(String(e)));
+    owned.current = null;
+  };
+  const active = starting || status?.active;
+  const compatible = status?.protocol === 'supervised-reanchor-v2';
+  const canStart = compatible && online && confirmed && status?.onDock && status.rtkFixed && !status.installPending && !active;
+  return <div className="flex flex-col gap-3">
+    <div className="flex items-center gap-2"><Anchor className="w-5 h-5" /><h2>{t('reanchor.title')}</h2></div>
+    <p className="text-sm text-gray-300">{t('reanchor.supervisedIntro')}</p>
+    <p className="text-xs">RTK: {status?.rtkFixed ? 'Fixed' : '?'} · {t(status?.onDock ? 'reanchor.onDock' : 'reanchor.offDock')}</p>
+    {status?.message && <p role="status" className={status.ok ? 'text-emerald-400' : status.phase === 'error' ? 'text-red-400' : 'text-gray-200'}>{status.message}</p>}
+    {status?.verificationPending && <p className="text-xs text-amber-300">{t('reanchor.pendingHint')}</p>}
+    {status?.installPending && <p className="text-sm text-amber-300">{t('reanchor.installPending')}</p>}
+    {status && !compatible && <p role="alert">{t('reanchor.updateRequired')}</p>}
+    {err && <p role="alert" className="text-red-400">{err}</p>}
+    {active ? <>
+      <Loader2 className="w-4 h-4 animate-spin" />
+      <button className="rounded-xl bg-red-700 p-3" onClick={() => void stop()}>{t('reanchor.stop')}</button>
+    </> : <>
+      {status?.phase === 'error' && <>
+        <p className="text-xs">{t('reanchor.retryHint')}</p>
+        <ManualControlPanel sn={sn} online={online} sensors={sensors} />
+      </>}
+      <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />{t('reanchor.confirmOwnDock')}</label>
+      <button className="rounded-xl bg-blue-600 p-3 disabled:opacity-40" disabled={!canStart} onClick={() => void start()}>{t('reanchor.btnStart')}</button>
+    </>}
+    <button className="rounded-xl bg-white/10 p-3" onClick={onClose}>{t('reanchor.btnLater')}</button>
+  </div>;
 }

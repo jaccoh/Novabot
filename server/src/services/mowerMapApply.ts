@@ -7,7 +7,7 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { beginMapApply, waitForPlannerBack, type MapApply } from './mapApplyStatus.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from './anchor.js';
 import { freshPositionState } from './positionTelemetry.js';
-import { isFrameUnvalidated, markFrameUnvalidated, clearFrameUnvalidated } from './frameValidation.js';
+import { isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 
@@ -46,6 +46,7 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
       for (const file of zip.files) if (file.type === 'File' && /^csv_file\/[^/]+$/.test(file.path)) expectedCsv.set(file.path.slice(9), (await file.buffer()).toString('utf8'));
       if (!expectedCsv.size) { apply.fail('sync_failed'); return; }
       if (!await installVerifiedMapZip(sn, { bytes, expectedCsv, before, anchor }, operation, apply)) return;
+      clearMapInstallPending(sn);
       clearFrameUnvalidated(sn);
       apply.done();
       success = true;
@@ -94,6 +95,7 @@ export async function installVerifiedMapZip(
 ): Promise<Record<string, unknown> | null> {
   const { bytes, expectedCsv, before, anchor } = input;
   if (!freshPositionState(sn).docked || !isDeviceOnline(sn)) { apply.fail('sync_failed'); return null; }
+  markMapInstallPending(sn);
   markFrameUnvalidated(sn, { preservePhotoDock: true }); // CSV-only; origin and dock must stay unchanged.
   syncSnapshots.set(operation.id, { sn, bytes });
   try {

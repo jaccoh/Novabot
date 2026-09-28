@@ -1,28 +1,6 @@
-/**
- * Automatic re-anchor flow (Novabot-cq3).
- *
- * POST /api/dashboard/reanchor/:sn action:'auto' is the wizard's one-button
- * path. It must gate hard on the preconditions before it touches the mower:
- *   - frame must actually be unvalidated (else 409, nothing to do)
- *   - mower must be on the dock (charging)
- *   - mower must be on a real RTK Fixed
- *
- * action:'verify' is the manual backup: after the operator joysticks the mower
- * back onto the dock, it re-checks the docked map_position against the origin
- * and only clears frame_unvalidated when it lands within tolerance. It never
- * moves the mower. It is gated on the lifecycle: the mower must have left the
- * dock, re-locked (RUNNING + RTK Fixed) against the new origin, AND be back on
- * the dock — verifying before the relock tests a stale frame, verifying off-dock
- * checks the wrong place. battery FULL alone is NOT "on the dock" (it lingers
- * after undocking), so it cannot satisfy the auto-start or verify dock gate.
- *
- * GET /reanchor/:sn/status exposes the progress the wizard polls plus the live
- * gating booleans (onDock / rtkFixed / relocked).
- */
-
 import express from 'express';
 import request from 'supertest';
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 
 // Centrale firmware-gate (2026-09-09): deze tests gaan uit van een OpenNova
 // custom-firmware maaier, anders weigert de server extended-commando's met 409.
@@ -108,10 +86,11 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 }));
 
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, setReanchorRelocked } from '../../services/frameValidation.js';
+import { markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, markMapInstallPending, clearMapInstallPending, getPendingReanchor, setPendingReanchor, loadFrameValidationFromDb } from '../../services/frameValidation.js';
 import { frameSnapshotSignature } from '../../services/copyAlignment.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { mapRepo } from '../../db/repositories/index.js';
+import { guardedDockMove, settleDockMotion } from '../../services/dockMotion.js';
 import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
 import { publishToDevice, publishToExtended, onExtendedResponse, offExtendedResponse } from '../../mqtt/mapSync.js';
 
@@ -127,6 +106,9 @@ app.use('/api/dashboard', dashboardRouter);
 const server = app.listen(0);
 afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
 
+vi.mock('../../services/dockMotion.js', () => ({ guardedDockMove: vi.fn(), settleDockMotion: vi.fn() }));
+
+let cycleId: string | undefined;
 const SN = 'LFIN_REANCHOR_TEST';
 const data = { battery_state: 'CHARGING', recharge_status: 9, rtk_fix_quality: 4, rtk_latitude: 52.1234567, rtk_longitude: 4.7654321, map_position_x: 0.13, map_position_y: -0.52, localization_state: 'RUNNING' };
 const anchor = { x: 0.13, y: -0.52 };
@@ -144,12 +126,24 @@ function snapshot() {
     'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: 1.5 } }),
   }, charging_station_yaml: `charging_pose: [${snapshotConflict ? 2 : anchor.x}, ${anchor.y}, 1.5]`, pos_json: JSON.stringify({ utm_origin: loadedOrigin }) };
 }
-function feed(fields = {}) { ingestPositionTelemetry(SN, { ...data, rtk_sample_id: String(Date.now()), ...fields }); }
-async function tick(ms = 1000) { await vi.advanceTimersByTimeAsync(ms); }
+function feed(fields = {}) { for (let i = 7; i >= 0; i--) ingestPositionTelemetry(SN, { ...data, rtk_sample_id: String(Date.now() - i * 100), ...fields }, Date.now() - i * 100); }
+async function tick(ms = 1000, supervise = true) {
+  for (let left = ms; left > 0; left -= 1000) {
+    if (supervise && cycleId) await action('pulse');
+    await vi.advanceTimersByTimeAsync(Math.min(left, 1000));
+  }
+}
 async function status() { return (await request(server).get(`/api/dashboard/reanchor/${SN}/status`)).body.status; }
-const action = (value: string) => request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: value });
+const action = (value: string, extra = {}) => request(server).post(`/api/dashboard/reanchor/${SN}`).send({ action: value, mode: 'supervised-v2', ownDockUnmoved: true, cycleId, ...extra });
+async function start() { const res = await action('auto'); cycleId = res.body.cycleId; if (cycleId) await action('pulse'); return res; }
 beforeEach(() => {
-  vi.restoreAllMocks(); vi.clearAllMocks(); clearPositionTelemetry(SN); clearFrameUnvalidated(SN); handlers.clear();
+  vi.restoreAllMocks(); vi.clearAllMocks(); clearPositionTelemetry(SN); clearFrameUnvalidated(SN); clearMapInstallPending(SN); setPendingReanchor(SN, null); handlers.clear(); cycleId = undefined; deviceCache.delete(SN);
+  vi.mocked(guardedDockMove).mockImplementation(async (_sn, operation, input, check) => {
+    expect(operation.reanchor).toBe(true); check();
+    if (input.action === 'reverse') feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - .6 });
+    else feed();
+  });
+  vi.mocked(settleDockMotion).mockImplementation(async (_sn, docked, check) => { check(); return { x: anchor.x, y: anchor.y - (docked ? 0 : .6), sampledAt: Date.now(), sampleCount: 8, spreadM: 0 }; });
   snapshotConflict = false; requestCount = 0; loadedOrigin = { x: 620859.4, y: 5776239.5, z: 0, utm_zone: 31 };
   runtimeOverride = {}; rejectWrite = false; measurementCount = 0; corruptAfterWrite = false;
   vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
@@ -190,96 +184,100 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
-  if (vi.isFakeTimers()) { await tick(400_000); vi.useRealTimers(); }
+  if (vi.isFakeTimers()) { if (cycleId) await action('stop'); await tick(400_000, false); vi.useRealTimers(); }
 });
-it('rejects cached values, bare RTK boolean, stale measurements and battery FULL without docking', async () => {
-  markFrameUnvalidated(SN);
-  deviceCache.set(SN, new Map(Object.entries(data).map(([k, v]) => [k, String(v)])));
-  expect((await action('auto')).status).toBe(409);
-  feed({ rtk_fix_quality: undefined, rtk: true });
-  expect((await action('auto')).status).toBe(409);
-  feed({ battery_state: 'FULL', recharge_status: 0 });
-  expect((await action('auto')).status).toBe(409);
+it('rejects old clients, missing confirmation, stale telemetry and FULL without contact before moving', async () => {
+  feed();
+  expect((await action('auto', { mode: undefined })).status).toBe(409);
+  expect((await action('auto', { ownDockUnmoved: false })).status).toBe(409);
+  clearPositionTelemetry(SN); expect((await start()).status).toBe(409);
+  feed({ battery_state: 'FULL', recharge_status: 0 }); expect((await start()).status).toBe(409);
+  expect(guardedDockMove).not.toHaveBeenCalled();
+});
+it('retires recalibration and old single-step shortcuts without any mower write', async () => {
+  feed();
+  expect((await request(server).post(`/api/dashboard/maps/${SN}/recalibrate-charging-pose`).send({ force: true })).status).toBe(410);
+  for (const name of ['drive', 'spin', 'dock', 'verify', 'continue_dock']) expect((await action(name)).status).toBe(410);
   expect(publishToExtended).not.toHaveBeenCalled();
 });
-it('retired drive/spin/dock actions and isolated verify cannot move or unlock a mower', async () => {
-  markFrameUnvalidated(SN); feed(); setReanchorRelocked(SN, true);
-  for (const name of ['drive', 'spin', 'dock']) expect((await action(name)).status).toBe(410);
-  expect((await action('verify')).status).toBe(409);
-  expect((await action('continue_dock')).status).toBe(409);
-  expect(isFrameUnvalidated(SN)).toBe(true); expect(publishToDevice).not.toHaveBeenCalled();
-});
-it('a conflicting mower anchor refuses before writing an origin', async () => {
-  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); snapshotConflict = true;
-  expect((await action('auto')).status).toBe(200); await tick(1);
-  expect((await status()).phase).toBe('error'); expect(requestCount).toBe(0);
+it('has a recovery entry without prior invalidation, but a lost start response never moves', async () => {
+  vi.useFakeTimers(); feed();
+  expect(isFrameUnvalidated(SN)).toBe(false); expect((await action('auto')).status).toBe(200);
+  await tick(6000, false);
+  expect((await status()).phase).toBe('error'); expect(guardedDockMove).not.toHaveBeenCalled();
   expect(isFrameUnvalidated(SN)).toBe(true);
 });
-it('uses a fresh vehicle observation, one origin write, readback, off-dock relock and a new return measurement', async () => {
-  vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
-  const oldX = loadedOrigin.x;
-  expect((await action('auto')).status).toBe(200); await tick(1);
-  expect((await action('auto')).status).toBe(409);
-  expect((await action('continue_dock')).status).toBe(409);
-  await tick(2000); expect(requestCount).toBe(0);
-  await tick(5000);
-  expect(requestCount).toBe(1);
-  expect(loadedOrigin.x).toBeCloseTo(oldX + .145, 8);
-  expect((await status()).phase).toBe('needs_drive');
-  expect(publishToDevice).not.toHaveBeenCalled();
-  feed(); await tick(); expect((await status()).relocked).toBe(false);
-  feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: -1.52 }); await tick();
-  expect((await status()).phase).toBe('needs_position');
-  expect((await action('verify')).status).toBe(409);
-  feed(); expect((await action('verify')).status).toBe(200); await tick();
-  expect(isFrameUnvalidated(SN)).toBe(true);
-  await tick(7000);
-  expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
-  expect(measurementCount).toBe(2);
-  expect(requestCount).toBe(1); expect(publishToDevice).not.toHaveBeenCalled();
+it('refuses conflicting native anchors before departure', async () => {
+  vi.useFakeTimers(); feed(); snapshotConflict = true;
+  await start(); await tick(1000);
+  expect((await status()).phase).toBe('error');
+  expect(guardedDockMove).not.toHaveBeenCalled(); expect(requestCount).toBe(0);
 });
-it('validates a matching settled frame without rewriting its origin', async () => {
-  vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
-  runtimeOverride = { base: { ...anchor, z: 0, yaw: 1.5 } };
-  await action('auto'); await tick(7000);
-  expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
-  expect(requestCount).toBe(0);
-});
-it.each([
-  { x: .06 }, { docked: false }, { base: undefined }, { base_spread_m: .04 },
-  { base: { ...anchor, z: 0, yaw: 2 } }, { capture_started: 100, capture_finished: 101 },
-])('refuses unsafe or old-script measurement before any origin write: %j', async bad => {
-  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); runtimeOverride = bad;
-  await action('auto'); await tick(7000);
-  expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
-  expect(requestCount).toBe(0);
-});
-it('retains the block when the mower rejects the second measurement', async () => {
-  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); rejectWrite = true;
-  await action('auto'); await tick(7000);
-  expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
-  expect(requestCount).toBe(1);
-});
-it.each([{ x: .07 }, { base: { x: anchor.x + .145, y: anchor.y, z: 0, yaw: 1.5 } }])(
-  'does not unlock after return with temporary compensation or 14.5cm dock error: %j', async bad => {
-    vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
-    await action('auto'); await tick(7000);
-    feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: -1.52 }); await tick();
-    feed(); runtimeOverride = bad;
-    await action('verify'); await tick(7000);
-    expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
+it('initializes heading first, writes once, then repeats the dock cycle and fresh measurement', async () => {
+  vi.useFakeTimers(); feed({ map_position_orientation: 1.606 });
+  const oldX = loadedOrigin.x, move = vi.mocked(guardedDockMove).getMockImplementation()!;
+  vi.mocked(guardedDockMove).mockImplementationOnce(async (...args) => {
+    expect(measurementCount).toBe(0); expect(requestCount).toBe(0); await move(...args);
   });
-it('does not request a drive after readback shows changed map files', async () => {
-  vi.useFakeTimers(); markFrameUnvalidated(SN); feed(); corruptAfterWrite = true;
-  await action('auto'); await tick(7000);
-  expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
-  expect(requestCount).toBe(1); expect(publishToDevice).not.toHaveBeenCalled();
+  await start(); expect((await action('auto')).status).toBe(409); await tick(16_000);
+  expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
+  expect(getPendingReanchor(SN)).toBeUndefined(); expect(loadedOrigin.x).toBeCloseTo(oldX + .145, 8);
+  expect(requestCount).toBe(1); expect(measurementCount).toBe(2);
+  expect(vi.mocked(guardedDockMove).mock.calls.map(c => c[2].action)).toEqual(['reverse', 'dock', 'reverse', 'dock']);
+  expect(publishToDevice).not.toHaveBeenCalled();
 });
-it('rejects a changed origin after returning to the dock', async () => {
-  vi.useFakeTimers(); markFrameUnvalidated(SN); feed();
-  await action('auto'); await tick(7000);
-  feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: -1.52 }); await tick();
-  loadedOrigin = { ...loadedOrigin, x: loadedOrigin.x + .01 };
-  feed(); await action('verify'); await tick(1000);
+it('a matching frame still requires preparation but no origin write, and new invalidation clears old success', async () => {
+  vi.useFakeTimers(); feed(); runtimeOverride = { base: { ...anchor, z: 0, yaw: 1.5 } };
+  // A refused preflight is not an uncertain device write and must not create
+  // the same chicken-and-egg dead end as the retired calibration button.
+  deviceCache.set(SN, new Map([['map_apply_phase', 'failed']]));
+  await start(); await tick(9000);
+  expect((await status()).phase).toBe('done'); expect(requestCount).toBe(0);
+  expect(guardedDockMove).toHaveBeenCalledTimes(2); await action('invalidate');
+  expect((await status()).phase).toBe('idle'); expect(isFrameUnvalidated(SN)).toBe(true);
+});
+it('does not release a failed map installation, including after restarting the server', async () => {
+  vi.useFakeTimers(); feed(); markMapInstallPending(SN); markFrameUnvalidated(SN);
+  clearFrameUnvalidated(SN); loadFrameValidationFromDb();
+  expect(isFrameUnvalidated(SN)).toBe(true);
+  expect((await start()).status).toBe(409); expect(guardedDockMove).not.toHaveBeenCalled();
+  expect((await status()).installPending).toBe(true);
+});
+it('persists the post-write trip across cancellation and restart, without a duplicate write', async () => {
+  vi.useFakeTimers(); feed();
+  const move = vi.mocked(guardedDockMove).getMockImplementation()!;
+  vi.mocked(guardedDockMove).mockImplementation(async (...args) => {
+    if (requestCount) throw new Error('operator interrupted post-write departure');
+    await move(...args);
+  });
+  await start(); await tick(9000);
+  expect((await status()).phase).toBe('error'); expect(requestCount).toBe(1);
+  expect(getPendingReanchor(SN)).toBeDefined();
+  clearFrameUnvalidated(SN); loadFrameValidationFromDb(); feed();
+  expect(isFrameUnvalidated(SN)).toBe(true);
+  await start(); await tick(1000);
   expect((await status()).phase).toBe('error'); expect(isFrameUnvalidated(SN)).toBe(true);
+  vi.mocked(guardedDockMove).mockImplementation(move); feed();
+  await start(); await tick(9000);
+  expect((await status()).phase).toBe('done'); expect(requestCount).toBe(1);
+  expect(isFrameUnvalidated(SN)).toBe(false);
+});
+it('an expired operator lease during measurement cannot write or unlock', async () => {
+  vi.useFakeTimers(); feed(); await start(); await tick(7000, false);
+  expect((await status()).phase).toBe('error'); expect(requestCount).toBe(0);
+  expect(isFrameUnvalidated(SN)).toBe(true); expect((await action('verify')).status).toBe(410);
+});
+it.each([{ x: .06 }, { docked: false }, { base: undefined }, { base_spread_m: .04 },
+  { base: { ...anchor, z: 0, yaw: 2 } }, { capture_started: 100, capture_finished: 101 }])(
+  'still rejects invalid final heading, runtime or measurement after preparation: %j', async bad => {
+    vi.useFakeTimers(); feed(); runtimeOverride = bad; await start(); await tick(9000);
+    expect((await status()).phase).toBe('error'); expect(requestCount).toBe(0);
+    expect(isFrameUnvalidated(SN)).toBe(true);
+  });
+it('retains durable uncertainty after changed native readback and refuses a blind retry', async () => {
+  vi.useFakeTimers(); feed(); corruptAfterWrite = true; await start(); await tick(9000);
+  expect((await status()).phase).toBe('error'); expect(getPendingReanchor(SN)).toBeDefined();
+  expect(isFrameUnvalidated(SN)).toBe(true); expect(guardedDockMove).toHaveBeenCalledTimes(2);
+  feed(); await start(); await tick(1000);
+  expect((await status()).phase).toBe('error'); expect(requestCount).toBe(1);
 });

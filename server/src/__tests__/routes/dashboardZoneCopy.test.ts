@@ -131,7 +131,7 @@ import { join } from 'node:path';
 import archiver from 'archiver';
 import { PassThrough } from 'node:stream';
 import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
-import { clearFrameUnvalidated, isFrameUnvalidated } from '../../services/frameValidation.js';
+import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated } from '../../services/frameValidation.js';
 const zipFixture = vi.hoisted(() => ({ path: '' }));
 vi.mock('../../services/mapBackup.js', () => ({ regenerateLatestZipFromBackup: () => zipFixture.path, scheduleSnapshot: vi.fn() }));
 import { dashboardRouter } from '../../routes/dashboard.js';
@@ -176,7 +176,7 @@ beforeAll(async () => {
   await archive.finalize(); await complete; writeFileSync(zipFixture.path, Buffer.concat(chunks));
 });
 afterAll(() => rmSync(fixtureDir, { recursive: true, force: true }));
-beforeEach(() => { clearFrameUnvalidated(B); clearFrameUnvalidated(A); clearPositionTelemetry(B); vi.mocked(publishToExtended).mockReset(); });
+beforeEach(() => { clearMapInstallPending(B); clearMapInstallPending(A); clearFrameUnvalidated(B); clearFrameUnvalidated(A); clearPositionTelemetry(B); vi.mocked(publishToExtended).mockReset(); });
 
 describe('zone copy routes', () => {
   beforeEach(() => {

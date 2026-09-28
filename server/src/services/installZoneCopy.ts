@@ -7,7 +7,7 @@ import { validateMapRasters } from '../maps/validateGrid.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { csvZip, type ConfirmedCopyDocks } from './dockChannelRepair.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
-import { clearFrameUnvalidated, isFrameUnvalidated, markFrameUnvalidated } from './frameValidation.js';
+import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated, markFrameUnvalidated } from './frameValidation.js';
 import { beginMapApply } from './mapApplyStatus.js';
 import { assertMowerMapOperation } from './mowerMapOperation.js';
 import { installVerifiedMapZip } from './mowerMapApply.js';
@@ -105,7 +105,8 @@ export async function installZoneCopy(
       if (photo) deviceSettingsRepo.upsert(sn, PHOTO_DOCK_KEY, JSON.stringify(photo));
       return result;
     })();
-    clearFrameUnvalidated(sn);
+    clearMapInstallPending(sn);
+      clearFrameUnvalidated(sn);
     apply.done();
     return saved;
   } catch (error) {

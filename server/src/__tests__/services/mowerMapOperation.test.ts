@@ -100,3 +100,28 @@ it('owns measurement motion and arm commands, while stop/manual control interrup
     expect(isMapOperationCommandBlocked('A', { go_to_charge: {} })).toBe(true);
   });
 });
+
+it('permits only a correlated recovery motion through the frame guard and never a legacy dock write', async () => {
+  const { isFrameNavBlocked, markFrameUnvalidated, clearFrameUnvalidated, markMapInstallPending, clearMapInstallPending } = await import('../../services/frameValidation.js');
+  const sn = 'LFIN_RECOVERY_GUARD';
+  markFrameUnvalidated(sn);
+  for (const recovery of [false, true]) {
+    await withMowerMapOperation(sn, async operation => {
+      const pending = operation.command('dock_measurement_move', { action: 'reverse', recovery }, 1000);
+      await vi.waitFor(() => expect(mqtt.sent.at(-1)?.sn).toBe(sn));
+      const body = mqtt.sent.at(-1)!.body;
+      expect(isFrameNavBlocked(sn, body)).toBe(!recovery);
+      expect(isFrameNavBlocked(sn, { dock_measurement_move: { ...body.dock_measurement_move, operation_id: 'forged' } })).toBe(true);
+      expect(isFrameNavBlocked(sn, { ...body, start_navigation: {} })).toBe(true);
+      markMapInstallPending(sn);
+      expect(isFrameNavBlocked(sn, body)).toBe(true); clearMapInstallPending(sn);
+      expect(isMapOperationCommandBlocked(sn, { recalibrate_charging_pose: body.dock_measurement_move })).toBe(true);
+      for (const handler of mqtt.handlers.get(sn) ?? []) handler({ dock_measurement_move_respond: { result: 0, operation_id: body.dock_measurement_move.operation_id } });
+      await pending;
+      expect(isFrameNavBlocked(sn, body)).toBe(true);
+    }, recovery);
+    mqtt.sent.length = 0;
+  }
+  clearFrameUnvalidated(sn);
+  expect(isMapOperationCommandBlocked(sn, { recalibrate_charging_pose: { force: true } })).toBe(true);
+});

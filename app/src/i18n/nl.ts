@@ -1,4 +1,12 @@
 export default {
+  reanchorUpdateRequired: "Werk de OpenNova-server bij om begeleid te herankeren.",
+  reanchorSupervisedIntro: "De maaier rijdt ongeveer 50 cm achteruit en keert via het dockpatroon terug om de richting te initialiseren. Als de oorsprong moet worden hersteld, herhaalt hij deze controle daarna. Blijf bij de maaier en houd het pad vrij.",
+  reanchorConfirmOwnDock: "Ik sta bij de maaier op zijn eigen dock. Het dock is niet verplaatst sinds deze zones zijn opgenomen.",
+  reanchorStop: "Stoppen",
+  reanchorRetryHint: "Zet de maaier met de joystick terug op zijn eigen dock en start de volledige controle opnieuw.",
+  reanchorInstallPending: "Een kaartinstallatie is niet afgerond. Herstel of reconcilieer die installatie voordat je herankert.",
+  reanchorPendingHint: "Een eerdere oorsprongwijziging moet nog worden gecontroleerd. Opnieuw starten leest eerst de opgeslagen uitkomst en herhaalt de dockrit.",
+
   // ── Beta firmware warning (OtaScreen) ─────────────────────────
   betaFwTitle: 'BETA CUSTOM FIRMWARE',
   betaFwExperimental: 'Dit is BETA / experimentele custom firmware.',
@@ -413,7 +421,7 @@ export default {
 
   // ── Re-anchor wizard (Novabot-cq3) ──
   // Static UI — app/src/components/ReanchorWizard.tsx
-  reanchorTitle: 'Opnieuw ankeren na herstel',
+  reanchorTitle: 'Herankeren bij het eigen dock',
   reanchorIdleIntro: "Zet de maaier op het onverplaatste dock en wacht op RTK Fixed. Start het herankeren en volg de stappen met de joystick, terwijl je bij de maaier staat.",
   reanchorRunningHint: "De oorsprong wordt gecontroleerd en hersteld. Rij pas wanneer de wizard daarom vraagt.",
   reanchorManualBackupHint: "Rij na de bevestigde lokalisatie met de joystick terug op het dock tot de maaier laadt en druk op Verifieer.",

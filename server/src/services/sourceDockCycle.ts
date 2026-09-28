@@ -1,12 +1,12 @@
-import { randomUUID } from 'node:crypto';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToExtended } from '../mqtt/mapSync.js';
 import { isFrameUnvalidated } from './frameValidation.js';
-import { freshPositionState, stablePosition } from './positionTelemetry.js';
+import { stablePosition } from './positionTelemetry.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 import { readMowerMapSnapshot, withMowerMapOperation } from './mowerMapOperation.js';
 import { beginCopyAlignment, captureCopyAlignment, consumeCopyAlignment, frameSnapshotSignature, getCopyAlignment, type CopyAlignmentView } from './copyAlignment.js';
 import { disarmEdgeWatch } from './scheduleRunner.js';
+import { guardedDockMove, settleDockMotion, DockMotionError } from './dockMotion.js';
 import { measureReanchorDock } from './reanchorGps.js';
 
 export type SourceDockPhase = 'starting' | 'checking' | 'reverse_first' | 'measure_first' | 'reverse_second' | 'measure_second' | 'docking' | 'verifying' | 'done' | 'error';
@@ -78,7 +78,7 @@ async function run(c: Cycle): Promise<void> {
     await withMowerMapOperation(c.sourceSn, async operation => {
       operation.onManualControl = () => cancel(c, 'Measurement cycle stopped by manual control.');
       timer = setInterval(() => {
-        try { check(c); control(c, 'keepalive'); } catch { /* check latches cancellation; no later step may run */ }
+        try { check(c); } catch { /* check latches cancellation; no later step may run */ }
       }, 500);
       const before = await readMowerMapSnapshot(c.sourceSn, operation);
       if (!before) throw new Error('Source mower files could not be read.');
@@ -90,33 +90,9 @@ async function run(c: Cycle): Promise<void> {
       if (!start) throw new Error('Start stationary on the source mower’s own dock with fresh RTK Fixed and charging contact.');
       check(c);
       disarmEdgeWatch(c.sourceSn, 'automatic source dock measurement');
-      const move = async (action: 'reverse' | 'dock', distance: number, fromDock: boolean) => {
-        check(c);
-        c.motionId = randomUUID();
-        try {
-          const armed = await operation.command('dock_measurement_control', { action: 'arm', motion_id: c.motionId }, 5_000);
-          check(c);
-          if (armed?.result !== 0 || armed.protocol !== 'dock-measurement-motion-v2') throw new Error('The mower does not support guarded dock measurement motion. Update extended_commands.py first.');
-          const result = await operation.command('dock_measurement_move', { action, distance_m: distance, from_dock: fromDock, motion_id: c.motionId, frame_fingerprint: signature }, 60_000);
-          if (result?.result !== 0 || result.protocol !== 'dock-measurement-motion-v2' || result.frame_fingerprint !== signature || (action === 'dock' && result.docked !== true)) {
-            // Preserve an unconfirmed native cancellation even if the operator
-            // already pressed Stop; that is more urgent than our generic label.
-            c.error = typeof result?.error === 'string' ? result.error : 'Movement stop was not confirmed. Check the mower and use its STOP button if needed.';
-            throw new Error(c.error);
-          }
-          check(c);
-        } finally { control(c, 'stop'); c.motionId = undefined; }
-      };
-      const settled = async (docked = false) => {
-        const after = Date.now(), deadline = performance.now() + 25_000;
-        while (performance.now() < deadline) {
-          check(c);
-          const sample = stablePosition(c.sourceSn, { after, docked });
-          if (sample && (docked || !freshPositionState(c.sourceSn).docked)) return sample;
-          await sleep(250);
-        }
-        throw new Error('The mower did not settle with fresh RTK Fixed. Use the joystick before starting again.');
-      };
+      const move = (action: 'reverse' | 'dock', distance: number, fromDock: boolean) =>
+        guardedDockMove(c.sourceSn, operation, { action, distance, fromDock, signature }, () => check(c), id => { c.motionId = id; });
+      const settled = (docked = false) => settleDockMotion(c.sourceSn, docked, () => check(c));
       c.phase = 'reverse_first'; await move('reverse', .5, true);
       c.phase = 'measure_first'; await settled(); check(c);
       await captureCopyAlignment(c.alignmentId!, 'source', operation); check(c);
@@ -138,6 +114,7 @@ async function run(c: Cycle): Promise<void> {
       c.phase = 'done';
     });
   } catch (error) {
+    if (error instanceof DockMotionError) c.error = error.message;
     cancel(c, error instanceof Error ? error.message : String(error));
     c.phase = 'error';
     c.alignment = undefined;

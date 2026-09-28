@@ -1,4 +1,12 @@
 export default {
+  reanchorUpdateRequired: "Mettez à jour le serveur OpenNova pour utiliser le réancrage supervisé.",
+  reanchorSupervisedIntro: "La tondeuse recule d’environ 50 cm et revient grâce au motif de la station pour initialiser son orientation. Si l’origine doit être corrigée, elle répète ensuite ce contrôle. Restez près de la tondeuse et dégagez le passage.",
+  reanchorConfirmOwnDock: "Je suis près de la tondeuse sur sa propre station. La station n’a pas été déplacée depuis l’enregistrement de ces zones.",
+  reanchorStop: "Arrêter",
+  reanchorRetryHint: "Ramenez la tondeuse sur sa propre station avec le joystick, puis relancez le contrôle complet.",
+  reanchorInstallPending: "Une installation de carte est incomplète. Restaurez ou vérifiez cette installation avant le réancrage.",
+  reanchorPendingHint: "Une modification précédente de l’origine doit encore être vérifiée. Une nouvelle tentative vérifie d’abord le résultat enregistré et répète le trajet vers la station.",
+
   // ── Beta firmware warning (OtaScreen) ─────────────────────────
   betaFwTitle: 'FIRMWARE PERSONNALISÉ BETA',
   betaFwExperimental: 'Ceci est un firmware personnalisé BETA / expérimental.',
@@ -201,7 +209,7 @@ export default {
 
   // ── Re-anchor wizard (Novabot-cq3) ──
   // Static UI — app/src/components/ReanchorWizard.tsx
-  reanchorTitle: 'Réancrage après restauration',
+  reanchorTitle: 'Réancrer à sa propre station',
   reanchorIdleIntro: "Placez la tondeuse sur sa station non déplacée et attendez RTK Fixed. Lancez le réancrage et suivez les étapes au joystick en restant près de la tondeuse.",
   reanchorRunningHint: "L’origine est vérifiée et rétablie. Ne conduisez que lorsque l’assistant le demande.",
   reanchorManualBackupHint: "Après confirmation de la localisation, revenez sur la station au joystick jusqu’à la charge, puis appuyez sur Vérifier.",

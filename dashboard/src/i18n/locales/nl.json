@@ -977,7 +977,14 @@
     "btnLater": "Later",
     "startFailed": "Starten mislukt",
     "verifyFailed": "Verifiëren mislukt",
-    "returnToDockHint": "Rij met de joystick terug op het dock en druk op Verifieer."
+    "returnToDockHint": "Rij met de joystick terug op het dock en druk op Verifieer.",
+    "supervisedIntro": "De maaier rijdt ongeveer 50 cm achteruit en keert via het dockpatroon terug om de richting te initialiseren. Als de oorsprong moet worden hersteld, herhaalt hij deze controle daarna. Blijf bij de maaier en houd het pad vrij.",
+    "confirmOwnDock": "Ik sta bij de maaier op zijn eigen dock. Het dock is niet verplaatst sinds deze zones zijn opgenomen.",
+    "stop": "Stoppen",
+    "retryHint": "Zet de maaier met de joystick terug op zijn eigen dock en start de volledige controle opnieuw.",
+    "installPending": "Een kaartinstallatie is niet afgerond. Herstel of reconcilieer die installatie voordat je herankert.",
+    "pendingHint": "Een eerdere oorsprongwijziging moet nog worden gecontroleerd. Opnieuw starten leest eerst de opgeslagen uitkomst en herhaalt de dockrit.",
+    "updateRequired": "Werk de OpenNova-server bij om begeleid te herankeren."
   },
   "sensors": {
     "connectivity": "Verbinding",

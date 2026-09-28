@@ -1236,41 +1236,13 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
     <div class="card">
       <details style="padding:8px 12px;background:rgba(239,68,68,.04);border:1px solid rgba(239,68,68,.15);border-radius:8px">
-        <summary style="font-size:12px;font-weight:600;color:#fca5a5;cursor:pointer;list-style:none">Debug &mdash; manual recalibrate charging pose <span style="font-size:10px;background:rgba(148,163,184,.15);color:#94a3b8;padding:2px 6px;border-radius:4px;margin-left:6px">DEBUG</span></summary>
-        <div style="font-size:10px;color:#94a3b8;margin:6px 0">Use only when polygon shape is correct but dock pose drifted. Portable Map Bundle handles this automatically. Only fall back here if exact-restore is unavailable.</div>
-        <div style="padding:10px 12px;background:rgba(239,68,68,.05);border:1px solid rgba(239,68,68,.2);border-radius:8px;margin-top:8px">
-          <div style="font-size:11px;color:#aaa;margin-bottom:10px;line-height:1.5">
-            <b style="color:#fca5a5">Recovery: wrong charger pose causes mower to drive off target.</b><br>
-            <span data-i18n-html>Stock firmware needs a drive-back cycle to initialize localization
-            before the reported pose is trustworthy. While docked at boot,
-            <code>map_position</code> is always <code>(0, 0, 0)</code> placeholder.</span><br>
-            <b>Workflow:</b>
-            <ol style="margin:6px 0 0 18px;padding:0;color:#aaa;font-size:11px">
-              <li>Drive the mower a short distance off the dock (e.g. start a 10s mowing task or push it manually 1-2 m)</li>
-              <li data-i18n-html>Let it return to dock so battery state shows <code>CHARGING</code></li>
-              <li data-i18n-html>Wait until <code>localization_state</code> below shows <b>Localized</b> and <code>map_position</code> is non-zero</li>
-              <li data-i18n-html>Then press <b>Recalibrate Charging Pose</b></li>
-            </ol>
-          </div>
+        <summary style="font-size:12px;font-weight:600;color:#67e8f9;cursor:pointer;list-style:none">Position Validation (RTK FIX only)</summary>
           <div id="mapLocalizationStatus" style="font-size:11px;color:#ccc;background:#0d0d20;border:1px solid #2a2a3a;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-family:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace">
             <span style="color:#888">Loading localization status...</span>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button onclick="recalibrateChargingPose()" id="mapRecalBtn" style="padding:8px 16px;background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Recalibrate Charging Pose</button>
-            <a href="javascript:void(0)" onclick="document.getElementById('infoRecal').style.display=document.getElementById('infoRecal').style.display==='block'?'none':'block'" style="font-size:11px;color:#94a3b8;text-decoration:underline;cursor:pointer">What does this do?</a>
-          </div>
-          <div id="infoRecal" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(15,23,42,.6);border:1px solid #1e293b;border-radius:6px;font-size:11px;color:#cbd5e1;line-height:1.55">
-            <div><b>Snaps the dock pose to where the mower currently sits.</b></div>
-            <div data-i18n-html style="margin-top:6px"><b style="color:#86efac">Updates:</b> <code>charging_station.yaml</code> + <code>map_info.json</code> in <code>csv_file/</code> and <code>x3_csv_file/</code> on the mower (3 files). Saves the new theta in DB so subsequent <code>sync_map</code> calls reuse it.</div>
-            <div data-i18n-html style="margin-top:6px"><b style="color:#fca5a5">Does NOT touch:</b> polygon CSVs, the <code>_latest.zip</code>, charger GPS, or the mower's coverage planner state.</div>
-            <div data-i18n-html style="margin-top:6px"><b style="color:#93c5fd">Use when:</b> mower drifted after heading discovery or theta is wrong but the polygon shape itself is fine.</div>
-            <div data-i18n-html style="margin-top:6px"><b style="color:#fbbf24">Required:</b> mower on dock + <code>battery_state == CHARGING</code> + RTK FIX + non-zero <code>map_position</code>.</div>
-          </div>
-          <div id="mapRecalStatus" style="font-size:12px;margin-top:8px;display:none"></div>
-        </div>
         <div style="margin-top:10px;padding:10px 12px;background:rgba(34,211,238,.05);border:1px solid rgba(34,211,238,.18);border-radius:8px">
           <div style="font-size:11px;font-weight:600;color:#67e8f9;margin-bottom:6px">Position Validation (RTK FIX only)</div>
-          <div data-i18n-html style="font-size:10px;color:#94a3b8;margin-bottom:6px">Live dual-trail diagnose during mow: cyan = firmware <code>map_position</code>, lime = RTK GPS via charger anchor. Delta between them flags drift or frame-rotation issues. Read-only (use Portable Map Bundle exact-restore instead).</div>
+          <div data-i18n-html style="font-size:10px;color:#94a3b8;margin-bottom:6px">Live dual-trail diagnose during mow: cyan = firmware <code>map_position</code>, lime = RTK GPS via charger anchor. Delta between them flags drift or frame-rotation issues. Read-only.</div>
           <div id="positionValidationPanel" style="font-size:11px;color:#ccc;font-family:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace">
             <span style="color:#888">Select a mower to start validation polling.</span>
           </div>
@@ -3800,8 +3772,7 @@ async function populateMowerDropdown() {
 
 // ── Live localization status polling ──────────────────────────────
 // Polls /api/dashboard/devices/:sn every 2s while a mower is selected,
-// renders localization_state + map_position_* into #mapLocalizationStatus,
-// and gates the Recalibrate button so the user can't write (0, 0, 0).
+// renders localization_state + map_position_* into #mapLocalizationStatus.
 var __mapLocPollTimer = null;
 
 function __renderLocStatus(sensors) {
@@ -3824,7 +3795,6 @@ function __renderLocStatus(sensors) {
 
   var stateColor = locOk ? '#86efac' : '#fca5a5';
   var poseColor = (allZero || !hasMP) ? '#fca5a5' : '#86efac';
-  var btnColor = (locOk && !allZero && hasMP && String(battery).toUpperCase() === 'CHARGING') ? 'safe' : 'unsafe';
 
   el.innerHTML =
     '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:baseline">' +
@@ -3838,25 +3808,6 @@ function __renderLocStatus(sensors) {
         : '') +
     '</div>';
 
-  // Gate the Recalibrate button — disable when not safe to write
-  var btn = document.getElementById('mapRecalBtn');
-  if (btn) {
-    if (btnColor === 'safe') {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.style.cursor = 'pointer';
-      btn.title = 'Localization initialized + map_position non-zero + on dock — safe to recalibrate';
-    } else {
-      btn.disabled = true;
-      btn.style.opacity = '0.5';
-      btn.style.cursor = 'not-allowed';
-      btn.title = __t('Cannot recalibrate:') + ' ' +
-        (allZero ? __t('pose is (0,0,0) placeholder.') + ' ' : '') +
-        (!locOk ? __t('localization_state="{state}" (need Localized).', { state: locState }) + ' ' : '') +
-        (String(battery).toUpperCase() !== 'CHARGING' ? __t('battery_state="{state}" (need CHARGING).', { state: battery }) + ' ' : '') +
-        __t('Drive mower briefly off dock so localization initializes, then return to dock.');
-    }
-  }
   return true;
 }
 
@@ -3879,8 +3830,6 @@ function startLocalizationPoll(sn) {
   var el = document.getElementById('mapLocalizationStatus');
   if (!sn) {
     if (el) el.innerHTML = '<span style="color:#888">Select a mower to see live localization status.</span>';
-    var btn0 = document.getElementById('mapRecalBtn');
-    if (btn0) { btn0.disabled = true; btn0.style.opacity = '0.5'; btn0.style.cursor = 'not-allowed'; }
     return;
   }
   if (el) el.innerHTML = '<span style="color:#888">' + __t('Loading localization status for {sn}...', { sn: sn }) + '</span>';
@@ -4026,62 +3975,6 @@ async function clearValidationTrail() {
     }
     __pollTrailOnce(sn);
   } catch (e) { /* swallow */ }
-}
-
-async function recalibrateChargingPose() {
-  var sn = document.getElementById('mapMowerSelect').value;
-  var status = document.getElementById('mapRecalStatus');
-  status.style.display = 'block';
-
-  if (!sn) {
-    status.style.color = '#f87171';
-    status.textContent = 'Please select a mower first.';
-    return;
-  }
-
-  var confirmMsg = __t('Overwrite charging pose on {sn} with current mower pose?\\n\\n' +
-    'Physical mower MUST be on its dock with battery_state=CHARGING\\n' +
-    'AND localization_state must be Localized (drive-back done).\\n\\n' +
-    'This writes map_info.json in both csv_file/ and x3_csv_file/ and charging_station.yaml.', { sn: sn });
-  if (!(await appConfirm(confirmMsg, { okText: 'Recalibrate' }))) return;
-
-  status.style.color = '#60a5fa';
-  status.textContent = __t('Sending recalibrate command to {sn}...', { sn: sn });
-
-  try {
-    var r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/recalibrate-charging-pose', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    var result = await r.json().catch(function() { return {}; });
-
-    if (r.status === 400 && (result.batteryState || '').toUpperCase() !== 'CHARGING') {
-      // Safety gate fired — ask once more with force
-      var forceConfirm = __t('Mower battery_state is "{state}" (expected CHARGING).\\n\\nOverride the safety check and recalibrate anyway?', { state: (result.batteryState || 'unknown') });
-      if (!(await appConfirm(forceConfirm, { destructive: true, okText: 'Override' }))) {
-        status.style.color = '#f87171';
-        status.textContent = 'Cancelled. Place mower on dock first.';
-        return;
-      }
-      r = await fetch('/api/dashboard/maps/' + encodeURIComponent(sn) + '/recalibrate-charging-pose', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force: true }),
-      });
-      result = await r.json().catch(function() { return {}; });
-    }
-
-    if (!r.ok || !result.ok) {
-      throw new Error(result.error || ('HTTP ' + r.status));
-    }
-    var p = result.pose || {};
-    status.style.color = '#00d4aa';
-    status.textContent = __t('Recalibrated: x={x} y={y} theta={theta}', { x: p.x, y: p.y, theta: p.theta });
-  } catch(e) {
-    status.style.color = '#f87171';
-    status.textContent = __t('Recalibrate failed: {msg}', { msg: e.message });
-  }
 }
 
 // ── Portable Map Bundle functions ─────────────────────────────────────────────

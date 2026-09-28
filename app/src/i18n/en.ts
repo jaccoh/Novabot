@@ -1,4 +1,12 @@
 export default {
+  reanchorUpdateRequired: "Update the OpenNova server to use supervised re-anchoring.",
+  reanchorSupervisedIntro: "The mower reverses about 50 cm and returns using the dock pattern to initialize its heading. If the origin needs correction, it repeats this check afterwards. Stay with the mower and keep the path clear.",
+  reanchorConfirmOwnDock: "I am with the mower on its own dock. The dock has not moved since these zones were recorded.",
+  reanchorStop: "Stop",
+  reanchorRetryHint: "Return the mower to its own dock with the joystick, then restart the complete check.",
+  reanchorInstallPending: "A map installation is incomplete. Restore or reconcile that installation before re-anchoring.",
+  reanchorPendingHint: "A previous origin write still needs verification. Retrying first checks the saved result and repeats the dock cycle.",
+
   // ── Beta firmware warning (OtaScreen) ─────────────────────────
   betaFwTitle: 'BETA CUSTOM FIRMWARE',
   betaFwExperimental: 'This is BETA / experimental custom firmware.',
@@ -415,7 +423,7 @@ export default {
 
   // ── Re-anchor wizard (Novabot-cq3) ──
   // Static UI — app/src/components/ReanchorWizard.tsx
-  reanchorTitle: 'Re-anchor after restore',
+  reanchorTitle: 'Re-anchor at the own dock',
   reanchorIdleIntro: "Place the mower on its unmoved dock and wait for RTK Fixed. Start re-anchoring and follow the joystick steps while standing by the mower.",
   reanchorRunningHint: "The origin is being checked and restored. Drive only when the wizard asks you to.",
   reanchorManualBackupHint: "After localization is confirmed, use the joystick to return onto the dock until charging, then press Verify.",

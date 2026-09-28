@@ -47,7 +47,7 @@ class MotionTest(unittest.TestCase):
         del d['error_push_button_stop']
         self.assertFalse(c._dock_motion_chassis_ok(d))
 
-    def run_motion(self, action='reverse', failure=None, from_dock=None):
+    def run_motion(self, action='reverse', failure=None, from_dock=None, recovery=False):
         if from_dock is None: from_dock = action == 'reverse'
         sim = types.SimpleNamespace(now=100., next_map=100., x=0. if from_dock else -.5 if action == 'reverse' else -.7, velocity=0., homing=False, detector=False, calls=[], published=[], destroyed=False)
         subscriptions = {}
@@ -99,6 +99,9 @@ class MotionTest(unittest.TestCase):
                 stamp_ns = round((1000 + sim.now - .001) * 1e9)
                 h = {'stamp': {'sec': stamp_ns // 10**9, 'nanosec': stamp_ns % 10**9}}
                 p = {'position': {'x': sim.x, 'y': 0., 'z': 0.}, 'orientation': {'x': 0., 'y': 0., 'z': 0., 'w': 1.}}
+                if failure == 'shifted-map':
+                    p['position']['x'] += 12
+                    p['position']['y'] += 7
                 if failure == 'initial-heading-correction' and sim.x > -.1:
                     p['position']['x'] += .15
                     p['orientation'].update(z=math.sin(.4 / 2), w=math.cos(.4 / 2))
@@ -112,7 +115,8 @@ class MotionTest(unittest.TestCase):
                     '/chassis_incident': chassis,
                     '/robot_combination_localization/combination_status': {'status': 200},
                 }
-                if sim.detector and failure != 'missing-pattern': values['/aruco/pose'] = {'header': h}
+                if sim.detector and failure != 'missing-pattern':
+                    values['/aruco/pose'] = {'header': dict(h, frame_id='aruco_tag'), 'pose': {'position': {'x': -(2 if failure == 'distant-pattern' else .1 - sim.x), 'y': 0., 'z': -.15}, 'orientation': {'x': 0., 'y': 0., 'z': 0., 'w': 1.}}}
                 if failure == 'manual' and sim.now > 103: values['/cloud_move_cmd'] = {}
                 if failure == 'stale' and sim.now > 103: values.pop('/robot_combination_localization/odom')
                 if sim.now < sim.next_map:
@@ -138,7 +142,7 @@ class MotionTest(unittest.TestCase):
             with open(directory + '/csv_file/map_info.json', 'w') as f: json.dump({'charging_pose': {'x': 0, 'y': 0, 'orientation': 0}}, f)
             with patch.dict(sys.modules, modules), patch.object(c, '_marker_frame_fingerprint', return_value='frame'), patch.object(c, '_map_home', return_value=directory), patch.object(c, '_marker_camera_use', side_effect=lambda action, *args: sim.now + 30), patch.object(c.time, 'monotonic', side_effect=lambda: sim.now), patch.object(c.time, 'time', side_effect=lambda: sim.now + 1000):
                 try:
-                    c.handle_dock_measurement_move({'motion_id': ID, 'action': action, 'distance_m': (.5 if from_dock else .2) if action == 'reverse' else 0, 'from_dock': from_dock, 'frame_fingerprint': 'frame'}, lambda name, data: results.append(data))
+                    c.handle_dock_measurement_move({'motion_id': ID, 'action': action, 'distance_m': (.5 if from_dock else .2) if action == 'reverse' else 0, 'from_dock': from_dock, 'recovery': recovery, 'frame_fingerprint': 'frame'}, lambda name, data: results.append(data))
                 except ValueError as error: sim.error = str(error)
         self.assertTrue(sim.destroyed)
         self.assertEqual(sim.published[-1], 0.)
@@ -167,6 +171,26 @@ class MotionTest(unittest.TestCase):
         sim, results = self.run_motion('dock', 'no-contact')
         self.assertFalse(results)
         self.assertIn('/robot_decision/cancel_recharge', sim.calls)
+
+    def test_recovery_docks_on_camera_and_contact_despite_translated_map(self):
+        sim, results = self.run_motion('dock', 'shifted-map', recovery=True)
+        self.assertEqual(results[0]['protocol'], 'dock-measurement-motion-v3')
+        self.assertTrue(results[0]['docked'])
+        self.assertAlmostEqual(sim.x, 0.)
+        # The ordinary copy cycle retains its absolute saved-dock guard.
+        sim, results = self.run_motion('dock', 'shifted-map')
+        self.assertFalse(results)
+        self.assertNotIn('/robot_decision/auto_recharge', sim.calls)
+        for failure in ('missing-pattern', 'distant-pattern', 'no-contact', 'stop', 'heartbeat'):
+            sim, results = self.run_motion('dock', failure, recovery=True)
+            self.assertFalse(results)
+            self.assertFalse(sim.homing)
+
+    def test_retired_calibration_never_reads_or_writes_files(self):
+        responses = []
+        with patch('builtins.open', side_effect=AssertionError('legacy command touched files')):
+            c.handle_recalibrate_charging_pose({'x': 9, 'y': 4, 'theta': 1}, lambda _, data: responses.append(data))
+        self.assertEqual(responses[0]['result'], 1)
 
     def test_zero_twist_does_not_prove_standstill(self):
         sim, results = self.run_motion(failure='moving-at-start')
