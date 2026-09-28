@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { insertEvent } from '../utils/mowerEvents';
 import type { DeviceState, DeviceUpdateEvent, DeviceOnlineEvent, MqttLogEntry, BleLogEntry, MowerEvent } from '../types';
 import { useSocket, type OtaEventPayload, type MapOutlineEvent } from './useSocket';
 import { fetchDevices, fetchOtaSession, type OtaSession } from '../api/client';
@@ -193,10 +194,7 @@ export function useDevices() {
   // Newest first, deduped on (sn, type, ts): the backlog fetch and a live event
   // can describe the same thing when the page loads while one is dispatched.
   const onMowerEvent = useCallback((e: MowerEvent) => {
-    setMowerEvents(prev => {
-      if (prev.some(p => p.sn === e.sn && p.type === e.type && p.ts === e.ts)) return prev;
-      return [e, ...prev].slice(0, MAX_EVENTS);
-    });
+    setMowerEvents(prev => insertEvent(prev, e, MAX_EVENTS));
   }, []);
 
   const { connected } = useSocket({
