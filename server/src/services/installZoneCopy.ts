@@ -41,7 +41,11 @@ export async function installZoneCopy(
   }
   const csv = { ...original };
   const workName = `${plan.canonical}_work.csv`;
-  if (workName in csv) throw new Error('Het gekozen kaartslot is niet meer vrij.');
+  if (plan.replacesExisting) {
+    const slot = plan.canonical;
+    const related = new RegExp(`^(?:${slot}_work|${slot}_\\d+_obstacle|${slot}tocharge_unicom|${slot}tomap\\d+_\\d+_unicom|map\\d+to${slot}_\\d+_unicom)\\.csv$`);
+    for (const name of Object.keys(csv)) if (related.test(name)) delete csv[name];
+  } else if (workName in csv) throw new Error('Het gekozen kaartslot is niet meer vrij.');
   const additions = [{ canonical: `${plan.canonical}_work`, points: plan.work }, ...plan.obstacles,
     ...(opts.acceptChannel ? plan.channels : [])];
   for (const area of additions) csv[`${area.canonical}.csv`] = area.points.map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`).join('\n') + '\n';

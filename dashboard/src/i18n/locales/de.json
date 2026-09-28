@@ -454,6 +454,9 @@
     "copyZoneChoose": "Wählen…",
     "copyZoneZone": "Zone",
     "copyZoneWithObstacles": "Hindernisse übernehmen",
+    "copyZoneTarget": "Platzieren als",
+    "copyZoneTargetNew": "Neue Zone (erster freier Platz)",
+    "copyZoneTargetReplace": "{{name}} ({{slot}}) ersetzen",
     "copyAlignmentStep": "Schritt {{step}} von 5 · Dock messen",
     "copyAlignment": {
       "source_first": "Stelle den Quellmäher {{source}} vor sein eigenes Dock, sodass das Kameramuster sichtbar ist. Nicht andocken. Vollständig anhalten, dann messen.",
@@ -469,6 +472,7 @@
     "copyAlignmentRestart": "Messungen neu beginnen",
     "copyAlignmentTestNotice": "Testfunktion: Die Kameragenauigkeit muss noch an den Geräten geprüft werden. Fehlende oder unzuverlässige Messungen verhindern das Kopieren.",
     "copyZoneVerdictOk": "Wird {{slot}} ({{m2}} m²)",
+    "copyZoneVerdictReplace": "Ersetzt {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Überlappt {{zone}}: kein Kanal nötig",
     "copyZoneChannelDock": "Ein {{m}} m langer Dockkanal wird angelegt",
     "copyZoneChannelLink": "Ein Kanal zu {{zone}} wird vorgeschlagen (blau gestrichelt)",

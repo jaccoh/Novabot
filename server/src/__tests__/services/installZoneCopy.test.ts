@@ -24,7 +24,7 @@ import { planZoneCopy } from '../../services/zoneCopy.js';
 const sn = 'LFIN_INSTALL_COPY', source = 'LFIN_INSTALL_SOURCE';
 const dock = { x: .03, y: .73, orientation: -Math.PI / 2 };
 const work = [{ x: -3, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 8 }, { x: -3, y: 8 }];
-const csv = {
+const csv: Record<string, string> = {
   'map0_work.csv': '-3.000000,0\n3,0\n3,8\n-3,8\n',
   'map0tocharge_unicom.csv': '.03,.73\n.03,1.93\n',
   'map_info.json': JSON.stringify({ charging_pose: dock, 'map0_work.csv': { map_size: 48 } }),
@@ -36,9 +36,9 @@ const plan = () => planZoneCopy({ slot: 1, work: work.map(p => ({ x: p.x + 8, y:
 let installedSnapshot: Record<string, unknown>;
 const verifyRuntime = vi.fn(async () => installedSnapshot);
 const verifyBefore = vi.fn(async () => ({ verifyRuntime }));
-const run = () => withMowerMapOperation(sn, targetOperation => withMowerMapOperation(source, sourceOperation =>
-  installZoneCopy(sn, plan(), { alias: 'Kopie', acceptChannel: true }, {
-    source: dock, target: dock, sourceSnapshot: snapshot(), targetSnapshot: snapshot(), sourceOperation, targetOperation,
+const run = (copyPlan = plan(), targetSnapshot = snapshot()) => withMowerMapOperation(sn, targetOperation => withMowerMapOperation(source, sourceOperation =>
+  installZoneCopy(sn, copyPlan, { alias: 'Kopie', acceptChannel: true }, {
+    source: dock, target: dock, sourceSnapshot: snapshot(), targetSnapshot, sourceOperation, targetOperation,
   }, verifyBefore)));
 
 beforeEach(() => {
@@ -59,9 +59,10 @@ beforeEach(() => {
     expect(mapRepo.findBySnAndCanonical(sn, 'map1')).toBeUndefined();
     markFrameUnvalidated(sn, { preservePhotoDock: true });
     const pgm = Buffer.concat([Buffer.from('P5\n3 3\n255\n'), Buffer.alloc(9, 254)]).toString('base64');
+    const slots = [...input.expectedCsv.keys()].filter(n => /^map\d+_work\.csv$/.test(n)).map(n => n.slice(0, -9));
     installedSnapshot = { ...input.before, csv_files: Object.fromEntries(input.expectedCsv), x3_csv_files: Object.fromEntries(input.expectedCsv),
-      map_files_b64: Object.fromEntries(['map', 'map0', 'map1'].map(n => [`${n}.pgm`, pgm])),
-      map_files_text: Object.fromEntries(['map', 'map0', 'map1'].map(n => [`${n}.yaml`, `image: ${n}.pgm`])) };
+      map_files_b64: Object.fromEntries(['map', ...slots].map(n => [`${n}.pgm`, pgm])),
+      map_files_text: Object.fromEntries(['map', ...slots].map(n => [`${n}.yaml`, `image: ${n}.pgm`])) };
     return installedSnapshot;
   });
 });
@@ -86,6 +87,31 @@ it('keeps both leases until post-install verification, then commits while preser
   expect((await zip.files.find(f => f.path === 'csv_file/map0_work.csv')!.buffer()).toString()).toBe(csv['map0_work.csv']);
   expect(JSON.parse(input.expectedCsv.get('map_info.json')!).charging_pose).toEqual(dock);
   expect(readFileSync(path.join(process.env.STORAGE_PATH!, 'maps', `${sn}_latest.zip`))).toEqual(input.bytes);
+});
+
+it('replaces one native slot without renumbering or changing another slot', async () => {
+  const old = snapshot();
+  old.csv_files = old.x3_csv_files = {
+    ...old.csv_files,
+    'map0_0_obstacle.csv': '-2,2\n-1,2\n-1,3\n',
+    'map0_1_obstacle.csv': '1,2\n2,2\n2,3\n',
+    'map0tomap3_0_unicom.csv': '0,4\n8,4\n',
+    'map3_work.csv': '8,0\n12,0\n12,4\n8,4\n',
+  };
+  old.csv_files['map_info.json'] = old.x3_csv_files['map_info.json'] = JSON.stringify({
+    charging_pose: dock, 'map0_work.csv': { map_size: 48 }, 'map3_work.csv': { map_size: 16 },
+  });
+  mapRepo.create({ map_id: `${sn}-old-obstacle-0`, mower_sn: sn, map_type: 'obstacle', canonical_name: 'map0_0_obstacle', map_area: '[]' });
+  mapRepo.create({ map_id: `${sn}-old-obstacle-1`, mower_sn: sn, map_type: 'obstacle', canonical_name: 'map0_1_obstacle', map_area: '[]' });
+  mapRepo.create({ map_id: `${sn}-old-link`, mower_sn: sn, map_type: 'unicom', canonical_name: 'map0tomap3_0_unicom', map_area: '[]' });
+  mapRepo.create({ map_id: `${sn}-map3`, mower_sn: sn, map_type: 'work', canonical_name: 'map3', map_area: JSON.stringify(work) });
+  const replacement = planZoneCopy({ slot: 0, replacesExisting: true, work, obstacles: [], existing: [], dock, dockChannelRowExists: true });
+  await run(replacement, old);
+  const sent = vi.mocked(installVerifiedMapZip).mock.calls[0][1].expectedCsv;
+  expect([...sent.keys()].sort()).toEqual(['map0_work.csv', 'map0tocharge_unicom.csv', 'map3_work.csv', 'map_info.json']);
+  expect(sent.get('map3_work.csv')).toBe(old.csv_files['map3_work.csv']);
+  expect(mapRepo.findBySnAndCanonical(sn, 'map3')?.map_id).toBe(`${sn}-map3`);
+  expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name).sort()).toEqual(['map0', 'map0tocharge_unicom', 'map3']);
 });
 
 it('rejects changed runtime before transfer without any device or DB write', async () => {

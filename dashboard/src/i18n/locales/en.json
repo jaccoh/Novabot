@@ -486,6 +486,9 @@
     "copyZoneChoose": "Choose…",
     "copyZoneZone": "Zone",
     "copyZoneWithObstacles": "Include obstacles",
+    "copyZoneTarget": "Place as",
+    "copyZoneTargetNew": "New zone (first free slot)",
+    "copyZoneTargetReplace": "Replace {{name}} ({{slot}})",
     "copyAlignmentStep": "Step {{step}} of 5 · Measure dock",
     "copyAlignment": {
       "source_first": "Place source mower {{source}} in front of its own dock with the camera pattern visible. Do not dock. Let the mower stop completely, then measure.",
@@ -501,6 +504,7 @@
     "copyAlignmentRestart": "Restart measurements",
     "copyAlignmentTestNotice": "Test feature: camera accuracy still requires validation on the devices. Missing or unreliable measurements block copying.",
     "copyZoneVerdictOk": "Becomes {{slot}} ({{m2}} m²)",
+    "copyZoneVerdictReplace": "Replaces {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Overlaps {{zone}}: no channel needed",
     "copyZoneChannelDock": "A {{m}} m dock channel will be created",
     "copyZoneChannelLink": "A channel to {{zone}} is proposed (blue dashed)",

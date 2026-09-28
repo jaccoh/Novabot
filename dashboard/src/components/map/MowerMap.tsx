@@ -110,6 +110,7 @@ interface CopyPanelState {
   sourceSn: string | null;
   sourceMaps: MapData[];
   canonical: string | null;
+  replaceCanonical: string | null;
   withObstacles: boolean;
   plan: ZoneCopyPlan | null;
   pending: 'source' | 'capture' | 'preview' | 'apply' | null;
@@ -2060,7 +2061,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setPlacingCharger(false);
     setEditCal(null);
     setSelectedMapId(null);
-    const pending: CopyPanelState = { sources: [], sourceSn: null, sourceMaps: [], canonical: null, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false };
+    const pending: CopyPanelState = { sources: [], sourceSn: null, sourceMaps: [], canonical: null, replaceCanonical: null, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false };
     setCopyPanel(pending);
     try {
       const sources = (await fetchDevices()).filter(d => d.deviceType === 'mower' && d.sn !== sn);
@@ -2108,7 +2109,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     const pending: CopyPanelState = { ...copyPanel, pending: 'preview', error: null, plan: null };
     setCopyPanel(pending);
     try {
-      const plan = await previewZoneCopy(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, copyPanel.withObstacles);
+      const plan = await previewZoneCopy(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, copyPanel.withObstacles, copyPanel.replaceCanonical ?? undefined);
       setCopyPanel(prev => prev === pending ? { ...prev, plan, pending: null } : prev);
     } catch (err) {
       setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
@@ -2120,7 +2121,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     const pending: CopyPanelState = { ...copyPanel, pending: 'apply', error: null };
     setCopyPanel(pending);
     try {
-      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, { withObstacles: copyPanel.withObstacles, acceptChannel: true });
+      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, { withObstacles: copyPanel.withObstacles, acceptChannel: true, replaceCanonical: copyPanel.replaceCanonical ?? undefined });
       if (!r.ok || !r.map) throw new Error(t('map.copyZoneFailed'));
       await reloadMaps();
       setSelectedMapId(r.map.mapId);
@@ -5203,6 +5204,22 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                     </select>
                   </label>
                 )}
+                <label className="block text-[11px] text-gray-400">
+                  {t('map.copyZoneTarget')}
+                  <select
+                    value={copyPanel.replaceCanonical ?? ''}
+                    onChange={e => updateCopyPanel({ replaceCanonical: e.target.value || null })}
+                    disabled={!!copyPanel.pending}
+                    className="mt-1 w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                  >
+                    <option value="">{t('map.copyZoneTargetNew')}</option>
+                    {maps.filter(m => m.mapType === 'work' && m.canonicalName).map(m => (
+                      <option key={m.mapId} value={m.canonicalName ?? ''}>
+                        {t('map.copyZoneTargetReplace', { name: m.mapName || m.canonicalName, slot: m.canonicalName })}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label className="flex items-center gap-2 text-[11px] text-gray-400">
                   <input type="checkbox" checked={copyPanel.withObstacles} disabled={!!copyPanel.pending} onChange={e => updateCopyPanel({ withObstacles: e.target.checked })} />
                   {t('map.copyZoneWithObstacles')}
@@ -5239,7 +5256,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   <div className="text-[11px] leading-snug space-y-0.5">
                     {copyPanel.plan.ok ? (
                       <>
-                        <div className="text-emerald-300">{t('map.copyZoneVerdictOk', { slot: copyPanel.plan.canonical, m2: Math.round(copyPanel.plan.areaM2) })}</div>
+                        <div className="text-emerald-300">{t(copyPanel.plan.replacesExisting ? 'map.copyZoneVerdictReplace' : 'map.copyZoneVerdictOk', { slot: copyPanel.plan.canonical, m2: Math.round(copyPanel.plan.areaM2) })}</div>
                         {copyPanel.plan.connectedVia && <div className="text-gray-300">{t('map.copyZoneConnected', { zone: copyPanel.plan.connectedVia })}</div>}
                         {copyPanel.plan.channels.map(c => (
                           <div key={c.canonical} className="text-blue-300">

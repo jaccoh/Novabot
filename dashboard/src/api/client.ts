@@ -311,6 +311,7 @@ export interface ZoneCopyPlan {
   error?: string;
   slot: number;
   canonical: string;
+  replacesExisting: boolean;
   work: LocalPoint[];
   obstacles: { canonical: string; points: LocalPoint[] }[];
   channels: ZoneCopyChannel[];
@@ -348,14 +349,14 @@ export async function captureZoneCopyAlignment(sn: string, source: string, canon
 }
 
 /** Plan zonder te schrijven. Invoerfouten (400/404/409) komen als Error met de servertekst. */
-export async function previewZoneCopy(sn: string, source: string, canonical: string, alignmentId: string, withObstacles = true): Promise<ZoneCopyPlan> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, alignmentId, withObstacles });
+export async function previewZoneCopy(sn: string, source: string, canonical: string, alignmentId: string, withObstacles = true, replaceCanonical?: string): Promise<ZoneCopyPlan> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, alignmentId, withObstacles, replaceCanonical });
   return res.json();
 }
 
 export async function copyZone(
   sn: string, source: string, canonical: string, alignmentId: string,
-  opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean } = {},
+  opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean; replaceCanonical?: string } = {},
 ): Promise<ZoneCopyResult> {
   const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, alignmentId, ...opts });
   return res.json();

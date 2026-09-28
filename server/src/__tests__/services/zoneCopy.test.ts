@@ -298,6 +298,27 @@ describe('previewZoneCopy / persistZoneCopy (in-memory DB)', () => {
     expect(r.ok && r.plan.obstacles[0].canonical).toBe('map1_0_obstacle');
   });
 
+  it('vervangen gebruikt hetzelfde slot en beoordeelt de oude geometrie niet als overlap', () => {
+    addRow(B, 'map0', 'work', square(-30, -30), 'Oude kopie');
+    addRow(B, 'map0_0_obstacle', 'obstacle', square(dockB.x, dockB.y, 1));
+    const r = previewZoneCopy(B, A, 'map0', dockB, { replaceCanonical: 'map0' });
+    expect(r.ok && r.plan).toMatchObject({ canonical: 'map0', replacesExisting: true, warnings: [] });
+  });
+
+  it('vervangen ruimt oude slot-afhankelijke rijen op en bewaart andere slots', () => {
+    addRow(B, 'map0', 'work', square(-30, -30), 'Oude kopie');
+    addRow(B, 'map0_0_obstacle', 'obstacle', square(-28, -28, 1));
+    addRow(B, 'map0_1_obstacle', 'obstacle', square(-26, -26, 1));
+    addRow(B, 'map0tomap3_0_unicom', 'unicom', [{ x: -20, y: -20 }, { x: 20, y: 20 }]);
+    addRow(B, 'map3', 'work', square(20, 20), 'Voortuin');
+    const map3Id = mapRepo.findBySnAndCanonical(B, 'map3')!.map_id;
+    const r = previewZoneCopy(B, A, 'map0', dockB, { replaceCanonical: 'map0' });
+    if (!r.ok) throw new Error('preview failed');
+    persistZoneCopy(B, r.plan, { alias: 'Nieuwe kopie', acceptChannel: true });
+    expect(mapRepo.findByMowerSn(B).map(x => x.canonical_name).sort()).toEqual(['map0', 'map0_0_obstacle', 'map0tocharge_unicom', 'map3']);
+    expect(mapRepo.findBySnAndCanonical(B, 'map3')?.map_id).toBe(map3Id);
+  });
+
   it('persistZoneCopy schrijft work + obstakels + kanalen, vervangt het oude dockkanaal zonder dubbele rij', () => {
     const r = previewZoneCopy(B, A, 'map0', dockB);
     if (!r.ok) throw new Error('preview failed');

@@ -55,6 +55,11 @@ export const CATALOG: Catalog = {
     fr: "Remettez les décalages de carte des deux tondeuses à zéro avant de copier une zone.",
     de: "Setzen Sie die Kartenverschiebungen beider Mäher auf null, bevor Sie eine Zone kopieren.",
   },
+  "De gekozen doelzone bestaat niet meer; kies opnieuw welke zone je wilt vervangen.": {
+    en: "The selected target zone no longer exists; choose the zone to replace again.",
+    fr: "La zone cible sélectionnée n’existe plus ; choisissez à nouveau la zone à remplacer.",
+    de: "Die ausgewählte Zielzone existiert nicht mehr; wählen Sie erneut die zu ersetzende Zone.",
+  },
   "Alleen in de server/app-kopie geïmporteerd. De maaierbestanden zijn niet geschreven; maaien werkt alleen als deze kaarten al op de maaier staan.": {
     en: "Imported into the server/app copy only. Mower files were not written; mowing works only if these maps already exist on the mower.",
     fr: "Importé uniquement dans la copie serveur/app. Les fichiers de la tondeuse n'ont pas été écrits ; la tonte ne fonctionne que si ces cartes existent déjà sur la tondeuse.",

@@ -557,6 +557,9 @@
     "copyZoneChoose": "Kies…",
     "copyZoneZone": "Zone",
     "copyZoneWithObstacles": "Obstakels meenemen",
+    "copyZoneTarget": "Plaats als",
+    "copyZoneTargetNew": "Nieuwe zone (eerste vrije plek)",
+    "copyZoneTargetReplace": "Vervang {{name}} ({{slot}})",
     "copyAlignmentStep": "Stap {{step}} van 5 · Dock meten",
     "copyAlignment": {
       "source_first": "Zet bronmaaier {{source}} vóór zijn eigen dock, met het camerapatroon zichtbaar. Niet docken. Laat de maaier volledig stilstaan en meet.",
@@ -572,6 +575,7 @@
     "copyAlignmentRestart": "Metingen opnieuw beginnen",
     "copyAlignmentTestNotice": "Testfunctie: de cameranauwkeurigheid moet nog op de apparaten worden gevalideerd. Ontbrekende of onbetrouwbare metingen blokkeren het kopiëren.",
     "copyZoneVerdictOk": "Wordt {{slot}} ({{m2}} m²)",
+    "copyZoneVerdictReplace": "Vervangt {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Overlapt {{zone}}: geen kanaal nodig",
     "copyZoneChannelDock": "Dockkanaal van {{m}} m wordt aangemaakt",
     "copyZoneChannelLink": "Kanaal naar {{zone}} wordt voorgesteld (blauw gestippeld)",

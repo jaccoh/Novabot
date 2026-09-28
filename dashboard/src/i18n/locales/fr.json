@@ -454,6 +454,9 @@
     "copyZoneChoose": "Choisir…",
     "copyZoneZone": "Zone",
     "copyZoneWithObstacles": "Inclure les obstacles",
+    "copyZoneTarget": "Placer comme",
+    "copyZoneTargetNew": "Nouvelle zone (premier emplacement libre)",
+    "copyZoneTargetReplace": "Remplacer {{name}} ({{slot}})",
     "copyAlignmentStep": "Étape {{step}} sur 5 · Mesurer la station",
     "copyAlignment": {
       "source_first": "Placez la tondeuse source {{source}} devant sa propre station, avec le motif visible par la caméra. Ne vous amarrez pas. Immobilisez complètement la tondeuse, puis mesurez.",
@@ -469,6 +472,7 @@
     "copyAlignmentRestart": "Recommencer les mesures",
     "copyAlignmentTestNotice": "Fonction de test : la précision de la caméra doit encore être validée sur les appareils. Des mesures absentes ou non fiables bloquent la copie.",
     "copyZoneVerdictOk": "Deviendra {{slot}} ({{m2}} m²)",
+    "copyZoneVerdictReplace": "Remplace {{slot}} ({{m2}} m²)",
     "copyZoneConnected": "Chevauche {{zone}} : pas de couloir nécessaire",
     "copyZoneChannelDock": "Un couloir de {{m}} m vers la station sera créé",
     "copyZoneChannelLink": "Un couloir vers {{zone}} est proposé (pointillé bleu)",

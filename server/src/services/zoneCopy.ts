@@ -140,6 +140,8 @@ export type CopyWarning = 'full_overlap' | 'existing_zones_unlinked';
 
 export interface PlanInput {
   slot: number;
+  /** Het gekozen doel-slot wordt vervangen in plaats van nieuw aangemaakt. */
+  replacesExisting?: boolean;
   /** Getransformeerd naar B's frame. */
   work: XY[];
   obstacles: XY[][];
@@ -158,6 +160,7 @@ export interface CopyPlan {
   refusal?: CopyRefusal;
   slot: number;
   canonical: string;
+  replacesExisting: boolean;
   work: XY[];
   obstacles: { canonical: string; points: XY[] }[];
   channels: ChannelPlan[];
@@ -176,7 +179,7 @@ export function planZoneCopy(i: PlanInput): CopyPlan {
   const canonical = `map${i.slot}`;
   const obstacles = i.obstacles.map((points, k) => ({ canonical: `map${i.slot}_${k}_obstacle`, points }));
   const base: CopyPlan = {
-    ok: false, slot: i.slot, canonical, work: i.work, obstacles,
+    ok: false, slot: i.slot, canonical, replacesExisting: i.replacesExisting === true, work: i.work, obstacles,
     channels: [], connectedVia: null, needsChannel: false, warnings: [], dockDistanceM: null,
   };
   if (i.slot > MAX_SLOT) return { ...base, refusal: 'slot_limit' };
@@ -224,7 +227,7 @@ export interface PreviewOk { ok: true; plan: CopyPlan; sourceAlias: string | nul
 export interface PreviewFail {
   ok: false;
   status: 400 | 404 | 409;
-  reason: 'bad_canonical' | 'source_not_found' | 'source_no_anchor' | 'bad_dock' | 'dock_too_far' | 'target_no_dock' | 'too_small' | 'polygon_offset_active';
+  reason: 'bad_canonical' | 'bad_replacement' | 'source_not_found' | 'source_no_anchor' | 'bad_dock' | 'dock_too_far' | 'target_no_dock' | 'too_small' | 'polygon_offset_active';
   error: string;
 }
 export type PreviewResult = PreviewOk | PreviewFail;
@@ -255,7 +258,7 @@ export function previewZoneCopy(
   sourceSn: string,
   sourceCanonical: string,
   dockAtB: { x?: unknown; y?: unknown } | undefined,
-  opts: { withObstacles?: boolean; docks?: { source: XY; target: XY & { orientation: number } } } = {},
+  opts: { withObstacles?: boolean; replaceCanonical?: string; docks?: { source: XY; target: XY & { orientation: number } } } = {},
   T: Translate = translator('en'),
 ): PreviewResult {
   // Offsets are applied only when exporting CSVs. Copying raw DB geometry
@@ -293,17 +296,25 @@ export function previewZoneCopy(
   }
 
   const dockAInB = { x, y };
-  const slot = nextFreeWorkSlot(targetSn);
+  const replacement = opts.replaceCanonical?.match(/^map([0-4])$/);
+  const replaced = replacement ? mapRepo.findBySnAndCanonical(targetSn, replacement[0]) : null;
+  if (opts.replaceCanonical && (!replacement || replaced?.map_type !== 'work')) {
+    return { ok: false, status: 409, reason: 'bad_replacement', error: T`De gekozen doelzone bestaat niet meer; kies opnieuw welke zone je wilt vervangen.` };
+  }
+  const slot = replacement ? Number(replacement[1]) : nextFreeWorkSlot(targetSn);
   const work = transformPoints(srcPts, dockAInA, dockAInB);
   const obstacles = opts.withObstacles === false
     ? []
     : obstaclesOf(sourceSn, parseInt(m[1], 10)).map(o => transformPoints(o, dockAInA, dockAInB));
   const existing: ExistingZone[] = workSlots(targetSn)
+    .filter(w => w.slot !== slot || !replacement)
     .filter(w => w.poly.length >= 3)
     .map(w => ({ slot: w.slot, canonical: `map${w.slot}`, points: w.poly, obstacles: obstaclesOf(targetSn, w.slot) }));
   const plan = planZoneCopy({
-    slot, work, obstacles, existing, dock: dockB,
-    targetObstacles: mapRepo.findAllByMowerSnAndType(targetSn, 'obstacle').map(o => parsePoints(o.map_area)),
+    slot, replacesExisting: !!replacement, work, obstacles, existing, dock: dockB,
+    targetObstacles: mapRepo.findAllByMowerSnAndType(targetSn, 'obstacle')
+      .filter(o => !replacement || !new RegExp(`^map${slot}_\\d+_obstacle$`).test(o.canonical_name ?? ''))
+      .map(o => parsePoints(o.map_area)),
     dockChannelRowExists: !!mapRepo.findBySnAndCanonical(targetSn, `map${slot}tocharge_unicom`),
   });
   const sourceAlias = src.map_name && src.map_name !== sourceCanonical ? src.map_name : null;
@@ -358,6 +369,11 @@ export function persistZoneCopy(
   const channels = opts.acceptChannel ? plan.channels : [];
   db.transaction(() => {
     if (opts.dockOrientation !== undefined) mapRepo.setPolygonChargingOrientation(targetSn, opts.dockOrientation);
+    if (plan.replacesExisting) {
+      const old = mapRepo.findBySnAndCanonical(targetSn, plan.canonical);
+      if (!old || old.map_type !== 'work') throw new Error('De gekozen doelzone bestaat niet meer.');
+      mapRepo.deleteWithCascade(old.map_id, targetSn);
+    }
     create(plan.canonical, 'work', plan.work, opts.alias);
     for (const o of plan.obstacles) create(o.canonical, 'obstacle', o.points, null);
     for (const c of channels) create(c.canonical, 'unicom', c.points, null);

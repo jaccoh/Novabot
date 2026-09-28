@@ -1941,6 +1941,7 @@ interface ZoneCopyBody {
   withObstacles?: boolean;
   name?: string;
   acceptChannel?: boolean;
+  replaceCanonical?: string;
 }
 
 function zoneCopyRefusalText(refusal: NonNullable<CopyPlan['refusal']>, T: Translate): string {
@@ -1996,6 +1997,7 @@ function requiresCopyAlignment(body: unknown, res: Response): body is ZoneCopyBo
   const value = body as Record<string, unknown>;
   if (typeof value.canonical !== 'string' || !/^map[0-4]$/.test(value.canonical) ||
     (value.name !== undefined && typeof value.name !== 'string') ||
+    (value.replaceCanonical !== undefined && (typeof value.replaceCanonical !== 'string' || !/^map[0-4]$/.test(value.replaceCanonical))) ||
     ['withObstacles', 'acceptChannel'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')) {
     res.status(400).json({ ok: false, reason: 'invalid_body', error: 'Ongeldige zone of kopieeropties.' }); return false;
   }
@@ -2016,7 +2018,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request,
   try {
     await withConfirmedCopyDocks(sn, source, async docks => {
       const alignment = await validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks });
-      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, replaceCanonical: body.replaceCanonical, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       res.json({
         ...r.plan,
@@ -2048,7 +2050,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
     await withConfirmedCopyDocks(sn, source, async docks => {
       const alignment = getCopyAlignment(body.alignmentId, sn, source, String(body.canonical ?? ''));
       if (!alignment.dockAtB) throw new Error('Meet het bronlaadstation eerst tweemaal met iedere maaier.');
-      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, docks }, T);
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, replaceCanonical: body.replaceCanonical, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       if (!r.plan.ok) {
         res.status(409).json({ ok: false, reason: r.plan.refusal, error: zoneCopyRefusalText(r.plan.refusal!, T) });
