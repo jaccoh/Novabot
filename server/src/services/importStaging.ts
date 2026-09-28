@@ -27,7 +27,7 @@ const LEGAL: Record<ImportState, ImportState[]> = {
   PREVIEW_SHOWN:   ['USER_CONFIRMED', 'CANCELLED'],
   USER_CONFIRMED:  ['APPLIED', 'CANCELLED'],
   APPLYING:       ['UPLOADED', 'RECONCILE_REQUIRED', 'APPLIED'],
-  RECONCILE_REQUIRED: ['APPLYING'],
+  RECONCILE_REQUIRED: ['APPLYING', 'CANCELLED'],
   APPLIED:         [],
   CANCELLED:       [],
 };
@@ -138,7 +138,7 @@ export class ImportStagingStore {
   cancel(stagingId: string, _reason: string): void {
     const s = this.cache.get(stagingId);
     if (!s) return;
-    if (s.state === 'APPLYING' || s.state === 'RECONCILE_REQUIRED') {
+    if (s.state === 'APPLYING') {
       throw new Error('Restore outcome must be reconciled before removing its recovery files');
     }
     const dir = path.join(this.rootDir, s.sn, s.stagingId);

@@ -265,6 +265,7 @@
     "dragHint": "Zum Verschieben ziehen"
   },
   "map": {
+    "saveError": "Speichern fehlgeschlagen",
     "copyAuto": {
       "title": "Quellmäher automatisch messen",
       "description": "Der Quellmäher fährt etwa 50 cm rückwärts, misst, fährt weitere 20 cm zurück, misst erneut und dockt mit der Kamera an. Lassen Sie diesen Assistenten geöffnet.",

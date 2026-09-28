@@ -3201,6 +3201,19 @@ def _backup_map_home(base):
         shutil.rmtree(os.path.join(parent, name))
 
 
+def _write_file_atomic(path, content):
+    """tmp + fsync + rename: a crash mid-write never leaves a 0-byte
+    charging_station.yaml or pos.json behind (an empty yaml crashes save_map
+    type:1, Error 120/140). ponytail: per file; the csv_file/ wipe-then-write
+    loop can still be cut short by a power loss, home0.bak.* is the recovery."""
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
 def handle_write_map_files(params, respond):
     """Write provided map files to home0/csv_file + x3_csv_file (+ charging_station.yaml).
 
@@ -3321,22 +3334,19 @@ def handle_write_map_files(params, respond):
                     os.remove(old_path)
             for fname, content in provided_files.items():
                 full = os.path.join(d, fname)
-                with open(full, "w") as f:
-                    f.write(content)
+                _write_file_atomic(full, content)
                 written.append(full)
             # Restore the connectors the caller didn't include.
             for fname, content in preserved.items():
                 full = os.path.join(d, fname)
-                with open(full, "w") as f:
-                    f.write(content)
+                _write_file_atomic(full, content)
                 written.append(full)
                 log(f"write_map_files: preserved connector {sub}/{fname} (not in provided set)")
 
         if isinstance(cs_yaml, str) and cs_yaml.strip():
             yaml_path = MAP_CHARGING_STATION_FILE
             os.makedirs(os.path.dirname(yaml_path), exist_ok=True)
-            with open(yaml_path, "w") as f:
-                f.write(cs_yaml)
+            _write_file_atomic(yaml_path, cs_yaml)
             written.append(yaml_path)
 
         # pos.json — UTM origin anchor. Critical: this changes the local
@@ -3354,8 +3364,7 @@ def handle_write_map_files(params, respond):
                     log(f"write_map_files: pos.json backed up to {bak}")
                 except Exception as e:
                     log(f"write_map_files: pos.json backup failed (continuing): {e}")
-            with open(pj_path, "w") as f:
-                f.write(pos_json)
+            _write_file_atomic(pj_path, pos_json)
             written.append(pj_path)
             log("write_map_files: pos.json restored (UTM anchor)")
 
@@ -4789,89 +4798,13 @@ def handle_blade_height(params, respond):
 
 
 def handle_set_pos_origin(params, respond):
-    """Overwrite /userdata/pos.json wgs84_origin (lat/lng) and chmod 0444 so
-    the next reboot's GPS-fix-derived write cannot stomp on it. Also restart
-    robot_combination_localization so the new origin takes effect without a
-    full mower reboot.
-
-    Payload: {"lat": float, "lng": float}
-    """
-    import json as _json
-    import os as _os
-    import math as _math
-    import subprocess as _sp
-
-    lat = params.get("lat")
-    lng = params.get("lng")
-    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
-        respond("set_pos_origin_respond", {"result": 1, "error": "lat/lng required"})
-        return
-
-    # WGS84 -> UTM zone 32 (Europe). Hard-code matches local dev mowers; if
-    # you deploy elsewhere, derive the zone from longitude.
-    zone = int((lng + 180) / 6) + 1
-    # Keep the existing time_stamp if pos.json already exists, else 0.
-    ts = 0
-    try:
-        with open("/userdata/pos.json") as f:
-            ts = float(_json.load(f).get("time_stamp", 0))
-    except Exception:
-        pass
-
-    # Approximate UTM x/y via simple cylindrical projection — robot_combination
-    # _localization recomputes from the lat/lng on first GPS fix, so this only
-    # needs to be a coarse seed.
-    METERS_PER_DEG = 111320.0
-    cos_lat = _math.cos(_math.radians(lat))
-    # central meridian for zone N is (-180 + 6N - 3)
-    central_meridian = -180 + 6 * zone - 3
-    x = 500000.0 + (lng - central_meridian) * cos_lat * METERS_PER_DEG
-    y = lat * METERS_PER_DEG
-
-    payload = {
-        "time_stamp": ts,
-        "utm_origin": {"utm_zone": zone, "x": x, "y": y, "z": 0},
-        "wgs84_origin": {"latitude": lat, "longitude": lng},
-    }
-
-    try:
-        _os.chmod("/userdata/pos.json", 0o644)
-    except Exception:
-        pass
-    try:
-        with open("/userdata/pos.json", "w") as f:
-            _json.dump(payload, f)
-        _os.chmod("/userdata/pos.json", 0o444)
-    except Exception as e:
-        respond("set_pos_origin_respond", {"result": 1, "error": f"write failed: {e}"})
-        return
-
-    # Restart robot_combination_localization so it re-reads pos.json. The
-    # node has no respawn=True flag in novabot_system.launch.py — kill +
-    # detached relaunch via setsid (same pattern as _restart_novabot_mapping
-    # post-2026-05-06 fix).
-    try:
-        _sp.Popen(
-            ["bash", "-lc",
-             "(killall -9 robot_combination_localization 2>/dev/null || true); "
-             "sleep 1; "
-             ". /opt/ros/galactic/setup.bash; "
-             ". /root/novabot/install/setup.bash; "
-             "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp; "
-             "export ROS_LOCALHOST_ONLY=1; "
-             "export ROS_LOG_DIR=/root/novabot/data/ros2_log; "
-             "export LD_LIBRARY_PATH=/usr/lib/hbmedia/:/usr/lib/hbbpu/:/usr/lib/sensorlib:/usr/local/lib:/usr/lib/aarch64-linux-gnu:/usr/bpu:/usr/opencv_world_4.6/lib:$LD_LIBRARY_PATH; "
-             "setsid nohup ros2 run robot_combination_localization robot_combination_localization "
-             "--ros-args --params-file /root/novabot/install/robot_combination_localization/share/robot_combination_localization/params/combination_localization.yaml "
-             ">> $ROS_LOG_DIR/loc_restart.log 2>&1 </dev/null &"],
-            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, stdin=_sp.DEVNULL,
-            start_new_session=True, close_fds=True,
-        )
-    except Exception as e:
-        respond("set_pos_origin_respond", {"result": 1, "error": f"relaunch failed: {e}"})
-        return
-
-    respond("set_pos_origin_respond", {"result": 0, "lat": lat, "lng": lng, "utm_zone": zone})
+    """Retired: wrote pos.json from a bare lat/lng with a flat projection and
+    a chmod lock, unverified, the same hole the retired recalibrate_charging_pose
+    had. The server has not sent it since the measured reanchor (reanchor_pos)
+    replaced it; a stray publish must not move the navigation origin."""
+    respond("set_pos_origin_respond", {
+        "result": 1, "error": "retired: use the verified reanchor procedure",
+    })
 
 
 # Supervised short source-dock movements. Each arm is single-use; heartbeat and
@@ -5949,11 +5882,14 @@ def handle_sync_map(params, respond):
             shutil.copy(tmp_zip, f"{home0}/{sn}.zip")
         except Exception:
             pass
-        # pos.json so localization can map GPS → local meters
-        pos_json = info.get("posJson")
-        if pos_json:
-            with open("/userdata/pos.json", "w") as f:
-                json.dump(pos_json, f)
+        # pos.json is the navigation origin and is only ever written by the
+        # verified reanchor (handle_reanchor_pos, measured and atomic). The
+        # server-supplied posJson of the legacy sync-info used to be written
+        # here unverified, the same hole the retired recalibrate_charging_pose
+        # had; a current server pins the operation and never reaches this
+        # branch, an older one gets its map files but keeps the origin.
+        if info.get("posJson"):
+            log("sync_map: legacy posJson ignored, pos.json is only written by reanchor_pos")
 
         # NEW (Novabot-53y): full anchor restore extension for the
         # /restore-and-realign one-click recovery flow. The server's enriched

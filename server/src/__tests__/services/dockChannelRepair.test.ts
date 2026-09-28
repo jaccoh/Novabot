@@ -80,6 +80,13 @@ it('repairs toward the lawn using saved heading, preserving every non-channel CS
   expect(() => planDockChannelRepair(wrongDirection)).toThrow('vrije dockaanloop');
 });
 
+it('accepts a connector filtered in csv_file while x3_csv_file keeps the route (touching zones)', () => {
+  const s = snapshot();
+  (s.csv_files as Record<string, string>)['map0tomap1_0_unicom.csv'] = '';
+  (s.x3_csv_files as Record<string, string>)['map0tomap1_0_unicom.csv'] = '3,4\n8,4\n';
+  expect(planDockChannelRepair(s).csvFiles['map0tomap1_0_unicom.csv']).toBe('3,4\n8,4\n');
+});
+
 it('rejects contradictory dock files, incomplete copies and obstacles beside the centreline', () => {
   const bad = snapshot(); bad.charging_station_yaml = 'charging_pose: [9,9,1]';
   expect(() => planDockChannelRepair(bad)).toThrow('dockpositie');

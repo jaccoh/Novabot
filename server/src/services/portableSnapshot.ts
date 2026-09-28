@@ -36,28 +36,48 @@ export function parseMapCsv(text: string, name: string): XY[] {
   });
 }
 
+/** The firmware's csv_file keeps only a connector's points outside the work
+ *  areas (empty between touching zones) while x3_csv_file keeps the full
+ *  route. The merged tree carries the full route; a connector that exists only
+ *  in x3 is preserved; copies that really differ are a conflict. */
+export function mergeConnectorCopies(csv: Record<string, string>, x3: Record<string, string> | undefined): Record<string, string> {
+  const merged = { ...csv };
+  for (const [name, data] of Object.entries(x3 ?? {})) {
+    if (classifyCsv(name)?.category !== 'unicom') continue;
+    if (!(name in merged)) merged[name] = data;
+    if (!data.trim()) continue;
+    const full = parseMapCsv(data, name);
+    const filtered = parseMapCsv(merged[name] ?? '', name);
+    let cursor = 0;
+    for (const point of full) {
+      if (cursor < filtered.length && point.x === filtered[cursor].x && point.y === filtered[cursor].y) cursor++;
+    }
+    if (cursor !== filtered.length) throw new Error(`Conflicting connector copies: ${name}`);
+    merged[name] = data;
+  }
+  return merged;
+}
+
+/** Both mower CSV trees as one map: the same files, byte-equal except the
+ *  connectors (merged as above) and map_info.json (metadata the caller
+ *  compares itself). Null when they are two different maps. A natively mapped
+ *  multi-zone mower always has filtered connectors in csv_file, so byte
+ *  equality alone refused every copy and repair on it (review 2026-09-28). */
+export function reconcileMowerCsvTrees(csv: Record<string, string> | undefined, x3: Record<string, string> | undefined): Record<string, string> | null {
+  if (!csv || !x3 || Object.keys(csv).length !== Object.keys(x3).length) return null;
+  for (const [name, text] of Object.entries(csv)) {
+    if (typeof text !== 'string' || typeof x3[name] !== 'string') return null;
+    if (name !== 'map_info.json' && classifyCsv(name)?.category !== 'unicom' && x3[name] !== text) return null;
+  }
+  try { return mergeConnectorCopies(csv, x3); } catch { return null; }
+}
+
 /** Live files are the geometry source; DB values may supply labels only. */
 export function geometryFromMowerFiles(files: MowerFiles, aliases: Record<string, string> = {}) {
   const workMaps: ExportInput['workMaps'] = [];
   const obstacles: ExportInput['obstacles'] = [];
   const unicom: ExportInput['unicom'] = [];
-  const csv = { ...files.csvFiles };
-  // A connector can exist only in the firmware's second CSV tree. Preserve it;
-  // contradictory nonempty copies cannot define one canonical server geometry.
-  for (const [name, data] of Object.entries(files.x3CsvFiles ?? {})) {
-    if (classifyCsv(name)?.category !== 'unicom') continue;
-    if (!(name in csv)) csv[name] = data;
-    if (!data.trim()) continue;
-    const full = parseMapCsv(data, name);
-    const filtered = parseMapCsv(csv[name] ?? '', name);
-    let cursor = 0;
-    for (const point of full) {
-      if (cursor < filtered.length && point.x === filtered[cursor].x && point.y === filtered[cursor].y) cursor++;
-    }
-    // Stock csv_file omits points inside work areas; x3 retains the full path.
-    if (cursor !== filtered.length) throw new Error(`Conflicting connector copies: ${name}`);
-    csv[name] = data;
-  }
+  const csv = mergeConnectorCopies({ ...files.csvFiles }, files.x3CsvFiles);
   for (const [name, text] of Object.entries(csv)) {
     const entry = classifyCsv(name);
     if (!entry) continue;

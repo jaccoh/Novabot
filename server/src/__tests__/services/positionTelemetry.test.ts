@@ -42,3 +42,14 @@ it('requires samples from after the requested origin load and rejects excessive 
   vi.advanceTimersByTime(1000); ingestPositionTelemetry(sn, { ...data, map_position_x: 1 });
   expect(stablePosition(sn)).toBeNull();
 });
+it('docked holds when the timer report says FULL while the robot report says docked', () => {
+  ingestPositionTelemetry(sn, { rtk_fix_quality: 4, recharge_status: 9 });
+  for (let i = 0; i < 8; i++) {
+    vi.advanceTimersByTime(500); ingestPositionTelemetry(sn, { battery_state: 'FULL', localization_state: 'RUNNING', map_position_x: 0.03, map_position_y: 0.73 });
+    vi.advanceTimersByTime(500); ingestPositionTelemetry(sn, { recharge_status: 9, rtk_fix_quality: 4 });
+  }
+  expect(freshPositionState(sn).docked).toBe(true);
+  expect(stablePosition(sn, { docked: true })).toMatchObject({ x: 0.03, y: 0.73 });
+  ingestPositionTelemetry(sn, { recharge_status: 0 });
+  expect(freshPositionState(sn).docked).toBe(false);
+});

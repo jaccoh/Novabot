@@ -368,6 +368,7 @@
     "dragHint": "Sleep om te verplaatsen"
   },
   "map": {
+    "saveError": "Opslaan mislukt",
     "copyAuto": {
       "title": "Bronmaaier automatisch meten",
       "description": "De bronmaaier rijdt circa 50 cm achteruit, meet, rijdt nog 20 cm achteruit, meet opnieuw en dockt via de camera. Houd deze wizard open.",

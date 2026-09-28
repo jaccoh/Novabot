@@ -561,6 +561,8 @@ export default function MapScreen() {
     ? covDirNum
     : (Number.isFinite(pathDirNum) ? pathDirNum : 0);
 
+  // SN whose frame loaded successfully last; see the catch below.
+  const loadedForRef = useRef<string | null>(null);
   const fetchData = useCallback(async () => {
     if (demo.enabled) {
       setMaps(DEMO_MAPS);
@@ -593,8 +595,12 @@ export default function MapScreen() {
       const plan = Array.isArray(pathsRes) ? pathsRes : [];
       const preview = Array.isArray(previewRes) ? previewRes : [];
       setPlannedPaths(plan.length > 0 ? plan : preview);
+      loadedForRef.current = sn;
     } catch {
-      // Do not keep a previous mower's geometry/anchor if this frame could not be loaded.
+      // Never show a previous mower's geometry/anchor, but a transient error
+      // for the SAME mower keeps the last good frame: fetchData runs on many
+      // triggers and one failed refresh must not blank the map.
+      if (loadedForRef.current === sn) return;
       setMaps([]);
       setChargerGpsOrigin(null);
       setChargingPose(null);

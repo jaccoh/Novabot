@@ -10,6 +10,11 @@
 import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
+  "Herankeren vereist een gelokaliseerde maaier (RUNNING) met acht verse, stabiele RTK Fixed-metingen op het dock. Rij zo nodig eerst een stukje met de joystick en dock opnieuw.": {
+    en: "Re-anchoring requires a localized mower (RUNNING) with eight fresh, stable RTK Fixed readings on the dock. If needed, drive a short distance with the joystick first and dock again.",
+    fr: "Le ré-ancrage nécessite une tondeuse localisée (RUNNING) avec huit mesures RTK Fixed fraîches et stables sur la station. Si nécessaire, roulez d’abord un peu avec le joystick puis revenez sur la station.",
+    de: "Das Neuverankern erfordert einen lokalisierten Mäher (RUNNING) mit acht neuen, stabilen RTK-Fixed-Messungen auf der Ladestation. Fahren Sie bei Bedarf zuerst ein Stück mit dem Joystick und docken Sie erneut an.",
+  },
   "Herankeren": {
     en: "Re-anchoring",
     fr: "Réancrage",

@@ -11,7 +11,7 @@ import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } f
 import { stablePosition } from './positionTelemetry.js';
 import { isFrameUnvalidated, clearFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
 import { snapshotAnchorMatches } from './anchor.js';
-import { parseMapCsv } from './portableSnapshot.js';
+import { parseMapCsv, mergeConnectorCopies, reconcileMowerCsvTrees } from './portableSnapshot.js';
 import { dockChannelPoints } from './zoneCopy.js';
 import { beginMapApply } from './mapApplyStatus.js';
 import { installVerifiedMapZip } from './mowerMapApply.js';
@@ -47,7 +47,8 @@ function csvOf(snapshot: Snapshot): Record<string, string> {
 
 /** Compare every polygon, not just the dock. DB rounding may differ by at most one centimetre. */
 export function assertStoredGeometry(sn: string, snapshot: Snapshot) {
-  const csv = csvOf(snapshot);
+  // DB rows hold the full connector routes (read from x3_csv_file).
+  const csv = mergeConnectorCopies(csvOf(snapshot), snapshot.x3_csv_files as Record<string, string> | undefined);
   const rows = mapRepo.findByMowerSn(sn).filter(r => r.canonical_name);
   const names = Object.keys(csv).filter(n => n.endsWith('.csv')).sort();
   const rowName = (r: typeof rows[number]) => `${r.canonical_name}${r.map_type === 'work' ? '_work' : ''}.csv`;
@@ -91,9 +92,9 @@ export async function withConfirmedCopyDocks<T>(target: string, source: string, 
 export function planDockChannelRepair(snapshot: Snapshot) {
   const pose = snapshotDockPose(snapshot);
   if (!pose) throw new Error('Geen eenduidige opgeslagen dockpositie.');
-  const csv = csvOf(snapshot), x3 = snapshot.x3_csv_files as Record<string, string> | undefined;
-  if (!x3 || JSON.stringify(Object.keys(csv).sort()) !== JSON.stringify(Object.keys(x3).sort()) ||
-    Object.entries(csv).some(([name, text]) => name !== 'map_info.json' && x3[name] !== text)) throw new Error('De twee kaartkopieën op de maaier verschillen; geen automatische kanaalreparatie mogelijk.');
+  const x3 = snapshot.x3_csv_files as Record<string, string> | undefined;
+  const csv = reconcileMowerCsvTrees(csvOf(snapshot), x3);
+  if (!csv || !x3) throw new Error('De twee kaartkopieën op de maaier verschillen; geen automatische kanaalreparatie mogelijk.');
   // The stale secondary dock metadata is part of this repair. Its polygon
   // bytes must agree; the independently confirmed primary metadata wins.
   const secondaryPose = JSON.parse(x3['map_info.json']).charging_pose;

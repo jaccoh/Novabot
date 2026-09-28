@@ -7,7 +7,7 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { beginMapApply, waitForPlannerBack, type MapApply } from './mapApplyStatus.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from './anchor.js';
 import { freshPositionState } from './positionTelemetry.js';
-import { isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
+import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 
@@ -27,7 +27,9 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
       apply = beginMapApply(sn);
       apply.phase('syncing');
       const anchor = getPolygonAnchor(sn);
-      if (!isOpenNovaMower(sn) || !isDeviceOnline(sn) || !freshPositionState(sn).docked || isFrameUnvalidated(sn) || !anchor) { apply.fail('sync_failed'); return; }
+      // A frame left unvalidated by a failed install is repaired by applying
+      // again; only a frame unvalidated for another reason blocks the push.
+      if (!isOpenNovaMower(sn) || !isDeviceOnline(sn) || !freshPositionState(sn).docked || (isFrameUnvalidated(sn) && !isMapInstallPending(sn)) || !anchor) { apply.fail('sync_failed'); return; }
       const before = await readMowerMapSnapshot(sn, operation);
       const savedDock = snapshotDockPose(before);
       // After deleting all zones, the first new copy has no prior channel to

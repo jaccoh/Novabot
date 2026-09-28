@@ -19,9 +19,9 @@ import { computeDockDrift, median, DOCK_DRIFT_WARN_M } from '../services/dockDri
 import { dispatchDockDriftEvent } from '../notifications/eventDetector.js';
 import { pointInPolygon } from '../maps/editGeometry.js';
 import { detectAndDispatch, resetEventState } from '../notifications/eventDetector.js';
-import { isFrameUnvalidated, noteDockState } from '../services/frameValidation.js';
+import { isFrameUnvalidated, clearFrameUnvalidated, noteDockState } from '../services/frameValidation.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
-import { isSimulatedStock, SIMULATED_STOCK_VERSION } from '../services/mowerFileCapability.js';
+import { isSimulatedStock, SIMULATED_STOCK_VERSION, isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { emitDebugPosJson } from '../dashboard/socketHandler.js';
 import { otaSessionVersion } from './otaSession.js';
 
@@ -1422,6 +1422,14 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   // can show the wizard and lock Go-home.
   const wasUnvalidated = isFrameUnvalidated(sn);
   if (wasUnvalidated) {
+    // Only the verified re-anchor or map install (OpenNova extended commands)
+    // clears this flag. A mower reporting stock firmware can run neither, so
+    // the lock would be permanent: no zone edits, no mowing (review 2026-09-28).
+    const sw = snValues.get('sw_version') ?? snValues.get('version');
+    if (sw && !isOpenNovaMower(sn, snValues)) {
+      clearFrameUnvalidated(sn);
+      console.warn(`[sensor] frame_unvalidated cleared for ${sn}: stock firmware ${sw} cannot run the verified re-anchor`);
+    }
     noteDockState(sn, docked);
     if (!isFrameUnvalidated(sn)) {
       console.log(`[sensor] frame_unvalidated cleared for ${sn} (re-docked after undock)`);

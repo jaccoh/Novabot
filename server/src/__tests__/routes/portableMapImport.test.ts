@@ -764,7 +764,6 @@ describe('confirmed restore transaction and recovery', () => {
     expect(isMapInstallPending(sn)).toBe(true);
     expect(getPendingReanchor(sn)).toBe('prior-origin-recovery');
     expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
-    expect((await request(server).post(`${url}/cancel`)).status).toBe(409);
     vi.mocked(mapSyncMock.verifyMowerMapFiles).mockResolvedValue({ pushed: true, validation });
     const second = await request(server).post(`${url}/apply-verbatim`);
     expect(second.status).toBe(200);
@@ -775,6 +774,19 @@ describe('confirmed restore transaction and recovery', () => {
     expect(mapSyncMock.applyVerbatimToMower).toHaveBeenCalledTimes(1);
     expect(mapSyncMock.verifyMowerMapFiles).toHaveBeenCalledTimes(1);
     expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toContain('map0');
+  });
+
+  it('an uncertain write can be given up; the install stays pending until a verified apply', async () => {
+    const stagingId = await stageVerbatimBundle(sn);
+    const url = `/api/admin-status/maps/${sn}/import-portable/${stagingId}`;
+    markMapInstallPending(sn); // the mocked applyVerbatimToMower does not mark it
+    vi.mocked(mapSyncMock.applyVerbatimToMower).mockResolvedValue({ pushed: false, validation, uncertain: true, error: 'write_ack_timeout' });
+    expect((await request(server).post(`${url}/apply-verbatim`)).status).toBe(409);
+    expect(isMapInstallPending(sn)).toBe(true);
+    expect((await request(server).post(`${url}/cancel`)).status).toBe(200);
+    expect((await request(server).post(`${url}/apply-verbatim`)).status).toBe(404);
+    expect(isMapInstallPending(sn)).toBe(true);
+    expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
   });
 
   it('keeps the original DB and recovery bundle when the DB commit fails after confirmed files', async () => {

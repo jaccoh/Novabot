@@ -297,6 +297,7 @@
     "dragHint": "Drag to move"
   },
   "map": {
+    "saveError": "Saving failed",
     "copyAuto": {
       "title": "Measure source mower automatically",
       "description": "The source mower reverses about 50 cm, measures, reverses another 20 cm, measures again and docks using its camera. Keep this wizard open.",

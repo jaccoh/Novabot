@@ -40,7 +40,8 @@ export async function measureReanchorDock(sn: string, operation: MowerMapOperati
   const after = await readMowerMapSnapshot(sn, operation);
   assertReanchorFiles(snapshot, after);
   if (after.pos_json !== snapshot.pos_json) throw new Error('Oorsprong gewijzigd tijdens de meting.');
-  freshCapture(runtime, started, 15, 'docked vehicle');
+  // Freshness was checked by runtimeObservation right after the reply; the
+  // multi-MB snapshot read above is not measurement age (review 2026-09-28).
   const state = freshPositionState(sn);
   if (!isDeviceOnline(sn) || !state.docked || !state.fixed || !state.running || !state.pose ||
       Math.hypot(state.pose.x - base.x, state.pose.y - base.y) > .05) {

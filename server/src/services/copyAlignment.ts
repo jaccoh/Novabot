@@ -230,12 +230,13 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
     const startedAt = performance.now();
     const raw = await operation.command('measure_dock_marker', {}, 50_000);
     const measured = observation(raw, s.frames[side].signature, startedAt);
+    // Freshness is about the measurement, before the multi-MB snapshot read.
+    freshCapture(measured, startedAt, 20, 'marker');
+    freshCapture(measured.runtime_frame, startedAt, 15, 'runtime frame');
     matches(s, side, await readMowerMapSnapshot(sn, operation));
     session(alignmentId);
     if (phase(s) !== expectedPhase) return fail('Another capture completed this step. Refresh the alignment wizard.');
     if (!stablePosition(sn)) return fail('Localization changed during the marker measurement.');
-    freshCapture(measured, startedAt, 20, 'marker');
-    freshCapture(measured.runtime_frame, startedAt, 15, 'runtime frame');
     newCapture(s, side, measured.capture_started);
     matchesRuntime(s, side, measured.runtime_frame);
     settledRuntime(measured.runtime_frame);

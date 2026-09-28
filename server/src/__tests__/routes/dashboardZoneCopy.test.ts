@@ -430,11 +430,16 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     await vi.waitFor(() => expect(phases().at(-1)).toBe('failed'));
     expect(isFrameUnvalidated(B)).toBe(true);
     expect(vi.mocked(publishToExtended).mock.calls.some(c => c[1].regenerate_per_map_files)).toBe(false);
+    // Applying again is the repair of a failed install: it passes the frame
+    // gate, pushes a fresh sync, and the frame stays locked until it confirms.
     const commands = vi.mocked(publishToExtended).mock.calls.length;
     const retry = await request(server).post(applyUrl).send({});
-    expect(retry.status).toBe(409);
-    expect(retry.body.reason).toBe('frame_unvalidated');
-    expect(publishToExtended).toHaveBeenCalledTimes(commands);
+    expect(retry.status).toBe(200);
+    await vi.waitFor(() => expect(vi.mocked(publishToExtended).mock.calls.filter(c => c[1].sync_map)).toHaveLength(2));
+    await answer({ sync_map_respond: { result: 0, restart: false } });
+    await vi.waitFor(() => expect(phases().at(-1)).toBe('failed'));
+    expect(vi.mocked(publishToExtended).mock.calls.length).toBeGreaterThan(commands);
+    expect(isFrameUnvalidated(B)).toBe(true);
   });
 
   it('blocks concurrent writes and keeps planner timeout failed with navigation locked', async () => {

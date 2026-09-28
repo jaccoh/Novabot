@@ -71,6 +71,16 @@ describe('frame_unvalidated lifecycle in updateDeviceData', () => {
   const undocked = (sn: string) =>
     updateDeviceData(sn, Buffer.from(JSON.stringify({ report_state_robot: { recharge_status: 0 } })));
 
+  it('clears for a mower that reports stock firmware, keeps it for OpenNova', () => {
+    const S = 'LFIN_STOCK_FLAG', O = 'LFIN_CUSTOM_FLAG';
+    clearFrameUnvalidated(S); clearFrameUnvalidated(O);
+    markFrameUnvalidated(S); markFrameUnvalidated(O);
+    updateDeviceData(S, Buffer.from(JSON.stringify({ report_state_robot: { sw_version: 'v6.0.2', recharge_status: 9 } })));
+    updateDeviceData(O, Buffer.from(JSON.stringify({ report_state_robot: { sw_version: 'v6.0.2-custom-45', recharge_status: 9 } })));
+    expect(isFrameUnvalidated(S)).toBe(false);
+    expect(isFrameUnvalidated(O)).toBe(true);
+  });
+
   it('does NOT clear while still docked at import time (regression: imported while parked)', () => {
     const SN = 'LFIN_DOCK_A';
     clearFrameUnvalidated(SN);

@@ -3,7 +3,7 @@ type Reading<T> = { value: T; at: number };
 export type PositionSample = { x: number; y: number; at: number; fixed: boolean; running: boolean; docked: boolean };
 export type GpsSample = { lat: number; lng: number; at: number; fixed: boolean; docked: boolean };
 type Telemetry = {
-  quality?: Reading<boolean>; running?: Reading<boolean>; docked?: Reading<boolean>;
+  quality?: Reading<boolean>; running?: Reading<boolean>; battery?: Reading<boolean>; recharge?: Reading<boolean>;
   error?: Reading<number>; gpsIds?: string[]; poses: PositionSample[]; gps: GpsSample[];
 };
 const telemetry = new Map<string, Telemetry>();
@@ -20,8 +20,12 @@ export function freshPositionState(sn: string, now = Date.now()) {
   return {
     fixed: fresh(t?.quality, now) && t.quality.value,
     running: fresh(t?.running, now) && t.running.value,
-    docked: fresh(t?.docked, now) && t.docked.value,
-    dockKnown: fresh(t?.docked, now),
+    // battery_state travels in report_state_timer_data, recharge_status in
+    // report_state_robot, never together: each keeps its own reading, and
+    // either one saying "docked" counts. Deciding per message made a FULL
+    // battery flip every pose sample to undocked (review 2026-09-28).
+    docked: (fresh(t?.battery, now) && t.battery.value) || (fresh(t?.recharge, now) && t.recharge.value),
+    dockKnown: fresh(t?.battery, now) || fresh(t?.recharge, now),
     pose: pose && now >= pose.at && now - pose.at <= POSITION_MAX_AGE_MS ? pose : null,
   };
 }
@@ -32,9 +36,10 @@ export function ingestPositionTelemetry(sn: string, data: Record<string, unknown
   const loc = object(data.localization);
   if ('rtk_fix_quality' in data) t.quality = { at, value: data.rtk_fix_quality === 4 || data.rtk_fix_quality === '4' || data.rtk_fix_quality === 'RTK Fixed' };
   if ('localization_state' in data || 'localization_state' in loc) t.running = { at, value: (loc.localization_state ?? data.localization_state) === 'RUNNING' };
-  if ('battery_state' in data || 'recharge_status' in data) {
+  if ('battery_state' in data) t.battery = { at, value: String(data.battery_state ?? '').toUpperCase() === 'CHARGING' };
+  if ('recharge_status' in data) {
     const recharge = String(data.recharge_status ?? '');
-    t.docked = { at, value: String(data.battery_state ?? '').toUpperCase() === 'CHARGING' || recharge === '9' || recharge === '1' || recharge.startsWith('Charging') };
+    t.recharge = { at, value: recharge === '9' || recharge === '1' || recharge.startsWith('Charging') };
   }
   if ('error_status' in data) t.error = { at, value: number(data.error_status) };
   const state = freshPositionState(sn, at);

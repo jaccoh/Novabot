@@ -205,13 +205,19 @@ it('uses monotonic command time if the server wall clock changes while receiving
   await expect(captureCopyAlignment(s.alignmentId, 'source')).resolves.toHaveProperty('phase', 'source_second');
 });
 
-it('rejects a marker observation that ages while reading its final native snapshot', async () => {
+it('a slow final native snapshot read does not age the marker observation; a late reply does', async () => {
+  // The multi-MB read after the reply is not measurement age (review 2026-09-28):
+  // freshness is judged against the request before the read, the live
+  // localization is checked again after it.
   const s = await beginCopyAlignment(targetSn, sourceSn, canonical);
   let reads = 0;
   vi.mocked(readMowerMapSnapshot).mockImplementation(async sn => {
     if (++reads === 2) advance(10_000);
     return structuredClone(snapshots[sn]);
   });
+  await expect(captureCopyAlignment(s.alignmentId, 'source')).resolves.toHaveProperty('phase', 'source_second');
+  const command = state.command.getMockImplementation()!;
+  state.command.mockImplementationOnce(async (...args: unknown[]) => { advance(12_000); return command(...(args as [string, string, unknown, number])); });
   await expect(captureCopyAlignment(s.alignmentId, 'source')).rejects.toThrow('marker measurement is stale');
 });
 

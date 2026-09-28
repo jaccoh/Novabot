@@ -133,7 +133,13 @@ export const dashboardRouter = Router();
 dashboardRouter.use(['/maps/:sn', '/calibration/:sn'], (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) { next(); return; }
   const { sn } = req.params;
-  if (isMowerMapOperationBusy(sn) || isFrameUnvalidated(sn)) {
+  // Supervision pulses of a running source-dock cycle are keepalives, not map
+  // writes; the target holds the lease during that cycle's own reads.
+  if (/^\/copy-from\/[^/]+\/alignment\/auto-source\/[^/]+$/.test(req.path)) { next(); return; }
+  // A failed install leaves the frame unvalidated with the install pending;
+  // applying again is the repair, so that request passes the frame gate.
+  const retry = req.method === 'POST' && req.path === '/apply' && isMapInstallPending(sn);
+  if (isMowerMapOperationBusy(sn) || (isFrameUnvalidated(sn) && !retry)) {
     res.status(409).json({ ok: false, reason: isMowerMapOperationBusy(sn) ? 'map_operation_busy' : 'frame_unvalidated', error: 'Rond eerst de kaart- of herankerprocedure af.' }); return;
   }
   next();
@@ -3141,9 +3147,12 @@ function checkReanchor(sn: string, cycle: ReanchorCycle): void {
   }
 }
 function sameReanchorOrigin(actual: unknown, expected: Origin): boolean {
-  const value = actual as Origin | undefined;
-  return !!value && value.utm_zone === expected.utm_zone && value.z === expected.z &&
-    Number.isFinite(value.x) && Number.isFinite(value.y) && Math.hypot(value.x - expected.x, value.y - expected.y) <= .002;
+  const value = actual as Partial<Origin> | undefined;
+  // The firmware's reanchor_pos reply carries x, y and utm_zone only; pos.json
+  // also has z: 0. Requiring z here reported every successful write as
+  // "not loaded" (review 2026-09-28).
+  return !!value && value.utm_zone === expected.utm_zone && (value.z ?? 0) === (expected.z ?? 0) &&
+    Number.isFinite(value.x) && Number.isFinite(value.y) && Math.hypot(value.x! - expected.x, value.y! - expected.y) <= .002;
 }
 
 async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> {
@@ -3172,6 +3181,11 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
         needsPostWriteCheck = sameReanchorOrigin(JSON.parse(String(before.pos_json)).utm_origin, record.expected);
         if (!needsPostWriteCheck && before.pos_json !== backup.snapshot.pos_json) throw new ReanchorError(M`De oorsprong wijkt af van zowel de backup als het voorgestelde herstel. Eerst onderzoeken.`);
       }
+      // Invalidate only now: the mower answered the correlated read and the
+      // anchors agree. A firmware that cannot follow the procedure, or a lost
+      // start response, never leaves a locked frame behind (review 2026-09-28).
+      markFrameUnvalidated(sn, { preservePhotoDock: true });
+      cycle.revision = getFrameRevision(sn);
       disarmEdgeWatch(sn, 'own-dock reanchor');
       const roundTrip = async (snapshot: Record<string, unknown>, afterWrite: boolean) => {
         if (!stablePosition(sn, { docked: true })) throw new ReanchorError(M`Begin stilstaand op het eigen dock met vers laadcontact en RTK Fixed.`);
@@ -3278,7 +3292,12 @@ dashboardRouter.post('/reanchor/:sn', (req: Request, res: Response) => {
   if (!isDeviceOnline(sn) || !state.docked || !state.fixed || !getPolygonAnchor(sn)) {
     res.status(409).json({ ok: false, error: T`Herankeren vereist een online maaier op zijn eigen dock, verse RTK Fixed en een eenduidig dockanker.` }); return;
   }
-  markFrameUnvalidated(sn, { preservePhotoDock: true });
+  // The cycle's first step needs a stable docked pose with the localization
+  // RUNNING. A mower that has not localized yet (normal right after a boot on
+  // the dock) is refused here, before anything is invalidated.
+  if (!state.running || !stablePosition(sn, { docked: true })) {
+    res.status(409).json({ ok: false, error: T`Herankeren vereist een gelokaliseerde maaier (RUNNING) met acht verse, stabiele RTK Fixed-metingen op het dock. Rij zo nodig eerst een stukje met de joystick en dock opnieuw.` }); return;
+  }
   const cycle: ReanchorCycle = { id: crypto.randomUUID(), revision: getFrameRevision(sn), operatorAt: -Infinity, startedAt: performance.now(), cancelled: false, finished: false };
   reanchorCycles.set(sn, cycle);
   setReanchor(sn, cycle, 'check', M`Dockanker en maaierbestanden controleren. Bevestiging van toezicht afwachten.`);

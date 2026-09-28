@@ -60,9 +60,16 @@ describe('ImportStagingStore', () => {
     const reloaded = new ImportStagingStore(dir);
     expect(reloaded.get(s.stagingId)?.state).toBe('RECONCILE_REQUIRED');
     expect(reloaded.get(s.stagingId)?.context.applyResult?.bundleHash).toBe('hash');
-    expect(() => reloaded.cancel(s.stagingId, 'cancel')).toThrow('reconciled');
     expect(() => reloaded.transition(s.stagingId, 'APPLIED', {})).toThrow(IllegalStateTransitionError);
     reloaded.transition(s.stagingId, 'APPLYING', {});
     reloaded.transition(s.stagingId, 'APPLIED', { applyResult: { mowerVerified: true } });
+    // An uncertain outcome may be given up (the install stays pending elsewhere);
+    // a write still in flight may not (review 2026-09-28).
+    const uncertain = store.create('SN2', { polygonAreaM2: 100, sourceSn: 'SN2' });
+    store.transition(uncertain.stagingId, 'APPLYING', { applyResult: { operationId: 'op', bundleHash: 'hash' } });
+    expect(() => store.cancel(uncertain.stagingId, 'cancel')).toThrow('reconciled');
+    store.transition(uncertain.stagingId, 'RECONCILE_REQUIRED', {});
+    store.cancel(uncertain.stagingId, 'cancel');
+    expect(store.get(uncertain.stagingId)).toBeNull();
   });
 });

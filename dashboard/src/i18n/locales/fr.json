@@ -265,6 +265,7 @@
     "dragHint": "Faire glisser pour déplacer"
   },
   "map": {
+    "saveError": "Échec de l'enregistrement",
     "copyAuto": {
       "title": "Mesurer automatiquement la tondeuse source",
       "description": "La tondeuse source recule d’environ 50 cm, mesure, recule encore de 20 cm, mesure à nouveau puis rejoint sa station avec la caméra. Gardez cet assistant ouvert.",

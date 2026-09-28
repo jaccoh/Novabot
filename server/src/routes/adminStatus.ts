@@ -2597,10 +2597,14 @@ adminStatusRouter.post(
       res.json({ ok: true });
       return;
     }
-    if (session.state === 'APPLYING' || session.state === 'RECONCILE_REQUIRED') {
+    if (session.state === 'APPLYING') {
       res.status(409).json({ ok: false, error: 'restore_requires_reconciliation', state: session.state }); return;
     }
-    importAuditRepo.append({ sn, staging_id: stagingId, from_state: session.state, to_state: 'CANCELLED', reason: 'user cancel' });
+    // An uncertain write may be given up: the staging session goes so a new
+    // bundle can be applied, while the map install stays pending until a
+    // verified apply confirms what the mower holds (review 2026-09-28).
+    const reason = session.state === 'RECONCILE_REQUIRED' ? 'user cancel after uncertain write' : 'user cancel';
+    importAuditRepo.append({ sn, staging_id: stagingId, from_state: session.state, to_state: 'CANCELLED', reason });
     importStaging.cancel(stagingId, 'user cancel');
     res.json({ ok: true });
   },

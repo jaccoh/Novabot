@@ -509,7 +509,12 @@ export async function startMqttBroker(): Promise<void> {
     // Direct app MQTT bypasses publishToDevice. Apply the same map/frame
     // guard before forwarding either plaintext or encrypted device commands.
     if (client && isMapMqttPacketBlocked(packet.topic, packet.payload)) {
-      callback(new Error('Map operation in progress or map frame unvalidated'));
+      // aedes closes the publishing client on an authorizePublish error, which
+      // knocked the stock app off MQTT for pressing Go home during a map
+      // operation. Sink the command instead: nothing subscribes to this topic.
+      console.warn(`${C.yellow}[MQTT] blocked ${packet.topic} from ${client.id}: map operation in progress or map frame unvalidated${C.reset}`);
+      (packet as { topic: string }).topic = `novabot/blocked/${packet.topic}`;
+      callback(null);
       return;
     }
     // Race condition fix: de app stuurt een commando (bijv. get_map_list) en start

@@ -118,6 +118,7 @@ let runtimeOverride: Record<string, unknown>;
 let rejectWrite = false;
 let measurementCount = 0;
 let corruptAfterWrite = false;
+let slowReadAfterMeasure = false;
 let snapshotConflict = false;
 let requestCount = 0;
 function snapshot() {
@@ -126,7 +127,8 @@ function snapshot() {
     'map_info.json': JSON.stringify({ charging_pose: { ...anchor, orientation: 1.5 } }),
   }, charging_station_yaml: `charging_pose: [${snapshotConflict ? 2 : anchor.x}, ${anchor.y}, 1.5]`, pos_json: JSON.stringify({ utm_origin: loadedOrigin }) };
 }
-function feed(fields = {}) { for (let i = 7; i >= 0; i--) ingestPositionTelemetry(SN, { ...data, rtk_sample_id: String(Date.now() - i * 100), ...fields }, Date.now() - i * 100); }
+let lastFeed: Record<string, unknown> = {};
+function feed(fields: Record<string, unknown> = {}) { lastFeed = fields; for (let i = 7; i >= 0; i--) ingestPositionTelemetry(SN, { ...data, rtk_sample_id: String(Date.now() - i * 100), ...fields }, Date.now() - i * 100); }
 async function tick(ms = 1000, supervise = true) {
   for (let left = ms; left > 0; left -= 1000) {
     if (supervise && cycleId) await action('pulse');
@@ -145,7 +147,7 @@ beforeEach(() => {
   });
   vi.mocked(settleDockMotion).mockImplementation(async (_sn, docked, check) => { check(); return { x: anchor.x, y: anchor.y - (docked ? 0 : .6), sampledAt: Date.now(), sampleCount: 8, spreadM: 0 }; });
   snapshotConflict = false; requestCount = 0; loadedOrigin = { x: 620859.4, y: 5776239.5, z: 0, utm_zone: 31 };
-  runtimeOverride = {}; rejectWrite = false; measurementCount = 0; corruptAfterWrite = false;
+  runtimeOverride = {}; rejectWrite = false; measurementCount = 0; corruptAfterWrite = false; slowReadAfterMeasure = false;
   vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
   for (const row of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(row.map_id);
   mapRepo.create({ map_id: SN, mower_sn: SN, map_type: 'unicom', canonical_name: 'map0tocharge_unicom', map_area: JSON.stringify([anchor, { x: 0.2, y: -0.4 }]) });
@@ -156,13 +158,21 @@ beforeEach(() => {
     const params = raw as Record<string, any>;
     let result: Record<string, unknown> = snapshot();
     if (command === 'read_map_files' && requestCount && corruptAfterWrite) result.x3_csv_files = { 'map0_work.csv': 'changed' };
+    if (command === 'read_map_files' && slowReadAfterMeasure && measurementCount) {
+      // A multi-MB snapshot read after the measurement; telemetry keeps flowing meanwhile.
+      const reply = { ...result, operation_id: params.operation_id };
+      setTimeout(() => feed(lastFeed), 5000); setTimeout(() => feed(lastFeed), 10_000);
+      setTimeout(() => { for (const h of [...handlers]) h({ read_map_files_respond: reply }); }, 12_000);
+      return;
+    }
     if (command === 'reanchor_pos') {
       requestCount++;
       expect(params.anchor_x).toBe(anchor.x); expect(params.anchor_y).toBe(anchor.y);
       expect(params.protocol).toBe('base-link-reanchor-v1');
       expect(params).not.toHaveProperty('lat');
       if (!rejectWrite) loadedOrigin = params.utm_origin;
-      result = { result: rejectWrite ? 1 : 0, protocol: 'base-link-reanchor-v1', anchor, utm_origin: loadedOrigin };
+      // The firmware reply carries x, y and utm_zone only (extended_commands.py reanchor_pos_respond).
+      result = { result: rejectWrite ? 1 : 0, protocol: 'base-link-reanchor-v1', anchor, utm_origin: { x: loadedOrigin.x, y: loadedOrigin.y, utm_zone: loadedOrigin.utm_zone } };
     }
     if (command === 'measure_runtime_frame') {
       measurementCount++;
@@ -200,12 +210,23 @@ it('retires recalibration and old single-step shortcuts without any mower write'
   for (const name of ['drive', 'spin', 'dock', 'verify', 'continue_dock']) expect((await action(name)).status).toBe(410);
   expect(publishToExtended).not.toHaveBeenCalled();
 });
-it('has a recovery entry without prior invalidation, but a lost start response never moves', async () => {
+it('has a recovery entry without prior invalidation; a lost start response never moves nor locks the frame', async () => {
   vi.useFakeTimers(); feed();
   expect(isFrameUnvalidated(SN)).toBe(false); expect((await action('auto')).status).toBe(200);
   await tick(6000, false);
   expect((await status()).phase).toBe('error'); expect(guardedDockMove).not.toHaveBeenCalled();
-  expect(isFrameUnvalidated(SN)).toBe(true);
+  expect(isFrameUnvalidated(SN)).toBe(false);
+});
+it('refuses a docked mower whose localization is not RUNNING, without invalidating the frame', async () => {
+  feed({ localization_state: 'NOT_INITIALIZED', map_position_x: 0, map_position_y: 0 });
+  expect((await start()).status).toBe(409);
+  expect(isFrameUnvalidated(SN)).toBe(false); expect(guardedDockMove).not.toHaveBeenCalled();
+});
+it('a slow snapshot read after the measurement does not make the measurement stale', async () => {
+  vi.useFakeTimers(); feed({ map_position_orientation: 1.606 }); slowReadAfterMeasure = true;
+  await start(); await tick(70_000);
+  expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
+  expect(requestCount).toBe(1); expect(measurementCount).toBe(2);
 });
 it('refuses conflicting native anchors before departure', async () => {
   vi.useFakeTimers(); feed(); snapshotConflict = true;

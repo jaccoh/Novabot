@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { reconcileMowerCsvTrees } from './portableSnapshot.js';
 import path from 'node:path';
 import { db } from '../db/database.js';
 import { mapRepo, deviceSettingsRepo } from '../db/repositories/index.js';
@@ -35,11 +36,13 @@ export async function installZoneCopy(
   if (!plan.ok || isFrameUnvalidated(sn)) throw new Error('De kopie of het kaartframe is niet bevestigd.');
   const original = before.csv_files as Record<string, string>;
   const x3 = before.x3_csv_files as Record<string, string>;
-  if (!original || !x3 || Object.keys(original).length !== Object.keys(x3).length ||
-    Object.entries(original).some(([name, value]) => typeof value !== 'string' || x3[name] !== value)) {
+  // Filtered connectors in csv_file with the full route in x3_csv_file are one
+  // map (natively mapped touching zones); the copy ships the full route to both.
+  const merged = reconcileMowerCsvTrees(original, x3);
+  if (!merged || merged['map_info.json'] !== x3['map_info.json']) {
     throw new Error('De twee kaartkopieën op de doelmaaier verschillen; synchroniseer die eerst.');
   }
-  const csv = { ...original };
+  const csv = { ...merged };
   const workName = `${plan.canonical}_work.csv`;
   if (plan.replacesExisting) {
     const slot = plan.canonical;

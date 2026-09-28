@@ -114,6 +114,20 @@ it('replaces one native slot without renumbering or changing another slot', asyn
   expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name).sort()).toEqual(['map0', 'map0tocharge_unicom', 'map3']);
 });
 
+it('accepts a connector filtered in csv_file while x3_csv_file keeps the route, and ships the full route', async () => {
+  const s = snapshot();
+  s.csv_files = { ...s.csv_files, 'map3_work.csv': '8,0\n12,0\n12,4\n8,4\n', 'map0tomap3_0_unicom.csv': '' };
+  s.x3_csv_files = { ...s.csv_files, 'map0tomap3_0_unicom.csv': '3,4\n8,4\n' };
+  mapRepo.create({ map_id: `${sn}-map3`, mower_sn: sn, map_type: 'work', canonical_name: 'map3', map_area: JSON.stringify(work) });
+  mapRepo.create({ map_id: `${sn}-link`, mower_sn: sn, map_type: 'unicom', canonical_name: 'map0tomap3_0_unicom', map_area: '[]' });
+  await run(plan(), s);
+  expect(vi.mocked(installVerifiedMapZip).mock.calls[0][1].expectedCsv.get('map0tomap3_0_unicom.csv')).toBe('3,4\n8,4\n');
+  const conflict = snapshot();
+  conflict.csv_files = { ...conflict.csv_files, 'map0tomap3_0_unicom.csv': '9,9\n' };
+  conflict.x3_csv_files = { ...conflict.csv_files, 'map0tomap3_0_unicom.csv': '3,4\n8,4\n' };
+  await expect(run(plan(), conflict)).rejects.toThrow('kaartkopieën');
+});
+
 it('rejects changed runtime before transfer without any device or DB write', async () => {
   const before = mapRepo.findByMowerSn(sn);
   verifyBefore.mockRejectedValueOnce(new Error('Runtime offset changed by 7.44 cm'));
