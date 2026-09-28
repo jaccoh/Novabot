@@ -103,3 +103,43 @@ Een daadwerkelijk ontbrekend of onleesbaar `pos.json` wordt momenteel niet door 
 - Geen live beweging, herankering, kaartinstallatie of fysieke acceptatie uitgevoerd. Productiecode is voor deze audit ongewijzigd gebleven.
 
 De bestaande groene tests missen deze foutcombinaties. Bij de correcties moeten de reproducties veranderen in tests voor het gewenste gedrag. Daarna blijven de volledige cyclus op een eigen dock, hervatten na onderbreking en gecontroleerde fysieke kaartnavigatie afzonderlijke acceptatiestappen.
+
+## Aanvulling: communitymelding over verdwenen herstelknop en dockkalibratie
+
+De aangeleverde screenshots tonen het desktopdashboard `v2026.0923.2300`. De gebruiker meldt dat de maaier fysiek gedockt staat, op het dak wordt getekend en niet kan maaien wegens buiten het werkgebied. Na **Recalibrate charging pose** verandert de getoonde uitlijning opnieuw. Zijn daadwerkelijke native bestanden en telemetrie zijn niet beschikbaar; de screenshots alleen bewijzen geen specifieke oorsprongfout.
+
+Vergelijking van tag `v2026.0923.2300` met de onderzochte huidige code levert twee aanvullende bevindingen op:
+
+### P1: oude dockkalibratie is nog bereikbaar en verandert het verkeerde gegeven bij oorsprongdrift
+
+**Issue:** `Novabot-55f.19.6`.
+
+`dashboard/src/pages/SettingsPage.tsx:370-399,655-663` biedt nog steeds **Recalibrate charging pose** aan. Deze actie roept `recalibrateChargingPoseFromCache` aan via `server/src/routes/dashboard.ts:3013-3019`. Dat is een andere route dan de gecontroleerde herankerprocedure. Dezelfde actie bestaat in de app.
+
+De server leest de actuele lokale maaierpose uit de cache, controleert een aantal ongeldige waarden en laadstatus, en stuurt die pose als nieuw dock naar de maaier. Er is hier geen eis dat de pose binnen een werkpolygoon ligt. De gemelde weigering wegens buiten het gebied kan daarom niet zonder de exacte foutmelding aan deze route worden toegeschreven. De frontend biedt bovendien bij elke niet-succesvolle response zonder `batteryState=CHARGING` een laadstatusoverride aan, ook als een andere validatie de echte oorzaak was.
+
+Een geïsoleerde uitvoering van `handle_recalibrate_charging_pose` uit zowel de release-tag als master bevestigt:
+
+- Beide `map_info.json`-bestanden en `charging_station.yaml` krijgen de opgegeven nieuwe dockpose.
+- `pos.json`, werkpolygonen en `mapNtocharge_unicom.csv` blijven byte voor byte gelijk.
+- De handler meldt succes. De server past ook de dockpose in zijn ZIP en de opgeslagen richting aan.
+
+Deze proef gebruikte uitsluitend tijdelijke lokale fixtures, geen maaier. De actie kan bij een verschoven voertuigpose dus het oorspronkelijke referentiepunt overschrijven terwijl het dockkanaal op het oude punt blijft staan. De huidige herankerprocedure zal zo'n tegenstelling terecht weigeren. De commandonaam ontbreekt ook in de gedeelde verzamelingen voor beschermde kaartoperaties (`server/src/services/mowerMapOperation.ts:18-19`).
+
+Dit is geen vervanger voor herankeren. Sluit dit oude herstelpad en verbind de herstelbediening aan de gecontroleerde diagnose en herankerprocedure. Fysiek verplaatsen van een dock vereist een aparte, consistente kaartbewerking. Deze bevinding ontbrak in de eerdere beoordeling van 28 september.
+
+### P2: dashboardherstel is verborgen zonder vooraf gezette framevlag
+
+**Issue:** `Novabot-55f.19.7`.
+
+In release-tag en huidige code verschijnen de herankerbanner en knop alleen bij `frame_unvalidated=1` (`dashboard/src/components/dashboard/MowerControls.tsx:686,932`). Een verschoven lokalisatie of melding buiten het werkgebied hoeft die vlag niet te zetten. Daardoor ontbreekt een vindbare diagnose-ingang juist voor iemand die spontaan uitlijningsproblemen krijgt. De app heeft in instellingen wel een expliciete invalidatieactie; die is geen reden om het desktopprobleem als opgelost te beschouwen.
+
+Voeg een vindbare controle van de eigen dockreferentie toe zonder voorafgaande invalidatie of eis dat de maaier al binnen het werkgebied ligt. Zo'n ingang moet meting en oorzaakcontrole starten, geen automatische oorsprongwijziging bij elke melding buiten het gebied.
+
+### Betekenis van foto, YAML en backup voor deze melding
+
+De release projecteert zowel zones als de lokale maaierpose via `localToGps(p - chargingPose, chargerGps)` (`MowerMap.tsx:1981-2001,3180-3196` in die tag). Een gewijzigde dockpose kan daardoor een andere ligging op de foto geven zonder dat de native werkpolygonen zijn verschoven. Alleen een verkeerd geplaatste afbeelding verklaart geen interne maaiermelding buiten het gebied; ook de gebruikte lokale positie, native kaart en eventueel plannerstatus moeten worden gecontroleerd. Het fallbackpad naar raw GPS maakt een screenshot bovendien onvoldoende bewijs voor de lokaal gebruikte pose.
+
+`charging_pose: [x, y, theta]` bevat een lokaal referentiepunt in meters en een richting in radialen. Niet-nul waarden zijn normaal en vormen op zichzelf geen gemeten afwijking. Alleen de YAML terugzetten kan opnieuw een verschil met metadata en kanalen veroorzaken. Ook een complete backup mag niet blind worden teruggezet als uitsluitend de GPS-oorsprong verkeerd is.
+
+Voor diagnose zijn nodig: een bewaarde huidige snapshot, een backup van vóór de kalibratie, de gedockte `map_position`, laadcontact, lokalisatiestatus en RTK-kwaliteit, plus de bevestiging of dock of basis fysiek verplaatst is. Vergelijk `pos.json`, beide `map_info.json`-bestanden, dock-YAML en de eerste punten van de dockkanalen. Daarmee wordt onderscheid gemaakt tussen fotoplaatsing, oorsprongdrift en gewijzigde dockmetadata, voordat herstel iets overschrijft. Deze gegevens zijn nog niet ontvangen. Productiecode en apparaten zijn tijdens deze aanvullende controle ongewijzigd gebleven.
