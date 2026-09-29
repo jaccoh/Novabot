@@ -8,7 +8,7 @@ import { validateMapRasters } from '../maps/validateGrid.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { csvZip, type ConfirmedCopyDocks } from './dockChannelRepair.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
-import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated, markFrameUnvalidated } from './frameValidation.js';
+import { clearMapInstallPending, isFrameUnvalidated, markFrameUnvalidated } from './frameValidation.js';
 import { beginMapApply } from './mapApplyStatus.js';
 import { assertMowerMapOperation } from './mowerMapOperation.js';
 import { installVerifiedMapZip } from './mowerMapApply.js';
@@ -71,11 +71,10 @@ export async function installZoneCopy(
   if (!unchanged()) throw new Error('De doelkaart is tijdens de voorbereiding gewijzigd.');
   const apply = beginMapApply(sn);
   apply.phase('syncing');
-  let transferFailed = false, installed = false;
+  let transferFailed = false;
   try {
     const after = await installVerifiedMapZip(sn, { bytes, expectedCsv: new Map(Object.entries(csv)), before, anchor: dock }, operation, apply);
     if (!after) { transferFailed = true; throw new Error('Kaartoverdracht niet bevestigd; de kopie is niet opgeslagen.'); }
-    installed = true;
     const rasters = after.map_files_b64 as Record<string, string>;
     const text = after.map_files_text as Record<string, string>;
     const slots = Object.keys(csv).filter(n => /^map\d+_work\.csv$/.test(n)).map(n => n.slice(0, -9));
@@ -84,10 +83,17 @@ export async function installZoneCopy(
       !rasters[`${n}.pgm`] || !text[`${n}.yaml`] || !validation.stats[`${n}.pgm`]?.total)) {
       throw new Error('De navigatiekaarten zijn niet geldig opgebouwd.');
     }
-    const current = await verification.verifyRuntime();
+    const current = await verification.verifyRuntime().catch(error => {
+      // A failed frame measurement needs recovery independently of the files.
+      markFrameUnvalidated(sn, { preservePhotoDock: true });
+      throw error;
+    });
     // The runtime check takes time; its final native read must still contain this exact installation.
-    if (current.pos_json !== before.pos_json || current.charging_station_yaml !== before.charging_station_yaml ||
-      ['csv_files', 'x3_csv_files'].some(key => {
+    if (current.pos_json !== before.pos_json || current.charging_station_yaml !== before.charging_station_yaml) {
+      markFrameUnvalidated(sn, { preservePhotoDock: true });
+      throw new Error('De kaartreferentie is tijdens de eindcontrole gewijzigd.');
+    }
+    if (['csv_files', 'x3_csv_files'].some(key => {
         const files = current[key] as Record<string, string> | undefined;
         return !files || Object.keys(files).length !== Object.keys(csv).length || Object.entries(csv).some(([name, text]) => files[name] !== text);
       })) throw new Error('De kaartbestanden zijn tijdens de eindcontrole gewijzigd.');
@@ -109,11 +115,9 @@ export async function installZoneCopy(
       return result;
     })();
     clearMapInstallPending(sn);
-      clearFrameUnvalidated(sn);
     apply.done();
     return saved;
   } catch (error) {
-    if (installed && !isFrameUnvalidated(sn)) markFrameUnvalidated(sn, { preservePhotoDock: true });
     if (!transferFailed) apply.fail('sync_failed'); // Preserve the installer's specific failure.
     throw error;
   }

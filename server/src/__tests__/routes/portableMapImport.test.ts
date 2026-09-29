@@ -9,6 +9,8 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance, afterAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 // ── Mock heavy deps BEFORE any import of adminStatus.ts ─────────────────────
 
@@ -783,8 +785,16 @@ describe('confirmed restore transaction and recovery', () => {
     vi.mocked(mapSyncMock.applyVerbatimToMower).mockResolvedValue({ pushed: false, validation, uncertain: true, error: 'write_ack_timeout' });
     expect((await request(server).post(`${url}/apply-verbatim`)).status).toBe(409);
     expect(isMapInstallPending(sn)).toBe(true);
+    const dir = path.join(process.env.STORAGE_PATH!, 'imports', sn, stagingId);
+    const bundle = readFileSync(path.join(dir, 'bundle.json'), 'utf8');
+    const before = readFileSync(path.join(dir, 'server-before.json'), 'utf8');
     expect((await request(server).post(`${url}/cancel`)).status).toBe(200);
-    expect((await request(server).post(`${url}/apply-verbatim`)).status).toBe(404);
+    expect((await request(server).post(`${url}/apply-verbatim`)).status).toBe(409);
+    expect(JSON.parse(readFileSync(path.join(dir, 'state.json'), 'utf8')).state).toBe('CANCELLED');
+    expect((await request(server).post(`${url}/cancel`)).status).toBe(200);
+    expect(await stageVerbatimBundle(sn)).not.toBe(stagingId);
+    expect(readFileSync(path.join(dir, 'bundle.json'), 'utf8')).toBe(bundle);
+    expect(readFileSync(path.join(dir, 'server-before.json'), 'utf8')).toBe(before);
     expect(isMapInstallPending(sn)).toBe(true);
     expect(mapRepo.findByMowerSn(sn).map(r => r.canonical_name)).toEqual(['map8']);
   });

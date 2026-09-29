@@ -34,7 +34,7 @@ describe('frameValidation', () => {
     expect(isFrameUnvalidated(SN)).toBe(true);
   });
 
-  it('preserves the photo reference for CSV-only installs, but invalidates it for frame changes', () => {
+  it('can preserve the photo reference for own-dock recovery, but invalidates it by default', () => {
     const photo = '{"x":1,"y":2}';
     deviceSettingsRepo.upsert(SN, 'photo_dock_pose', photo);
     markFrameUnvalidated(SN, { preservePhotoDock: true });

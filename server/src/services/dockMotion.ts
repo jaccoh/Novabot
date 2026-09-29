@@ -11,6 +11,7 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 export async function guardedDockMove(sn: string, operation: MowerMapOperation,
   input: { action: 'reverse' | 'dock'; distance: number; fromDock: boolean; signature: string },
   check: () => void, setMotion: (id?: string) => void = () => {},
+  beforeMove: () => void = () => {},
 ): Promise<void> {
   check();
   const id = randomUUID();
@@ -27,6 +28,7 @@ export async function guardedDockMove(sn: string, operation: MowerMapOperation,
     if (stopped) throw stopped;
     const supported = operation.reanchor ? armed?.protocol === 'dock-measurement-motion-v3' : ['dock-measurement-motion-v2', 'dock-measurement-motion-v3'].includes(String(armed?.protocol));
     if (armed?.result !== 0 || !supported) throw new Error('The mower needs the current guarded dock recovery protocol. Update extended_commands.py first.');
+    beforeMove();
     const result = await operation.command('dock_measurement_move', { action: input.action, distance_m: input.distance,
       from_dock: input.fromDock, recovery: operation.reanchor === true, motion_id: id, frame_fingerprint: input.signature }, 60_000);
     if (result?.result !== 0 || result.protocol !== armed.protocol || result.frame_fingerprint !== input.signature ||

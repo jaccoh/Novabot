@@ -43,14 +43,17 @@ const advance = async (ms = 100) => { elapsed += ms; await vi.advanceTimersByTim
 
 it.each(['dock-measurement-motion-v2', 'dock-measurement-motion-v3'])('recovery requires native v3 before any movement (%s)', async protocol => {
   h.command.mockResolvedValue({ result: 0, protocol, docked: true, frame_fingerprint: 'fingerprint' });
+  const beforeMove = vi.fn(() => expect(h.command.mock.calls.map(c => c[0])).toEqual(['dock_measurement_control']));
   const move = guardedDockMove('source', { sn: 'source', id: 'lease', reanchor: true, command: h.command },
-    { action: 'dock', distance: 0, fromDock: false, signature: 'fingerprint' }, () => {});
+    { action: 'dock', distance: 0, fromDock: false, signature: 'fingerprint' }, () => {}, undefined, beforeMove);
   if (protocol.endsWith('v2')) {
     await expect(move).rejects.toThrow('Update extended_commands.py');
     expect(h.command).toHaveBeenCalledTimes(1);
+    expect(beforeMove).not.toHaveBeenCalled();
   } else {
     await move;
     expect(h.command).toHaveBeenLastCalledWith('dock_measurement_move', expect.objectContaining({ recovery: true }), 60_000);
+    expect(beforeMove).toHaveBeenCalledOnce();
   }
   expect(h.publish).toHaveBeenLastCalledWith('source', { dock_measurement_control: { action: 'stop', motion_id: expect.any(String) } });
 });

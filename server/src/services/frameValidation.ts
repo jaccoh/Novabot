@@ -27,6 +27,8 @@ export const isMapInstallPending = (sn: string): boolean => installing.has(sn);
 export function markMapInstallPending(sn: string): void {
   deviceSettingsRepo.upsert(sn, INSTALL_KEY, '1');
   installing.add(sn);
+  // Invalidate outstanding map measurements without inventing an origin change.
+  revisions.set(sn, getFrameRevision(sn) + 1);
 }
 /** Only the verified installer, after its server commit, can release this reason. */
 export function clearMapInstallPending(sn: string): void {
@@ -60,8 +62,7 @@ export function loadFrameValidationFromDb(): void {
 
 export function markFrameUnvalidated(sn: string, options: { preservePhotoDock?: boolean } = {}): void {
   unvalidated.add(sn);
-  // A CSV-only install blocks navigation while preserving the same origin/dock.
-  // Restores and re-anchors still invalidate the photographic reference by default.
+  // Restores invalidate the photographic reference; own-dock recovery preserves it.
   if (!options.preservePhotoDock) deviceSettingsRepo.remove(sn, 'photo_dock_pose');
   revisions.set(sn, getFrameRevision(sn) + 1);
   // A restored or re-anchored frame is a new origin: the dock position

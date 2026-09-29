@@ -121,6 +121,9 @@ let corruptAfterWrite = false;
 let slowReadAfterMeasure = false;
 let snapshotConflict = false;
 let requestCount = 0;
+let motionProtocol: string;
+let armResult: number;
+let moveResult: number;
 function snapshot() {
   return { result: 0, snapshot_consistent: true, x3_csv_files: {}, map_files_b64: {}, map_files_text: {}, csv_files: {
     'map0tocharge_unicom.csv': '0.13,-0.52\n0.2,-0.4\n',
@@ -140,13 +143,15 @@ const action = (value: string, extra = {}) => request(server).post(`/api/dashboa
 async function start() { const res = await action('auto'); cycleId = res.body.cycleId; if (cycleId) await action('pulse'); return res; }
 beforeEach(() => {
   vi.restoreAllMocks(); vi.clearAllMocks(); clearPositionTelemetry(SN); clearFrameUnvalidated(SN); clearMapInstallPending(SN); setPendingReanchor(SN, null); handlers.clear(); cycleId = undefined; deviceCache.delete(SN);
-  vi.mocked(guardedDockMove).mockImplementation(async (_sn, operation, input, check) => {
+  vi.mocked(guardedDockMove).mockImplementation(async (_sn, operation, input, check, _setMotion, beforeMove) => {
     expect(operation.reanchor).toBe(true); check();
+    beforeMove?.();
     if (input.action === 'reverse') feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - .6 });
     else feed();
   });
   vi.mocked(settleDockMotion).mockImplementation(async (_sn, docked, check) => { check(); return { x: anchor.x, y: anchor.y - (docked ? 0 : .6), sampledAt: Date.now(), sampleCount: 8, spreadM: 0 }; });
   snapshotConflict = false; requestCount = 0; loadedOrigin = { x: 620859.4, y: 5776239.5, z: 0, utm_zone: 31 };
+  motionProtocol = 'dock-measurement-motion-v3'; armResult = 0; moveResult = 0;
   runtimeOverride = {}; rejectWrite = false; measurementCount = 0; corruptAfterWrite = false; slowReadAfterMeasure = false;
   vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
   for (const row of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(row.map_id);
@@ -157,6 +162,13 @@ beforeEach(() => {
     const [command, raw] = Object.entries(message)[0];
     const params = raw as Record<string, any>;
     let result: Record<string, unknown> = snapshot();
+    if (command === 'dock_measurement_control') result = { result: armResult, protocol: motionProtocol };
+    if (command === 'dock_measurement_move') {
+      expect(isFrameUnvalidated(SN)).toBe(true);
+      const docked = params.action === 'dock';
+      if (docked) feed(); else feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - .6 });
+      result = { result: moveResult, protocol: motionProtocol, docked, frame_fingerprint: params.frame_fingerprint };
+    }
     if (command === 'read_map_files' && requestCount && corruptAfterWrite) result.x3_csv_files = { 'map0_work.csv': 'changed' };
     if (command === 'read_map_files' && slowReadAfterMeasure && measurementCount) {
       // A multi-MB snapshot read after the measurement; telemetry keeps flowing meanwhile.
@@ -221,6 +233,30 @@ it('refuses a docked mower whose localization is not RUNNING, without invalidati
   feed({ localization_state: 'NOT_INITIALIZED', map_position_x: 0, map_position_y: 0 });
   expect((await start()).status).toBe(409);
   expect(isFrameUnvalidated(SN)).toBe(false); expect(guardedDockMove).not.toHaveBeenCalled();
+});
+it.each(['v2', 'arm refused', 'already invalid'])('native protocol preflight preserves the original frame state: %s', async kind => {
+  const actual = await vi.importActual<typeof import('../../services/dockMotion.js')>('../../services/dockMotion.js');
+  vi.mocked(guardedDockMove).mockImplementation(actual.guardedDockMove);
+  vi.useFakeTimers(); feed();
+  if (kind === 'arm refused') armResult = 1;
+  else motionProtocol = 'dock-measurement-motion-v2';
+  if (kind === 'already invalid') markFrameUnvalidated(SN);
+  await start(); await tick(1000);
+  expect((await status()).phase).toBe('error');
+  expect(vi.mocked(publishToExtended).mock.calls.some(c => c[1].dock_measurement_move)).toBe(false);
+  expect(requestCount).toBe(0);
+  loadFrameValidationFromDb();
+  expect(isFrameUnvalidated(SN)).toBe(kind === 'already invalid');
+});
+it.each([0, 1])('native v3 invalidates at movement dispatch and only releases after full verification: move result %s', async result => {
+  const actual = await vi.importActual<typeof import('../../services/dockMotion.js')>('../../services/dockMotion.js');
+  vi.mocked(guardedDockMove).mockImplementation(actual.guardedDockMove);
+  vi.useFakeTimers(); feed(); moveResult = result;
+  await start(); await tick(16_000);
+  expect((await status()).phase).toBe(result ? 'error' : 'done');
+  expect(vi.mocked(publishToExtended).mock.calls.some(c => c[1].dock_measurement_move)).toBe(true);
+  loadFrameValidationFromDb();
+  expect(isFrameUnvalidated(SN)).toBe(result !== 0);
 });
 it('a slow snapshot read after the measurement does not make the measurement stale', async () => {
   vi.useFakeTimers(); feed({ map_position_orientation: 1.606 }); slowReadAfterMeasure = true;

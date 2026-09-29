@@ -2600,9 +2600,8 @@ adminStatusRouter.post(
     if (session.state === 'APPLYING') {
       res.status(409).json({ ok: false, error: 'restore_requires_reconciliation', state: session.state }); return;
     }
-    // An uncertain write may be given up: the staging session goes so a new
-    // bundle can be applied, while the map install stays pending until a
-    // verified apply confirms what the mower holds (review 2026-09-28).
+    // Cancelling an uncertain write frees the active slot but retains its
+    // recovery files. The install stays pending until a verified apply.
     const reason = session.state === 'RECONCILE_REQUIRED' ? 'user cancel after uncertain write' : 'user cancel';
     importAuditRepo.append({ sn, staging_id: stagingId, from_state: session.state, to_state: 'CANCELLED', reason });
     importStaging.cancel(stagingId, 'user cancel');

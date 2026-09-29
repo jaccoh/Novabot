@@ -7,7 +7,7 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { beginMapApply, waitForPlannerBack, type MapApply } from './mapApplyStatus.js';
 import { getPolygonAnchor, snapshotAnchorMatches } from './anchor.js';
 import { freshPositionState } from './positionTelemetry.js';
-import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
+import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending } from './frameValidation.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 
@@ -27,8 +27,8 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
       apply = beginMapApply(sn);
       apply.phase('syncing');
       const anchor = getPolygonAnchor(sn);
-      // A frame left unvalidated by a failed install is repaired by applying
-      // again; only a frame unvalidated for another reason blocks the push.
+      // A pending install may be retried even if frame verification is also
+      // required. A verified CSV install releases only the installation block.
       if (!isOpenNovaMower(sn) || !isDeviceOnline(sn) || !freshPositionState(sn).docked || (isFrameUnvalidated(sn) && !isMapInstallPending(sn)) || !anchor) { apply.fail('sync_failed'); return; }
       const before = await readMowerMapSnapshot(sn, operation);
       const savedDock = snapshotDockPose(before);
@@ -49,7 +49,6 @@ export async function applyMapsToMower(sn: string, offset?: { x: number; y: numb
       if (!expectedCsv.size) { apply.fail('sync_failed'); return; }
       if (!await installVerifiedMapZip(sn, { bytes, expectedCsv, before, anchor }, operation, apply)) return;
       clearMapInstallPending(sn);
-      clearFrameUnvalidated(sn);
       apply.done();
       success = true;
     });
@@ -88,7 +87,7 @@ async function regeneratePerMapFiles(sn: string, operation: MowerMapOperation): 
   }
 }
 
-/** Shared transfer/readback boundary. The caller commits server state before releasing the frame. */
+/** CSV-only transfer/readback. The caller commits server state before clearing install pending. */
 export async function installVerifiedMapZip(
   sn: string,
   input: { bytes: Buffer; expectedCsv: Map<string, string>; before: Record<string, unknown>; anchor: { x: number; y: number } },
@@ -98,7 +97,6 @@ export async function installVerifiedMapZip(
   const { bytes, expectedCsv, before, anchor } = input;
   if (!freshPositionState(sn).docked || !isDeviceOnline(sn)) { apply.fail('sync_failed'); return null; }
   markMapInstallPending(sn);
-  markFrameUnvalidated(sn, { preservePhotoDock: true }); // CSV-only; origin and dock must stay unchanged.
   syncSnapshots.set(operation.id, { sn, bytes });
   try {
     const sync = await operation.command('sync_map', {
@@ -108,13 +106,17 @@ export async function installVerifiedMapZip(
     if (!sync || sync.result !== 0 || sync.restart === false || sync.auto_recharge_restart === false) { apply.fail(sync ? 'sync_failed' : 'sync_timeout'); return null; }
     apply.phase('regenerating');
     const regen = await regeneratePerMapFiles(sn, operation);
-    if (regen !== 'ok') { markFrameUnvalidated(sn, { preservePhotoDock: true }); apply.fail(regen); return null; }
+    if (regen !== 'ok') { apply.fail(regen); return null; }
     apply.phase('settling');
     if (await waitForPlannerBack(sn) === 'timeout') { apply.fail('planner_timeout'); return null; }
     const after = await readMowerMapSnapshot(sn, operation);
+    if (after && (after.pos_json !== before.pos_json || after.charging_station_yaml !== before.charging_station_yaml)) {
+      markFrameUnvalidated(sn, { preservePhotoDock: true });
+      apply.fail('sync_failed'); return null;
+    }
     const actualCsv = after?.csv_files as Record<string, string> | undefined;
     const actualX3 = after?.x3_csv_files as Record<string, string> | undefined;
-    if (!after || !actualCsv || !actualX3 || Object.keys(actualX3).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualX3[name] !== contents) || !snapshotAnchorMatches(after, anchor) || after.pos_json !== before.pos_json || after.charging_station_yaml !== before.charging_station_yaml || Object.keys(actualCsv).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualCsv[name] !== contents)) { apply.fail('sync_failed'); return null; }
+    if (!after || !actualCsv || !actualX3 || Object.keys(actualX3).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualX3[name] !== contents) || !snapshotAnchorMatches(after, anchor) || Object.keys(actualCsv).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualCsv[name] !== contents)) { apply.fail('sync_failed'); return null; }
     return after;
   } finally { syncSnapshots.delete(operation.id); }
 }

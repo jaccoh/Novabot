@@ -3181,18 +3181,22 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
         needsPostWriteCheck = sameReanchorOrigin(JSON.parse(String(before.pos_json)).utm_origin, record.expected);
         if (!needsPostWriteCheck && before.pos_json !== backup.snapshot.pos_json) throw new ReanchorError(M`De oorsprong wijkt af van zowel de backup als het voorgestelde herstel. Eerst onderzoeken.`);
       }
-      // Invalidate only now: the mower answered the correlated read and the
-      // anchors agree. A firmware that cannot follow the procedure, or a lost
-      // start response, never leaves a locked frame behind (review 2026-09-28).
-      markFrameUnvalidated(sn, { preservePhotoDock: true });
-      cycle.revision = getFrameRevision(sn);
-      disarmEdgeWatch(sn, 'own-dock reanchor');
+      let movementStarted = false;
       const roundTrip = async (snapshot: Record<string, unknown>, afterWrite: boolean) => {
         if (!stablePosition(sn, { docked: true })) throw new ReanchorError(M`Begin stilstaand op het eigen dock met vers laadcontact en RTK Fixed.`);
         const signature = frameSnapshotSignature(snapshot);
         const move = (action: 'reverse' | 'dock') => guardedDockMove(sn, operation,
           { action, distance: action === 'reverse' ? .5 : 0, fromDock: action === 'reverse', signature }, check,
-          id => { cycle.motionId = id; });
+          id => { cycle.motionId = id; }, () => {
+            if (movementStarted) return;
+            // The native arm has confirmed v3 and all preflight checks passed.
+            // From the first movement dispatch onward, failures require recovery.
+            markFrameUnvalidated(sn, { preservePhotoDock: true });
+            cycle.revision = getFrameRevision(sn);
+            disarmEdgeWatch(sn, 'own-dock reanchor');
+            movementStarted = true;
+            setReanchor(sn, cycle, 'relock', M`De maaier rijdt begrensd achteruit om de richting te initialiseren. Blijf bij de maaier.`);
+          });
         setReanchor(sn, cycle, 'relock', M`De maaier rijdt begrensd achteruit om de richting te initialiseren. Blijf bij de maaier.`);
         await move('reverse');
         const outside = await settleDockMotion(sn, false, check);

@@ -9,7 +9,7 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { snapshotDockPose, getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { stablePosition } from './positionTelemetry.js';
-import { isFrameUnvalidated, clearFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
+import { isFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
 import { snapshotAnchorMatches } from './anchor.js';
 import { parseMapCsv, mergeConnectorCopies, reconcileMowerCsvTrees } from './portableSnapshot.js';
 import { dockChannelPoints } from './zoneCopy.js';
@@ -188,7 +188,6 @@ export async function repairDockChannels(sn: string, expectedHash?: string) {
       })();
       writeFileSync(path.join(backupDir, 'after.json'), JSON.stringify(after), { flag: 'wx' });
       clearMapInstallPending(sn);
-      clearFrameUnvalidated(sn);
       apply.done();
       return { ok: true, preview, backupId: operation.id, applied: true };
     } catch (error) { apply.fail('sync_failed'); throw error; }

@@ -18,7 +18,7 @@ import { planDockChannelRepair, repairDockChannels, withConfirmedCopyDocks } fro
 import { readMowerMapSnapshot } from '../../services/mowerMapOperation.js';
 import { installVerifiedMapZip } from '../../services/mowerMapApply.js';
 import { mapRepo, deviceSettingsRepo } from '../../db/repositories/index.js';
-import { clearFrameUnvalidated, markFrameUnvalidated, isFrameUnvalidated } from '../../services/frameValidation.js';
+import { clearFrameUnvalidated, clearMapInstallPending, markMapInstallPending, isFrameUnvalidated } from '../../services/frameValidation.js';
 import { clearPositionTelemetry, ingestPositionTelemetry } from '../../services/positionTelemetry.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from '../../services/dockPhotoReference.js';
 import { isDeviceOnline } from '../../mqtt/broker.js';
@@ -51,12 +51,12 @@ function rows(target: string, s = snapshot()) {
 beforeEach(() => {
   vi.clearAllMocks();
   rmSync(path.join(process.env.STORAGE_PATH!, 'dock-channel-repair'), { recursive: true, force: true });
-  clearFrameUnvalidated(sn); clearFrameUnvalidated(source); samples();
+  clearFrameUnvalidated(sn); clearMapInstallPending(sn); clearFrameUnvalidated(source); clearMapInstallPending(source); samples();
   vi.mocked(isDeviceOnline).mockReturnValue(true);
   rows(sn);
   vi.mocked(readMowerMapSnapshot).mockResolvedValue(snapshot());
   vi.mocked(installVerifiedMapZip).mockImplementation(async (_sn, input) => {
-    markFrameUnvalidated(sn);
+    markMapInstallPending(sn);
     const pgm = Buffer.concat([Buffer.from('P5\n3 3\n255\n'), Buffer.alloc(9, 254)]).toString('base64');
     return { ...input.before, csv_files: Object.fromEntries(input.expectedCsv), x3_csv_files: Object.fromEntries(input.expectedCsv),
       map_files_text: { 'map.yaml': 'image: map.pgm', 'map0.yaml': 'image: map0.pgm' },
@@ -124,7 +124,7 @@ it('rejects a changed plan, bad live frame, and uncertain transfer without commi
   await expect(repairDockChannels(sn)).rejects.toThrow('5 cm');
   samples(); const current = await repairDockChannels(sn);
   const before = mapRepo.findByMowerSn(sn);
-  vi.mocked(installVerifiedMapZip).mockImplementation(async () => { markFrameUnvalidated(sn); return null; });
+  vi.mocked(installVerifiedMapZip).mockImplementation(async () => { markMapInstallPending(sn); return null; });
   await expect(repairDockChannels(sn, current.preview.planHash)).rejects.toThrow('niet bevestigd');
   expect(mapRepo.findByMowerSn(sn)).toEqual(before);
   expect(isFrameUnvalidated(sn)).toBe(true);

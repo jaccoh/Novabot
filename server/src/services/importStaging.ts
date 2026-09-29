@@ -141,6 +141,12 @@ export class ImportStagingStore {
     if (s.state === 'APPLYING') {
       throw new Error('Restore outcome must be reconciled before removing its recovery files');
     }
+    // Release the active session, but retain the evidence of an uncertain write.
+    if (s.state === 'RECONCILE_REQUIRED') {
+      this.transition(stagingId, 'CANCELLED', {});
+      return;
+    }
+    if (s.state === 'CANCELLED') return;
     const dir = path.join(this.rootDir, s.sn, s.stagingId);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     this.cache.delete(stagingId);

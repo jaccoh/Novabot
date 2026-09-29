@@ -69,7 +69,17 @@ describe('ImportStagingStore', () => {
     store.transition(uncertain.stagingId, 'APPLYING', { applyResult: { operationId: 'op', bundleHash: 'hash' } });
     expect(() => store.cancel(uncertain.stagingId, 'cancel')).toThrow('reconciled');
     store.transition(uncertain.stagingId, 'RECONCILE_REQUIRED', {});
+    const recovery = path.join(dir, 'SN2', uncertain.stagingId);
+    fs.writeFileSync(path.join(recovery, 'bundle.json'), 'restore bundle');
+    fs.writeFileSync(path.join(recovery, 'server-before.json'), 'server backup');
     store.cancel(uncertain.stagingId, 'cancel');
-    expect(store.get(uncertain.stagingId)).toBeNull();
+    expect(store.get(uncertain.stagingId)?.state).toBe('CANCELLED');
+    expect(store.getActive('SN2')).toBeNull();
+    const restarted = new ImportStagingStore(dir);
+    expect(restarted.get(uncertain.stagingId)?.state).toBe('CANCELLED');
+    restarted.cancel(uncertain.stagingId, 'repeat cancel');
+    expect(restarted.create('SN2', uncertain.context).stagingId).not.toBe(uncertain.stagingId);
+    expect(fs.readFileSync(path.join(recovery, 'bundle.json'), 'utf8')).toBe('restore bundle');
+    expect(fs.readFileSync(path.join(recovery, 'server-before.json'), 'utf8')).toBe('server backup');
   });
 });

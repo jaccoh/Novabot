@@ -13,10 +13,10 @@ vi.mock('../../services/mowerMapApply.js', async original => ({
 }));
 
 import { installZoneCopy } from '../../services/installZoneCopy.js';
-import { applyMapsToMower, installVerifiedMapZip } from '../../services/mowerMapApply.js';
+import { installVerifiedMapZip } from '../../services/mowerMapApply.js';
 import { isMowerMapOperationBusy, withMowerMapOperation } from '../../services/mowerMapOperation.js';
 import { clearPositionTelemetry, ingestPositionTelemetry } from '../../services/positionTelemetry.js';
-import { clearFrameUnvalidated, isFrameUnvalidated, loadFrameValidationFromDb, markFrameUnvalidated } from '../../services/frameValidation.js';
+import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated, loadFrameValidationFromDb, markMapInstallPending } from '../../services/frameValidation.js';
 import { mapRepo, deviceSettingsRepo } from '../../db/repositories/index.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from '../../services/dockPhotoReference.js';
 import { planZoneCopy } from '../../services/zoneCopy.js';
@@ -46,7 +46,7 @@ beforeEach(() => {
   verifyBefore.mockImplementation(async () => ({ verifyRuntime }));
   verifyRuntime.mockImplementation(async () => installedSnapshot);
   rmSync(path.join(process.env.STORAGE_PATH!, 'zone-copy'), { recursive: true, force: true });
-  for (const target of [sn, source]) { clearFrameUnvalidated(target); clearPositionTelemetry(target); }
+  for (const target of [sn, source]) { clearFrameUnvalidated(target); clearMapInstallPending(target); clearPositionTelemetry(target); }
   for (let i = 0; i < 8; i++) ingestPositionTelemetry(sn, {
     rtk_fix_quality: 4, localization_state: 'RUNNING', recharge_status: 9, map_position_x: dock.x, map_position_y: dock.y,
   }, Date.now() - 8000 + i * 1000);
@@ -57,7 +57,7 @@ beforeEach(() => {
     expect(isMowerMapOperationBusy(sn)).toBe(true);
     expect(isMowerMapOperationBusy(source)).toBe(true);
     expect(mapRepo.findBySnAndCanonical(sn, 'map1')).toBeUndefined();
-    markFrameUnvalidated(sn, { preservePhotoDock: true });
+    markMapInstallPending(sn);
     const pgm = Buffer.concat([Buffer.from('P5\n3 3\n255\n'), Buffer.alloc(9, 254)]).toString('base64');
     const slots = [...input.expectedCsv.keys()].filter(n => /^map\d+_work\.csv$/.test(n)).map(n => n.slice(0, -9));
     installedSnapshot = { ...input.before, csv_files: Object.fromEntries(input.expectedCsv), x3_csv_files: Object.fromEntries(input.expectedCsv),
@@ -137,21 +137,22 @@ it('rejects changed runtime before transfer without any device or DB write', asy
   expect(isFrameUnvalidated(sn)).toBe(false);
 });
 
-it.each(['runtime', 'unknown', 'rasters', 'late_files', 'late_rasters'])('keeps failed %s installs out of the DB and prevents generic apply even after restart', async kind => {
+it.each(['runtime', 'unknown', 'rasters', 'late_files', 'late_rasters', 'late_origin'])('keeps failed %s installs out of the DB and keeps navigation blocked even after restart', async kind => {
   const before = mapRepo.findByMowerSn(sn);
   deviceSettingsRepo.upsert(sn, PHOTO_DOCK_KEY, JSON.stringify(dock));
   if (kind === 'runtime') verifyRuntime.mockRejectedValueOnce(new Error('Runtime offset changed'));
   if (kind === 'late_files') verifyRuntime.mockImplementationOnce(async () => ({ ...installedSnapshot, csv_files: csv }));
   if (kind === 'late_rasters') verifyRuntime.mockImplementationOnce(async () => ({ ...installedSnapshot, map_files_b64: {} }));
-  if (kind === 'unknown') vi.mocked(installVerifiedMapZip).mockImplementationOnce(async () => { markFrameUnvalidated(sn, { preservePhotoDock: true }); return null; });
-  if (kind === 'rasters') vi.mocked(installVerifiedMapZip).mockImplementationOnce(async () => { markFrameUnvalidated(sn, { preservePhotoDock: true }); return { map_files_b64: {} }; });
+  if (kind === 'late_origin') verifyRuntime.mockImplementationOnce(async () => ({ ...installedSnapshot, pos_json: '{"origin":"changed"}' }));
+  if (kind === 'unknown') vi.mocked(installVerifiedMapZip).mockImplementationOnce(async () => { markMapInstallPending(sn); return null; });
+  if (kind === 'rasters') vi.mocked(installVerifiedMapZip).mockImplementationOnce(async () => { markMapInstallPending(sn); return { map_files_b64: {} }; });
   await expect(run()).rejects.toThrow();
   expect(mapRepo.findByMowerSn(sn)).toEqual(before);
   expect(getPhotoDockPose(sn)).toEqual(dock);
   expect(isFrameUnvalidated(sn)).toBe(true);
   loadFrameValidationFromDb();
   expect(isFrameUnvalidated(sn)).toBe(true);
-  const calls = vi.mocked(installVerifiedMapZip).mock.calls.length;
-  expect(await applyMapsToMower(sn)).toBe(false);
-  expect(installVerifiedMapZip).toHaveBeenCalledTimes(calls);
+  // Even a verified reinstall cannot release failed runtime/origin validation.
+  clearMapInstallPending(sn);
+  expect(isFrameUnvalidated(sn)).toBe(kind === 'runtime' || kind === 'late_origin');
 });

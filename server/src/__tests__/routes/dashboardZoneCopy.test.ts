@@ -131,7 +131,7 @@ import { join } from 'node:path';
 import archiver from 'archiver';
 import { PassThrough } from 'node:stream';
 import { ingestPositionTelemetry, clearPositionTelemetry } from '../../services/positionTelemetry.js';
-import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated } from '../../services/frameValidation.js';
+import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, isMapInstallPending, isFrameNavBlocked, loadFrameValidationFromDb, getFrameRevision } from '../../services/frameValidation.js';
 const zipFixture = vi.hoisted(() => ({ path: '' }));
 vi.mock('../../services/mapBackup.js', () => ({ regenerateLatestZipFromBackup: () => zipFixture.path, scheduleSnapshot: vi.fn() }));
 import { dashboardRouter } from '../../routes/dashboard.js';
@@ -392,6 +392,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
   afterEach(async () => { await new Promise(r => setTimeout(r, 60)); });
 
   it('meldt syncing → regenerating → settling → klaar', async () => {
+    const revision = getFrameRevision(B);
     const res = await request(server).post(applyUrl).send({});
     expect(res.status).toBe(200);
     await tick();
@@ -402,6 +403,26 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     await answer({ regenerate_per_map_files_respond: { result: 0 } });
     await tick(); ingestPositionTelemetry(B, { error_status: 0 }); await tick(); await tick();
     await vi.waitFor(() => expect(phases()).toEqual(['syncing', 'regenerating', 'settling', '']));
+    expect(getFrameRevision(B)).toBe(revision + 1);
+    expect(isFrameUnvalidated(B)).toBe(false);
+  });
+
+  it.each([false, true])('a verified retry preserves an independent frame block across restart: %s', async needsReanchor => {
+    if (needsReanchor) markFrameUnvalidated(B);
+    markMapInstallPending(B);
+    loadFrameValidationFromDb();
+    ingestPositionTelemetry(B, { map_position_x: dockB.x + 10, map_position_y: dockB.y });
+    expect(isFrameNavBlocked(B, { start_navigation: {} })).toBe(true);
+    expect((await request(server).post(applyUrl).send({})).status).toBe(200);
+    await answer({ sync_map_respond: { result: 0 } });
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); ingestPositionTelemetry(B, { error_status: 0 });
+    await vi.waitFor(() => expect(phases().at(-1)).toBe(''));
+    loadFrameValidationFromDb();
+    expect(isMapInstallPending(B)).toBe(false);
+    expect(isFrameUnvalidated(B)).toBe(needsReanchor);
+    expect(isFrameNavBlocked(B, { start_navigation: {} })).toBe(needsReanchor);
+    expect(vi.mocked(publishToExtended).mock.calls.some(c => c[1].measure_runtime_frame || c[1].reanchor_pos)).toBe(false);
   });
 
   it('can install the first zone after all old channels have been deleted on the mower', async () => {
@@ -424,6 +445,25 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     expect(isFrameUnvalidated(B)).toBe(false);
   });
 
+  it.each(['pos_json', 'charging_station_yaml'] as const)('retains independent frame recovery when %s changes during a CSV install', async file => {
+    let reads = 0;
+    vi.mocked(publishToExtended).mockImplementation((_sn, command) => {
+      if (!command.read_map_files) return;
+      const data = snapshot();
+      if (reads++ > 0) data[file] += '\n';
+      queueMicrotask(() => answer({ read_map_files_respond: data }));
+    });
+    await request(server).post(applyUrl).send({});
+    await answer({ sync_map_respond: { result: 0 } });
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); ingestPositionTelemetry(B, { error_status: 0 });
+    await vi.waitFor(() => expect(phases().at(-1)).toBe('failed'));
+    expect(isMapInstallPending(B)).toBe(true);
+    clearMapInstallPending(B);
+    loadFrameValidationFromDb();
+    expect(isFrameNavBlocked(B, { start_navigation: {} })).toBe(true);
+  });
+
   it('keeps navigation locked if sync reports a failed restart despite result zero', async () => {
     await request(server).post(applyUrl).send({});
     await answer({ sync_map_respond: { result: 0, restart: false } });
@@ -436,10 +476,13 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     const retry = await request(server).post(applyUrl).send({});
     expect(retry.status).toBe(200);
     await vi.waitFor(() => expect(vi.mocked(publishToExtended).mock.calls.filter(c => c[1].sync_map)).toHaveLength(2));
-    await answer({ sync_map_respond: { result: 0, restart: false } });
-    await vi.waitFor(() => expect(phases().at(-1)).toBe('failed'));
+    await answer({ sync_map_respond: { result: 0 } });
+    await answer({ regenerate_per_map_files_respond: { result: 0 } });
+    await tick(); ingestPositionTelemetry(B, { error_status: 0 });
+    await vi.waitFor(() => expect(phases().at(-1)).toBe(''));
     expect(vi.mocked(publishToExtended).mock.calls.length).toBeGreaterThan(commands);
-    expect(isFrameUnvalidated(B)).toBe(true);
+    loadFrameValidationFromDb();
+    expect(isFrameUnvalidated(B)).toBe(false);
   });
 
   it('blocks concurrent writes and keeps planner timeout failed with navigation locked', async () => {
