@@ -5,7 +5,7 @@ import { stablePosition } from './positionTelemetry.js';
 import { readMowerMapSnapshot, withMowerMapOperation } from './mowerMapOperation.js';
 import { frameSnapshotSignature } from './copyAlignment.js';
 import { disarmEdgeWatch } from './scheduleRunner.js';
-import { guardedDockMove, settleDockMotion } from './dockMotion.js';
+import { guardedDockMove, recallDockedPose, settleDockMotion } from './dockMotion.js';
 
 type Phase = 'starting' | 'checking' | 'docking' | 'verifying' | 'done' | 'error';
 export type DockReturnView = { cycleId: string; sn: string; phase: Phase; error?: string };
@@ -63,6 +63,10 @@ async function run(c: Cycle): Promise<void> {
     while (!Number.isFinite(c.operatorAt) && !c.cancelled && performance.now() - c.createdAt < 5_000) await sleep(100);
     check(c);
     c.phase = 'checking';
+    // The return is bounded by the pose the mower measured when it left this
+    // dock in the current frame; saved map files may be shifted against it.
+    const chargePose = recallDockedPose(c.sn, c.revision);
+    if (!chargePose) throw new Error('No departure pose is known for this map frame. Return the mower to its dock with the joystick.');
     await withMowerMapOperation(c.sn, async operation => {
       operation.onManualControl = () => stop(c, 'Dock return stopped by manual control.');
       timer = setInterval(() => { try { check(c); } catch { /* cancellation is latched */ } }, 500);
@@ -73,7 +77,7 @@ async function run(c: Cycle): Promise<void> {
       check(c);
       disarmEdgeWatch(c.sn, 'supervised camera dock return');
       c.phase = 'docking';
-      await guardedDockMove(c.sn, operation, { action: 'dock', distance: 0, fromDock: false, signature },
+      await guardedDockMove(c.sn, operation, { action: 'dock', distance: 0, fromDock: false, signature, chargePose },
         () => check(c), id => { c.motionId = id; });
       check(c);
       c.phase = 'verifying';

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ online: true, docked: true, running: true, fixed: true, poseX: 0, publish: vi.fn(), command: vi.fn(), capture: vi.fn(), consume: vi.fn(), measureDock: vi.fn(), manual: undefined as (() => void) | undefined }));
 vi.mock('../../mqtt/broker.js', () => ({ isDeviceOnline: () => h.online }));
 vi.mock('../../mqtt/mapSync.js', () => ({ publishToExtended: h.publish }));
-vi.mock('../../services/frameValidation.js', () => ({ isFrameUnvalidated: () => false }));
+vi.mock('../../services/frameValidation.js', () => ({ isFrameUnvalidated: () => false, getFrameRevision: () => 0 }));
 vi.mock('../../services/positionTelemetry.js', () => ({ freshPositionState: () => ({ docked: h.docked, running: h.running, fixed: h.fixed, pose: { x: h.poseX, y: 0 } }), stablePosition: (_sn: string, options?: { docked?: boolean }) => !h.fixed || options?.docked && !h.docked ? null : ({ x: h.poseX, y: 0 }) }));
 vi.mock('../../services/dockPhotoReference.js', () => ({ snapshotDockPose: () => ({ x: 0, y: 0, orientation: 0 }) }));
 vi.mock('../../services/reanchorGps.js', () => ({ measureReanchorDock: h.measureDock }));
@@ -18,7 +18,10 @@ vi.mock('../../services/copyAlignment.js', () => ({
   getCopyAlignment: () => ({ alignmentId: 'alignment', phase: 'target_first', captures: { source: [] } }),
 }));
 import { startSourceDockCycle, sourceDockCycle } from '../../services/sourceDockCycle.js';
-import { guardedDockMove } from '../../services/dockMotion.js';
+import { guardedDockMove, recallDockedPose } from '../../services/dockMotion.js';
+const LEFT_FROM = { x: 1, y: 2, yaw: 3 };
+const native = (params: Record<string, unknown>, docked: boolean) => ({ result: 0, protocol: 'dock-measurement-motion-v4', docked, frame_fingerprint: 'fingerprint',
+  ...(params.action === 'reverse' && params.from_dock ? { start_pose: LEFT_FROM } : {}) });
 let id: string, elapsed: number;
 const tick = (action: 'pulse' | 'stop' = 'pulse') => sourceDockCycle(id, 'target', 'source', action);
 beforeEach(() => {
@@ -29,7 +32,7 @@ beforeEach(() => {
   h.measureDock.mockReset().mockImplementation(async () => ({ dist: 0, latestDist: 0, runtime: { x: 0, y: 0, capture_started: Date.now(), capture_finished: Date.now() - 1 } }));
   h.command.mockImplementation(async (cmd, params) => {
     if (cmd === 'dock_measurement_move') { h.docked = params.action === 'dock'; h.poseX = 0; }
-    return { result: 0, protocol: 'dock-measurement-motion-v2', docked: h.docked, frame_fingerprint: 'fingerprint' };
+    return native(params, h.docked);
   });
 });
 afterEach(async () => {
@@ -41,35 +44,59 @@ afterEach(async () => {
 const start = () => startSourceDockCycle(id, 'target', 'source', 'map0');
 const advance = async (ms = 100) => { elapsed += ms; await vi.advanceTimersByTimeAsync(ms); };
 
-it.each(['dock-measurement-motion-v2', 'dock-measurement-motion-v3'])('recovery requires native v3 before any movement (%s)', async protocol => {
+it.each(['dock-measurement-motion-v3', 'dock-measurement-motion-v4'])('docking requires native v4 before any movement (%s)', async protocol => {
   h.command.mockResolvedValue({ result: 0, protocol, docked: true, frame_fingerprint: 'fingerprint' });
   const beforeMove = vi.fn(() => expect(h.command.mock.calls.map(c => c[0])).toEqual(['dock_measurement_control']));
   const move = guardedDockMove('source', { sn: 'source', id: 'lease', reanchor: true, command: h.command },
-    { action: 'dock', distance: 0, fromDock: false, signature: 'fingerprint' }, () => {}, undefined, beforeMove);
-  if (protocol.endsWith('v2')) {
+    { action: 'dock', distance: 0, fromDock: false, signature: 'fingerprint', chargePose: LEFT_FROM }, () => {}, undefined, beforeMove);
+  if (protocol.endsWith('v3')) {
     await expect(move).rejects.toThrow('Update extended_commands.py');
     expect(h.command).toHaveBeenCalledTimes(1);
     expect(beforeMove).not.toHaveBeenCalled();
   } else {
     await move;
-    expect(h.command).toHaveBeenLastCalledWith('dock_measurement_move', expect.objectContaining({ recovery: true }), 60_000);
+    // The visual approach took 35s live; the native lease allows 120s.
+    expect(h.command).toHaveBeenLastCalledWith('dock_measurement_move', expect.objectContaining({ recovery: true, charge_pose: LEFT_FROM }), 100_000);
     expect(beforeMove).toHaveBeenCalledOnce();
   }
   expect(h.publish).toHaveBeenLastCalledWith('source', { dock_measurement_control: { action: 'stop', motion_id: expect.any(String) } });
 });
 
-it('performs two distance-limited reverse steps, validated captures and a confirmed visual dock in order', async () => {
+it('never asks the mower to dock without the pose it measured on departure', async () => {
+  await expect(guardedDockMove('source', { sn: 'source', id: 'lease', reanchor: true, command: h.command },
+    { action: 'dock', distance: 0, fromDock: false, signature: 'fingerprint' }, () => {})).rejects.toThrow('measured dock pose');
+  expect(h.command).not.toHaveBeenCalled();
+});
+
+it('performs a 1 m departure, a second step, validated captures and a visual dock back to the departure pose', async () => {
   const events: string[] = [];
   h.command.mockImplementation(async (cmd, params) => {
     events.push(`${cmd}:${params.action}`);
     if (cmd === 'dock_measurement_move') h.docked = params.action === 'dock';
-    return { result: 0, protocol: 'dock-measurement-motion-v2', docked: h.docked, frame_fingerprint: 'fingerprint' };
+    return native(params, h.docked);
   });
   h.capture.mockImplementation(async (_id, side, owner) => { expect(side).toBe('source'); expect(owner.sn).toBe('source'); events.push('capture'); });
   start(); tick(); await advance();
   expect(tick()).toMatchObject({ phase: 'done', alignment: { phase: 'target_first' } });
   expect(events).toEqual(['dock_measurement_control:arm', 'dock_measurement_move:reverse', 'capture', 'dock_measurement_control:arm', 'dock_measurement_move:reverse', 'capture', 'dock_measurement_control:arm', 'dock_measurement_move:dock']);
-  expect(h.command.mock.calls.filter(([cmd]) => cmd === 'dock_measurement_move').map(([, p]) => [p.distance_m, p.from_dock])).toEqual([[.5, true], [.2, false], [0, false]]);
+  const moves = h.command.mock.calls.filter(([cmd]) => cmd === 'dock_measurement_move').map(([, p]) => p);
+  // auto_recharge_server starts its visual approach without nav2 or a step-back
+  // only 0.87..1.47 m in front of the charge pose it is given.
+  expect(moves.map(p => [p.distance_m, p.from_dock])).toEqual([[1, true], [.2, false], [0, false]]);
+  expect(moves[0]).not.toHaveProperty('charge_pose');
+  expect(moves[2].charge_pose).toEqual(LEFT_FROM);
+  expect(recallDockedPose('source', 0)).toEqual(LEFT_FROM);
+});
+
+it('stops after a departure whose response lacks the pose it left from', async () => {
+  h.command.mockImplementation(async (cmd, params) => {
+    if (cmd === 'dock_measurement_move') h.docked = params.action === 'dock';
+    return { ...native(params, h.docked), start_pose: undefined };
+  });
+  start(); tick(); await advance();
+  expect(tick('stop')).toMatchObject({ phase: 'error', error: expect.stringContaining('pose') });
+  expect(h.command.mock.calls.filter(([cmd]) => cmd === 'dock_measurement_move')).toHaveLength(1);
+  expect(h.capture).not.toHaveBeenCalled();
 });
 
 it('never moves when the start HTTP response was lost and no browser pulse arrives', async () => {
@@ -93,11 +120,11 @@ it.each(['stop', 'manual', 'disconnect', 'expired-browser', 'measurement-failure
 
 it('sends a stop for an in-flight movement and retains the cycle until its response', async () => {
   let release!: (value: unknown) => void;
-  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v2' } : new Promise(resolve => { release = resolve; }));
+  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v4' } : new Promise(resolve => { release = resolve; }));
   start(); tick(); await advance();
   expect(tick('stop').phase).toBe('reverse_first');
   expect(h.publish).toHaveBeenLastCalledWith('source', { dock_measurement_control: { action: 'stop', motion_id: expect.any(String) } });
-  release({ result: 0, protocol: 'dock-measurement-motion-v2' }); await advance();
+  release({ result: 0, protocol: 'dock-measurement-motion-v4', start_pose: LEFT_FROM }); await advance();
   expect(tick('stop').phase).toBe('error'); expect(h.capture).not.toHaveBeenCalled();
 });
 
@@ -159,7 +186,7 @@ it('discards both captures if the final file or dock check fails', async () => {
 
 it('surfaces a failed native cancellation instead of hiding it behind the operator Stop label', async () => {
   let release!: (value: unknown) => void;
-  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v2' } : new Promise(resolve => { release = resolve; }));
+  h.command.mockImplementation(async cmd => cmd === 'dock_measurement_control' ? { result: 0, protocol: 'dock-measurement-motion-v4' } : new Promise(resolve => { release = resolve; }));
   start(); tick(); await advance(); tick('stop');
   release({ result: 1, error: 'visual docking cancellation not confirmed; use the mower STOP button' });
   await advance();

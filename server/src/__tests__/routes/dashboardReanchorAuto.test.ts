@@ -106,12 +106,16 @@ app.use('/api/dashboard', dashboardRouter);
 const server = app.listen(0);
 afterAll(() => new Promise<void>(r => { server.close(() => r()); }));
 
-vi.mock('../../services/dockMotion.js', () => ({ guardedDockMove: vi.fn(), settleDockMotion: vi.fn() }));
+vi.mock('../../services/dockMotion.js', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../services/dockMotion.js')>()), guardedDockMove: vi.fn(), settleDockMotion: vi.fn(),
+}));
 
 let cycleId: string | undefined;
 const SN = 'LFIN_REANCHOR_TEST';
 const data = { battery_state: 'CHARGING', recharge_status: 9, rtk_fix_quality: 4, rtk_latitude: 52.1234567, rtk_longitude: 4.7654321, map_position_x: 0.13, map_position_y: -0.52, localization_state: 'RUNNING' };
 const anchor = { x: 0.13, y: -0.52 };
+// The pose the mower reports it left from, in its own current frame.
+const LEFT_FROM = { x: anchor.x, y: anchor.y, yaw: 1.5 };
 const handlers = new Set<(data: Record<string, unknown>) => void>();
 let loadedOrigin: { x: number; y: number; z: number; utm_zone: number };
 let runtimeOverride: Record<string, unknown>;
@@ -146,12 +150,19 @@ beforeEach(() => {
   vi.mocked(guardedDockMove).mockImplementation(async (_sn, operation, input, check, _setMotion, beforeMove) => {
     expect(operation.reanchor).toBe(true); check();
     beforeMove?.();
-    if (input.action === 'reverse') feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - .6 });
-    else feed();
+    if (input.action === 'reverse') {
+      expect(input.distance).toBe(1);
+      feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - 1 });
+      return { startPose: LEFT_FROM };
+    }
+    // The return is bounded by the pose measured at departure, never by saved files.
+    expect(input.chargePose).toEqual(LEFT_FROM);
+    feed();
+    return {};
   });
   vi.mocked(settleDockMotion).mockImplementation(async (_sn, docked, check) => { check(); return { x: anchor.x, y: anchor.y - (docked ? 0 : .6), sampledAt: Date.now(), sampleCount: 8, spreadM: 0 }; });
   snapshotConflict = false; requestCount = 0; loadedOrigin = { x: 620859.4, y: 5776239.5, z: 0, utm_zone: 31 };
-  motionProtocol = 'dock-measurement-motion-v3'; armResult = 0; moveResult = 0;
+  motionProtocol = 'dock-measurement-motion-v4'; armResult = 0; moveResult = 0;
   runtimeOverride = {}; rejectWrite = false; measurementCount = 0; corruptAfterWrite = false; slowReadAfterMeasure = false;
   vi.spyOn(performance, 'now').mockImplementation(() => Date.now());
   for (const row of mapRepo.findByMowerSn(SN)) mapRepo.deleteById(row.map_id);
@@ -166,8 +177,8 @@ beforeEach(() => {
     if (command === 'dock_measurement_move') {
       expect(isFrameUnvalidated(SN)).toBe(true);
       const docked = params.action === 'dock';
-      if (docked) feed(); else feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - .6 });
-      result = { result: moveResult, protocol: motionProtocol, docked, frame_fingerprint: params.frame_fingerprint };
+      if (docked) { expect(params.charge_pose).toEqual(LEFT_FROM); feed(); } else feed({ battery_state: 'NORMAL', recharge_status: 0, map_position_y: anchor.y - 1 });
+      result = { result: moveResult, protocol: motionProtocol, docked, frame_fingerprint: params.frame_fingerprint, ...(docked ? {} : { start_pose: LEFT_FROM }) };
     }
     if (command === 'read_map_files' && requestCount && corruptAfterWrite) result.x3_csv_files = { 'map0_work.csv': 'changed' };
     if (command === 'read_map_files' && slowReadAfterMeasure && measurementCount) {
@@ -234,12 +245,12 @@ it('refuses a docked mower whose localization is not RUNNING, without invalidati
   expect((await start()).status).toBe(409);
   expect(isFrameUnvalidated(SN)).toBe(false); expect(guardedDockMove).not.toHaveBeenCalled();
 });
-it.each(['v2', 'arm refused', 'already invalid'])('native protocol preflight preserves the original frame state: %s', async kind => {
+it.each(['v3', 'arm refused', 'already invalid'])('native protocol preflight preserves the original frame state: %s', async kind => {
   const actual = await vi.importActual<typeof import('../../services/dockMotion.js')>('../../services/dockMotion.js');
   vi.mocked(guardedDockMove).mockImplementation(actual.guardedDockMove);
   vi.useFakeTimers(); feed();
   if (kind === 'arm refused') armResult = 1;
-  else motionProtocol = 'dock-measurement-motion-v2';
+  else motionProtocol = 'dock-measurement-motion-v3';
   if (kind === 'already invalid') markFrameUnvalidated(SN);
   await start(); await tick(1000);
   expect((await status()).phase).toBe('error');
@@ -274,13 +285,14 @@ it('initializes heading first, writes once, then repeats the dock cycle and fres
   vi.useFakeTimers(); feed({ map_position_orientation: 1.606 });
   const oldX = loadedOrigin.x, move = vi.mocked(guardedDockMove).getMockImplementation()!;
   vi.mocked(guardedDockMove).mockImplementationOnce(async (...args) => {
-    expect(measurementCount).toBe(0); expect(requestCount).toBe(0); await move(...args);
+    expect(measurementCount).toBe(0); expect(requestCount).toBe(0); return move(...args);
   });
   await start(); expect((await action('auto')).status).toBe(409); await tick(16_000);
   expect((await status()).phase).toBe('done'); expect(isFrameUnvalidated(SN)).toBe(false);
   expect(getPendingReanchor(SN)).toBeUndefined(); expect(loadedOrigin.x).toBeCloseTo(oldX + .145, 8);
   expect(requestCount).toBe(1); expect(measurementCount).toBe(2);
   expect(vi.mocked(guardedDockMove).mock.calls.map(c => c[2].action)).toEqual(['reverse', 'dock', 'reverse', 'dock']);
+  expect(vi.mocked(guardedDockMove).mock.calls.map(c => c[2].chargePose)).toEqual([undefined, LEFT_FROM, undefined, LEFT_FROM]);
   expect(publishToDevice).not.toHaveBeenCalled();
 });
 it('a matching frame still requires preparation but no origin write, and new invalidation clears old success', async () => {
@@ -305,7 +317,7 @@ it('persists the post-write trip across cancellation and restart, without a dupl
   const move = vi.mocked(guardedDockMove).getMockImplementation()!;
   vi.mocked(guardedDockMove).mockImplementation(async (...args) => {
     if (requestCount) throw new Error('operator interrupted post-write departure');
-    await move(...args);
+    return move(...args);
   });
   await start(); await tick(9000);
   expect((await status()).phase).toBe('error'); expect(requestCount).toBe(1);

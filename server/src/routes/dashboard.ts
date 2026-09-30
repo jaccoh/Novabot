@@ -26,7 +26,7 @@ import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } fro
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
 import { softRestartBlockedReason, sendSoftRestart } from '../services/softRestart.js';
 import { frameSnapshotSignature } from '../services/copyAlignment.js';
-import { guardedDockMove, settleDockMotion } from '../services/dockMotion.js';
+import { guardedDockMove, rememberDockedPose, settleDockMotion, type DockPose } from '../services/dockMotion.js';
 import { assertReanchorFiles, measureReanchorDock, REANCHOR_TOLERANCE_M, type Origin } from '../services/reanchorGps.js';
 import { compareMapRowsByCanonical } from '../utils/mapOrder.js';
 import crypto from 'crypto';
@@ -3206,8 +3206,10 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
         const departure = freshPositionState(sn);
         if (!departure.docked || !departure.running || !departure.pose) throw new ReanchorError(M`Begin stilstaand op het eigen dock met vers laadcontact en lokalisatie.`);
         const signature = frameSnapshotSignature(snapshot);
-        const move = (action: 'reverse' | 'dock') => guardedDockMove(sn, operation,
-          { action, distance: action === 'reverse' ? .5 : 0, fromDock: action === 'reverse', signature }, check,
+        // 1 m puts the mower inside the window where auto_recharge_server starts
+        // its visual approach directly (0.87..1.47 m from the departure pose).
+        const move = (action: 'reverse' | 'dock', chargePose?: DockPose) => guardedDockMove(sn, operation,
+          { action, distance: action === 'reverse' ? 1 : 0, fromDock: action === 'reverse', signature, ...(chargePose ? { chargePose } : {}) }, check,
           id => { cycle.motionId = id; }, () => {
             if (movementStarted) return;
             // The native arm has confirmed v3 and all preflight checks passed.
@@ -3219,11 +3221,12 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
             setReanchor(sn, cycle, 'relock', M`De maaier rijdt begrensd achteruit om de richting te initialiseren. Blijf bij de maaier.`);
           });
         setReanchor(sn, cycle, 'relock', M`De maaier rijdt begrensd achteruit om de richting te initialiseren. Blijf bij de maaier.`);
-        await move('reverse');
+        const left = await move('reverse');
+        rememberDockedPose(sn, left.startPose!, cycle.revision);
         const outside = await settleDockMotion(sn, false, check);
         if (afterWrite && Math.hypot(outside.x - anchor.x, outside.y - anchor.y) < .4) throw new ReanchorError(M`Na de oorsprongwijziging is geen verse gelokaliseerde positie minstens 40 cm van het dock gemeten.`);
         setReanchor(sn, cycle, 'dock', M`De maaier keert met de camera terug op het eigen dock. Blijf toezicht houden.`);
-        await move('dock');
+        await move('dock', left.startPose);
         await settleDockMotion(sn, true, check);
         const current = await readMowerMapSnapshot(sn, operation);
         assertReanchorFiles(snapshot, current);

@@ -4811,9 +4811,9 @@ def handle_set_pos_origin(params, respond):
 # cancellation stay outside the map lock so a running command can always stop.
 _DOCK_MOTIONS = {}
 _DOCK_MOTION_LOCK = threading.Lock()
-_DOCK_MOTION_PROTOCOL = "dock-measurement-motion-v3"
+_DOCK_MOTION_PROTOCOL = "dock-measurement-motion-v4"
 # A live snapshot delayed the first 0.5s server heartbeat by 2.86s; keep a
-# bounded margin below the server's 5s operator lease and the 0.7m motion cap.
+# bounded margin below the server's 5s operator lease and the 1.2m motion cap.
 _DOCK_MOTION_HEARTBEAT_TIMEOUT = 4
 
 
@@ -4855,7 +4855,9 @@ def handle_dock_measurement_control(params, respond):
 
 def _dock_motion_lease(state):
     now = time.monotonic()
-    if state["cancelled"] or now - state["heartbeat"] > _DOCK_MOTION_HEARTBEAT_TIMEOUT or now - state["created"] > 60:
+    # 120s covers a 1.2m departure and a full visual dock (35s live) under the
+    # server's 100s command timeout; the heartbeat stops anything earlier.
+    if state["cancelled"] or now - state["heartbeat"] > _DOCK_MOTION_HEARTBEAT_TIMEOUT or now - state["created"] > 120:
         state["cancelled"] = True
         raise ValueError("dock measurement stopped or heartbeat expired")
 
@@ -4882,14 +4884,34 @@ def _dock_motion_chassis_ok(data, allow_charge_stop=False):
                     not (allow_charge_stop and k in ("warning_charge_stop", "error_charge_stop"))))
 
 
-def _recovery_marker_forward(marker):
-    """A shifted map cannot bound recovery docking; use the nearby front pattern."""
+def _dock_marker_forward(marker):
+    """Bound the visual approach by the front pattern, never by a possibly shifted map."""
     if marker["header"].get("frame_id") != "aruco_tag":
         raise ValueError("unexpected dock pattern frame")
     point, _ = _marker_inverse(_marker_pose(marker["pose"]))
-    if not (0 < point[0] <= 1.2 and abs(point[1]) <= .2 and abs(point[2]) <= .5):
+    if not (0 < point[0] <= 1.9 and abs(point[1]) <= .35 and abs(point[2]) <= .5):
         raise ValueError("dock pattern is not close and in front of the mower")
     return point[0]
+
+
+# auto_recharge_server INIT_CHECK (decompiled, research/documents/auto-recharge-server-decompile.md):
+# aligned within 0.51 rad and 0.87..1.47 m from the charge pose it starts the visual
+# approach directly; nearer it steps back first (MOVE_ROBOT_FAIL on this chassis),
+# farther it navigates in the map frame. Keep a margin on all three limits.
+_DOCK_START_MIN, _DOCK_START_MAX, _DOCK_START_ANGLE = .95, 1.40, .40
+
+
+def _dock_start_window(dock, pose):
+    """None when the native visual approach starts here without nav2 or step-back."""
+    if not all(math.isfinite(v) for v in pose):
+        return "mower pose unavailable"
+    dis = math.hypot(dock[0] - pose[0], dock[1] - pose[1])
+    if not _DOCK_START_MIN <= dis <= _DOCK_START_MAX:
+        return "mower must stand %.2f-%.2f m in front of its measured dock pose (now %.2f m)" % (_DOCK_START_MIN, _DOCK_START_MAX, dis)
+    bearing = math.atan2(dock[1] - pose[1], dock[0] - pose[0])
+    if abs(_marker_angle_delta(pose[2], dock[2])) > _DOCK_START_ANGLE or abs(_marker_angle_delta(bearing, dock[2])) > _DOCK_START_ANGLE:
+        return "mower must face its measured dock pose along the docking axis"
+    return None
 
 
 def handle_dock_measurement_move(params, respond):
@@ -4903,8 +4925,17 @@ def handle_dock_measurement_move(params, respond):
     if action not in ("reverse", "dock") or not isinstance(from_dock, bool):
         raise ValueError("invalid dock measurement movement")
     if (isinstance(distance, bool) or not isinstance(distance, (int, float)) or not math.isfinite(distance) or
-            (action == "reverse" and not (.15 <= distance <= .7)) or (action == "dock" and (distance != 0 or from_dock))):
+            (action == "reverse" and not (.15 <= distance <= 1.2)) or (action == "dock" and (distance != 0 or from_dock))):
         raise ValueError("invalid dock measurement distance")
+    # The dock pose the server measured in the mower's current frame; the native
+    # approach is bounded by it and the front pattern, never by saved map files.
+    charge = params.get("charge_pose")
+    if action == "dock":
+        if not isinstance(charge, dict) or not all(isinstance(charge.get(k), (int, float)) and not isinstance(charge.get(k), bool) and math.isfinite(charge.get(k)) for k in ("x", "y", "yaw")):
+            raise ValueError("dock requires the measured docked pose (charge_pose x, y, yaw)")
+        charge = tuple(float(charge[k]) for k in ("x", "y", "yaw"))
+    elif charge is not None:
+        raise ValueError("charge_pose is only valid for dock")
     with _DOCK_MOTION_LOCK:
         state = _DOCK_MOTIONS.get(params.get("motion_id"))
         if state is None or state["used"]:
@@ -4924,10 +4955,12 @@ def handle_dock_measurement_move(params, respond):
     from rclpy.qos import QoSProfile, ReliabilityPolicy
     from rosidl_runtime_py.utilities import get_message
     from rosidl_runtime_py.convert import message_to_ordereddict
-    from geometry_msgs.msg import Twist
+    from rclpy.action import ActionClient
+    from geometry_msgs.msg import Twist, PoseStamped
     from std_msgs.msg import UInt8
     from std_srvs.srv import Trigger, SetBool
     from action_msgs.srv import CancelGoal
+    from automatic_recharge_msgs.action import AutoCharging
 
     context = Context()
     rclpy.init(context=context)
@@ -4939,7 +4972,11 @@ def handle_dock_measurement_move(params, respond):
     cmd = node.create_publisher(Twist, "/cmd_vel", 1)
     lock = node.create_publisher(UInt8, "/release_charge_lock", 1)
     lamp = node.create_publisher(UInt8, "/led_set", 1)
-    clients = {name: node.create_client(Trigger, "/robot_decision/" + name) for name in ("cancel_recharge", "auto_recharge")}
+    # Departure still tells robot_decision to leave its charging state. Docking
+    # drives the native visual docker directly: robot_decision's auto_recharge
+    # Trigger sends a goal without a charge pose, which always steps back first.
+    cancel_recharge = node.create_client(Trigger, "/robot_decision/cancel_recharge")
+    docker = ActionClient(node, AutoCharging, "/auto_charging")
     cancel_goal = node.create_client(CancelGoal, "/auto_charging/_action/cancel_goal")
     detector = node.create_client(SetBool, "/enable_aruco_localization")
     camera_until = None
@@ -4949,6 +4986,9 @@ def handle_dock_measurement_move(params, respond):
     approach_start = None
     last_marker_forward = float("inf")
     lamp_on = False
+    result_future = None
+    native_code = None
+    native_finished_at = None
 
     def record(topic, msg):
         now, data = time.monotonic(), message_to_ordereddict(msg)
@@ -4998,24 +5038,22 @@ def handle_dock_measurement_move(params, respond):
         if not 0 <= time.time() - stamp <= .5:
             raise ValueError("odometry source stamp stale")
         p = pose()
-        boundary = approach_start if recovery else dock
-        if not all(math.isfinite(v) for v in p) or (not from_dock and boundary is not None and math.hypot(p[0] - boundary[0], p[1] - boundary[1]) > 1.15):
+        boundary = charge if action == "dock" else approach_start if recovery else dock
+        if not all(math.isfinite(v) for v in p) or (not from_dock and boundary is not None and math.hypot(p[0] - boundary[0], p[1] - boundary[1]) > 1.6):
             raise ValueError("mower left the bounded dock approach")
         return robot, odom, p
 
     def spin(seconds=.05):
         executor.spin_once(timeout_sec=seconds)
 
-    def service(client, request, check=True):
-        if not client.wait_for_service(timeout_sec=1):
-            raise ValueError("dock service unavailable")
-        future = client.call_async(request)
+    def settle(future, check=True):
+        """Spin until the future completes (3s); the first guard fault wins."""
         end = time.monotonic() + 3
         interrupted = None
         while not future.done() and time.monotonic() < end:
             spin()
-            # Finish the request before cancelling recharge in finally; never
-            # leave an accepted start behind an earlier cancel on normal exit.
+            # Finish the request before cancelling in finally; never leave an
+            # accepted start behind an earlier cancel on normal exit.
             if check and interrupted is None:
                 try:
                     guard(docking=dock_attempted)
@@ -5025,10 +5063,16 @@ def handle_dock_measurement_move(params, respond):
                     cmd.publish(Twist())
         if interrupted:
             raise interrupted
-        if not future.done() or future.result() is None or not future.result().success:
-            raise ValueError("dock service did not confirm")
         if check:
             _dock_motion_lease(state)
+        return future.result() if future.done() else None
+
+    def service(client, request, check=True):
+        if not client.wait_for_service(timeout_sec=1):
+            raise ValueError("dock service unavailable")
+        response = settle(client.call_async(request), check)
+        if response is None or not response.success:
+            raise ValueError("dock service did not confirm")
 
     def stationary(odom):
         # This firmware can report zero twist while driving. Require fresh
@@ -5043,19 +5087,16 @@ def handle_dock_measurement_move(params, respond):
         return all(math.isfinite(float(v)) and abs(float(v)) < .025 for part in ("linear", "angular") for v in twist[part].values())
 
     def cancel_docking():
-        try:
-            service(clients["cancel_recharge"], Trigger.Request(), check=False)
-        finally:
-            # Cancel the native action as well, even if robot_decision's service
-            # failed. A zero goal id is ROS's cancellation of all active goals.
-            if not cancel_goal.wait_for_service(timeout_sec=1):
-                raise ValueError("visual docking cancellation unavailable")
-            future = cancel_goal.call_async(CancelGoal.Request())
-            deadline = time.monotonic() + 3
-            while not future.done() and time.monotonic() < deadline:
-                cmd.publish(Twist()); spin()
-            if not future.done() or future.result() is None or future.result().return_code != 0:
-                raise ValueError("visual docking cancellation not confirmed; use the mower STOP button")
+        # A zero goal id is ROS's cancellation of all active goals on /auto_charging;
+        # the native server then publishes its own zero twist (TASK_CANCELLED).
+        if not cancel_goal.wait_for_service(timeout_sec=1):
+            raise ValueError("visual docking cancellation unavailable")
+        future = cancel_goal.call_async(CancelGoal.Request())
+        deadline = time.monotonic() + 3
+        while not future.done() and time.monotonic() < deadline:
+            cmd.publish(Twist()); spin()
+        if not future.done() or future.result() is None or future.result().return_code != 0:
+            raise ValueError("visual docking cancellation not confirmed; use the mower STOP button")
 
     try:
         topics = (("/robot_decision/map_position", "geometry_msgs/msg/Pose"),
@@ -5087,7 +5128,7 @@ def handle_dock_measurement_move(params, respond):
             raise ValueError("unexpected dock contact at movement start")
         if action == "reverse":
             if from_dock:
-                service(clients["cancel_recharge"], Trigger.Request())
+                service(cancel_recharge, Trigger.Request())
                 for _ in range(5):
                     guard()
                     lock.publish(UInt8(data=1))
@@ -5121,11 +5162,12 @@ def handle_dock_measurement_move(params, respond):
                 cmd.publish(twist)
             cmd.publish(Twist())
         else:
-            if not recovery and (math.hypot(start[0] - dock[0], start[1] - dock[1]) > .95 or abs(_marker_angle_delta(start[2], dock[2])) > .12):
-                raise ValueError("mower is not facing its own nearby dock")
+            window = _dock_start_window(charge, start)
+            if window:
+                raise ValueError(window)
             camera_until = _marker_camera_use("begin")
-            # auto_recharge normally lights the marker, but our safety check
-            # needs to see it before starting that service.
+            # The native docker lights the marker itself, but the pattern check
+            # below needs to see it before any goal is sent.
             if lamp.get_subscription_count() == 0:
                 raise ValueError("dock approach lamp unavailable")
             lamp.publish(UInt8(data=255))
@@ -5140,13 +5182,29 @@ def handle_dock_measurement_move(params, respond):
             marker = read("/aruco/pose", .5)
             if not 0 <= time.time() - _marker_stamp(marker) <= .5:
                 raise ValueError("no fresh dock pattern before docking")
-            if recovery:
-                last_marker_forward = _recovery_marker_forward(marker)
+            last_marker_forward = _dock_marker_forward(marker)
+            if not docker.wait_for_server(timeout_sec=1):
+                raise ValueError("visual docking action unavailable")
+            goal = AutoCharging.Goal()
+            goal.overwrite = True
+            goal.charge_pose.header.frame_id = "map"
+            goal.charge_pose.header.stamp = node.get_clock().now().to_msg()
+            goal.charge_pose.pose.position.x, goal.charge_pose.pose.position.y = charge[0], charge[1]
+            goal.charge_pose.pose.orientation.z = math.sin(charge[2] / 2)
+            goal.charge_pose.pose.orientation.w = math.cos(charge[2] / 2)
+            goal.max_retry = 1
+            # Never blind, rotating or map-navigated; contact is judged here.
+            goal.non_charging_pose_mode = goal.enable_no_visual_recharge = goal.rotate_searching = False
+            goal.keep_alive = goal.disable_charge_check = False
             dock_attempted = True
-            service(clients["auto_recharge"], Trigger.Request())
-        # Confirm a real stop (reverse) or stable contact (dock), with a bounded
-        # visual approach. Native docking is never inferred from Trigger.success.
-        deadline = min(time.monotonic() + (22 if action == "dock" else 3), camera_until - 4 if camera_until else float("inf"))
+            handle = settle(docker.send_goal_async(goal))
+            if handle is None or not handle.accepted:
+                raise ValueError("visual docking goal was rejected")
+            result_future = handle.get_result_async()
+        # Confirm a real stop (reverse) or stable contact (dock) within a bounded
+        # visual approach (35s live on 2026-09-26). Docking is never inferred from
+        # the native result alone.
+        deadline = time.monotonic() + (75 if action == "dock" else 3)
         stopped_at = None
         while time.monotonic() < deadline:
             spin()
@@ -5157,16 +5215,22 @@ def handle_dock_measurement_move(params, respond):
                 previous = current
                 cmd.publish(Twist())
             elif int(robot["merged_work_status"]) != 4:
+                if result_future is not None and result_future.done():
+                    # Contact may trail the native result by a moment, never longer.
+                    outcome = result_future.result()
+                    native_code = None if outcome is None else int(outcome.result.code)
+                    native_finished_at = native_finished_at or time.monotonic()
+                    if time.monotonic() - native_finished_at > 5:
+                        raise ValueError("visual docking ended without charging contact (native code %s)" % native_code)
                 # The pattern can disappear in the final 15 cm; allow only a
                 # short final contact attempt there, never a blind search.
-                near = last_marker_forward < .3 if recovery else math.hypot(current[0] - dock[0], current[1] - dock[1]) < .15
+                near = last_marker_forward < .3
                 marker = read("/aruco/pose", 2 if near else .7)
                 if not 0 <= time.time() - _marker_stamp(marker) <= (2 if near else .7):
                     raise ValueError("dock pattern lost")
-                if recovery:
-                    last_marker_forward = _recovery_marker_forward(marker)
+                last_marker_forward = _dock_marker_forward(marker)
             contact = int(robot["merged_work_status"]) == 4
-            reached = (action == "reverse" and not contact) or (action == "dock" and contact and (recovery or math.hypot(current[0] - dock[0], current[1] - dock[1]) <= .05))
+            reached = (action == "reverse" and not contact) or (action == "dock" and contact)
             if reached and stationary(odom):
                 stopped_at = stopped_at or time.monotonic()
                 if time.monotonic() - stopped_at >= 1:
@@ -5176,6 +5240,8 @@ def handle_dock_measurement_move(params, respond):
                 stopped_at = None
         if not completed:
             raise ValueError("stop or dock contact was not confirmed before timeout")
+        if result_future is not None and result_future.done() and result_future.result() is not None:
+            native_code = int(result_future.result().result.code)
         if _marker_frame_fingerprint() != signature:
             raise ValueError("native frame changed during motion")
     finally:
@@ -5200,8 +5266,14 @@ def handle_dock_measurement_move(params, respond):
                 node.destroy_node()
                 executor.shutdown()
                 context.shutdown()
-    respond("dock_measurement_move_respond", {"result": 0, "protocol": _DOCK_MOTION_PROTOCOL,
-            "frame_fingerprint": signature, "docked": action == "dock"})
+    response = {"result": 0, "protocol": _DOCK_MOTION_PROTOCOL, "frame_fingerprint": signature, "docked": action == "dock"}
+    if action == "reverse":
+        # The pose the mower left from, in its current frame: the server hands it
+        # back as charge_pose so the return never depends on saved map files.
+        response["start_pose"] = {"x": start[0], "y": start[1], "yaw": start[2]}
+    else:
+        response["native_code"] = native_code
+    respond("dock_measurement_move_respond", response)
 
 
 def handle_calibration_drive(params, respond):

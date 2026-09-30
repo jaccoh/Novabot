@@ -165,7 +165,9 @@ dock", toen bewoog hij wel). Voor onze flows is de praktische conclusie: **STEP_
      tasktype-switch naar MAPPING, geen Error 126 uit robot_decision. Of robot_decision de laadstatus daarna netjes
      oppakt zoals bij handmatig op het dock zetten: aannemelijk, niet getest.
 
-3. **Aan te passen in `handle_dock_measurement_move` / de servercycli** (nog niet gedaan):
+3. **Aangepast in `handle_dock_measurement_move` / de servercycli** (protocol `dock-measurement-motion-v4`, 2026-09-30 avond;
+   reverse-antwoord geeft `start_pose`, dock vereist `charge_pose` binnen 0,95–1,40 m / 0,40 rad, goal met `overwrite`,
+   slagen op laadcontact, `rememberDockedPose`/`recallDockedPose` in `dockMotion.ts`; nog niet fysiek getest):
    - `reverse`-afstand van 0,5 m naar ≈ 1,0 m (huidige limiet `.15 <= distance <= .7`) en de begrensde
      naderingsstraal (`> 1.15` m abort) mee omhoog;
    - `dock`-tak: geen `Trigger auto_recharge` meer, maar een `AutoCharging`-goal met `overwrite` + `charge_pose`

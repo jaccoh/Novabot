@@ -1,12 +1,12 @@
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToExtended } from '../mqtt/mapSync.js';
-import { isFrameUnvalidated } from './frameValidation.js';
+import { getFrameRevision, isFrameUnvalidated } from './frameValidation.js';
 import { freshPositionState } from './positionTelemetry.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 import { readMowerMapSnapshot, withMowerMapOperation } from './mowerMapOperation.js';
 import { beginCopyAlignment, captureCopyAlignment, consumeCopyAlignment, frameSnapshotSignature, getCopyAlignment, type CopyAlignmentView } from './copyAlignment.js';
 import { disarmEdgeWatch } from './scheduleRunner.js';
-import { guardedDockMove, settleDockMotion, DockMotionError } from './dockMotion.js';
+import { guardedDockMove, rememberDockedPose, settleDockMotion, DockMotionError, type DockPose } from './dockMotion.js';
 import { measureReanchorDock } from './reanchorGps.js';
 
 export type SourceDockPhase = 'starting' | 'checking' | 'reverse_first' | 'measure_first' | 'reverse_second' | 'measure_second' | 'docking' | 'verifying' | 'done' | 'error';
@@ -90,16 +90,19 @@ async function run(c: Cycle): Promise<void> {
       if (!start.docked || !start.running || !start.pose) throw new Error('Start stationary on the source mower’s own dock with fresh charging contact and localization.');
       check(c);
       disarmEdgeWatch(c.sourceSn, 'automatic source dock measurement');
-      const move = (action: 'reverse' | 'dock', distance: number, fromDock: boolean) =>
-        guardedDockMove(c.sourceSn, operation, { action, distance, fromDock, signature }, () => check(c), id => { c.motionId = id; });
+      const move = (action: 'reverse' | 'dock', distance: number, fromDock: boolean, chargePose?: DockPose) =>
+        guardedDockMove(c.sourceSn, operation, { action, distance, fromDock, signature, ...(chargePose ? { chargePose } : {}) }, () => check(c), id => { c.motionId = id; });
       const settled = (docked = false) => settleDockMotion(c.sourceSn, docked, () => check(c));
-      c.phase = 'reverse_first'; await move('reverse', .5, true);
+      // 1 m (plus the 0.2 m step) keeps the return inside the window where the
+      // native docker starts its visual approach directly: 0.87..1.47 m.
+      c.phase = 'reverse_first'; const departure = await move('reverse', 1, true);
+      rememberDockedPose(c.sourceSn, departure.startPose!, getFrameRevision(c.sourceSn));
       c.phase = 'measure_first'; await settled(); check(c);
       await captureCopyAlignment(c.alignmentId!, 'source', operation); check(c);
       c.phase = 'reverse_second'; await move('reverse', .2, false);
       c.phase = 'measure_second'; await settled(); check(c);
       await captureCopyAlignment(c.alignmentId!, 'source', operation); check(c);
-      c.phase = 'docking'; await move('dock', 0, false);
+      c.phase = 'docking'; await move('dock', 0, false, departure.startPose);
       c.phase = 'verifying';
       const final = await settled(true);
       if (Math.hypot(final.x - dock.x, final.y - dock.y) > .05) throw new Error('Dock contact confirmed, but localization differs more than 5 cm from the saved dock.');
