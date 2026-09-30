@@ -120,8 +120,12 @@ it('rejects a changed plan, bad live frame, and uncertain transfer without commi
   const { preview } = await repairDockChannels(sn);
   mapRepo.setCalibration(sn, { charger_lat: 52 });
   await expect(repairDockChannels(sn, preview.planHash)).rejects.toThrow('gewijzigd');
-  samples(sn, -1.1);
-  await expect(repairDockChannels(sn)).rejects.toThrow('5 cm');
+  // Seating plus RTK leaves .244 5 to 6 cm from its saved dock (since 2026-06);
+  // the gate exists for frame errors of decimetres to metres (1.15 m on 2026-09-26).
+  samples(sn, pose.x - .08);
+  expect((await repairDockChannels(sn)).ok).toBe(true);
+  samples(sn, pose.x - .12);
+  await expect(repairDockChannels(sn)).rejects.toThrow('10 cm');
   samples(); const current = await repairDockChannels(sn);
   const before = mapRepo.findByMowerSn(sn);
   vi.mocked(installVerifiedMapZip).mockImplementation(async () => { markMapInstallPending(sn); return null; });

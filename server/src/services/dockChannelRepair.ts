@@ -8,7 +8,7 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 import { isOpenNovaMower } from './mowerFileCapability.js';
 import { snapshotDockPose, getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
-import { stablePosition } from './positionTelemetry.js';
+import { DOCK_SEAT_TOLERANCE_M, stablePosition } from './positionTelemetry.js';
 import { isFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
 import { snapshotAnchorMatches } from './anchor.js';
 import { parseMapCsv, mergeConnectorCopies, reconcileMowerCsvTrees } from './portableSnapshot.js';
@@ -31,8 +31,8 @@ export interface ConfirmedCopyDocks {
 
 function ready(sn: string, pose?: Pose) {
   const live = stablePosition(sn, { docked: true });
-  if (!isDeviceOnline(sn) || !live || (pose && Math.hypot(live.x - pose.x, live.y - pose.y) > 0.05)) {
-    throw new Error('Zet de doelmaaier op zijn eigen dock en wacht op stabiele RTK Fixed-lokalisatie binnen 5 cm van de opgeslagen dockpositie.');
+  if (!isDeviceOnline(sn) || !live || (pose && Math.hypot(live.x - pose.x, live.y - pose.y) > DOCK_SEAT_TOLERANCE_M)) {
+    throw new Error('Zet de doelmaaier op zijn eigen dock en wacht op stabiele RTK Fixed-lokalisatie binnen 10 cm van de opgeslagen dockpositie.');
   }
   return live;
 }

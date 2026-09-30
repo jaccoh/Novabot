@@ -5,7 +5,7 @@ import { db } from '../db/database.js';
 import { mapRepo, deviceSettingsRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { isFrameUnvalidated } from './frameValidation.js';
-import { stablePosition } from './positionTelemetry.js';
+import { DOCK_SEAT_TOLERANCE_M, stablePosition } from './positionTelemetry.js';
 import { withMowerMapOperation, readMowerMapSnapshot } from './mowerMapOperation.js';
 
 export const PHOTO_DOCK_KEY = 'photo_dock_pose';
@@ -55,7 +55,7 @@ export async function alignDockPhoto(sn: string, lat: unknown, lng: unknown) {
     const snapshot = await readMowerMapSnapshot(sn, operation);
     const pose = snapshotDockPose(snapshot);
     const live = ready();
-    if (!pose || !live || Math.hypot(live.x - pose.x, live.y - pose.y) > 0.05) {
+    if (!pose || !live || Math.hypot(live.x - pose.x, live.y - pose.y) > DOCK_SEAT_TOLERANCE_M) {
       throw new Error('Dockmeting en opgeslagen dockpositie zijn niet bevestigd. Er is niets gewijzigd.');
     }
     // Preserve the prior display reference before changing it. No map files,

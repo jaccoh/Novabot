@@ -12,7 +12,7 @@ import { clearMapInstallPending, isFrameUnvalidated, markFrameUnvalidated } from
 import { beginMapApply } from './mapApplyStatus.js';
 import { assertMowerMapOperation } from './mowerMapOperation.js';
 import { installVerifiedMapZip } from './mowerMapApply.js';
-import { stablePosition } from './positionTelemetry.js';
+import { DOCK_SEAT_TOLERANCE_M, stablePosition } from './positionTelemetry.js';
 import { persistZoneCopy, type CopyPlan, type PersistResult } from './zoneCopy.js';
 
 /** Both leases remain owned by the copy route until device verification and DB commit. */
@@ -28,8 +28,8 @@ export async function installZoneCopy(
     assertMowerMapOperation(sn, operation);
     assertMowerMapOperation(sourceOperation.sn, sourceOperation);
     const position = stablePosition(sn, { docked: true });
-    if (!isDeviceOnline(sn) || !position || Math.hypot(position.x - dock.x, position.y - dock.y) > .05) {
-      throw new Error('Zet de doelmaaier op zijn eigen dock met stabiele RTK Fixed-lokalisatie binnen 5 cm van de opgeslagen dockpositie.');
+    if (!isDeviceOnline(sn) || !position || Math.hypot(position.x - dock.x, position.y - dock.y) > DOCK_SEAT_TOLERANCE_M) {
+      throw new Error('Zet de doelmaaier op zijn eigen dock met stabiele RTK Fixed-lokalisatie binnen 10 cm van de opgeslagen dockpositie.');
     }
   };
   ready();

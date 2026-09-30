@@ -66,6 +66,14 @@ export function ingestPositionTelemetry(sn: string, data: Record<string, unknown
   }
 }
 
+/**
+ * How far a docked mower may sit from its saved dock pose before a writer
+ * (zone copy, channel repair, photo alignment) refuses. Seating plus RTK leaves
+ * .244 5 to 6 cm off since 2026-06; the gate is for frame errors of decimetres
+ * to metres (1.15 m on 2026-09-26), not for centimetres of seating.
+ */
+export const DOCK_SEAT_TOLERANCE_M = 0.1;
+
 export function stablePosition(sn: string, { after = 0, count = 8, maxSpread = 0.05, docked = false } = {}) {
   const state = freshPositionState(sn);
   if (!state.fixed || !state.running || !state.pose || (docked && !state.docked)) return null;
