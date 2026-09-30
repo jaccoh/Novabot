@@ -5014,18 +5014,18 @@ def handle_dock_measurement_move(params, respond):
             spin()
             # Finish the request before cancelling recharge in finally; never
             # leave an accepted start behind an earlier cancel on normal exit.
-            if check:
+            if check and interrupted is None:
                 try:
                     guard(docking=dock_attempted)
                 except ValueError as error:
                     interrupted = error
                     state["cancelled"] = True
                     cmd.publish(Twist())
+        if interrupted:
+            raise interrupted
         if not future.done() or future.result() is None or not future.result().success:
             raise ValueError("dock service did not confirm")
         if check:
-            if interrupted:
-                raise interrupted
             _dock_motion_lease(state)
 
     def stationary(odom):

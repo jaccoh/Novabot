@@ -55,7 +55,7 @@ class MotionTest(unittest.TestCase):
 
     def run_motion(self, action='reverse', failure=None, from_dock=None, recovery=False):
         if from_dock is None: from_dock = action == 'reverse'
-        sim = types.SimpleNamespace(now=100., next_map=100., x=0. if from_dock else -.5 if action == 'reverse' else -.7, velocity=0., homing=False, detector=False, calls=[], published=[], destroyed=False)
+        sim = types.SimpleNamespace(now=100., next_map=100., x=0. if from_dock else -.5 if action == 'reverse' else -.7, velocity=0., homing=False, detector=False, calls=[], published=[], destroyed=False, service_fault_at=float('inf'))
         subscriptions = {}
         state = {'created': 100., 'heartbeat': 100., 'cancelled': False, 'used': False}
         c._DOCK_MOTIONS[ID] = state
@@ -73,6 +73,10 @@ class MotionTest(unittest.TestCase):
                 if self.name.endswith('auto_recharge'): sim.homing = True
                 if self.name.endswith('cancel_recharge') or self.name.endswith('cancel_goal'): sim.homing = False
                 if self.name == '/enable_aruco_localization': sim.detector = req.data
+                if self.name.endswith('auto_recharge') and failure == 'rtk-during-service':
+                    sim.service_fault_at = sim.now + .1
+                    done_at = sim.now + .4
+                    return types.SimpleNamespace(done=lambda: sim.now >= done_at, result=lambda: types.SimpleNamespace(success=True, return_code=0))
                 return types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(success=True, return_code=0))
         class Publisher:
             def __init__(self, topic): self.topic = topic
@@ -119,7 +123,7 @@ class MotionTest(unittest.TestCase):
                     '/robot_decision/map_position': p,
                     '/robot_combination_localization/odom': {'header': h, 'twist': {'twist': {'linear': {'x': 0. if failure in ('moving-at-start', 'creeping') else speed, 'y': 0., 'z': 0.}, 'angular': {'x': 0., 'y': 0., 'z': 0.}}}},
                     '/robot_decision/robot_status': {'merged_work_status': 4 if sim.x > -.01 and failure != 'no-contact' else 2 if sim.homing else 0, 'error_status': 0, 'battery_power': 80},
-                    '/bestpos_parsed_data': {'qual': 5 if failure == 'float' else 1 if failure == 'rtk' and sim.now > 103 else 4,
+                    '/bestpos_parsed_data': {'qual': 5 if failure == 'float' else 1 if (failure == 'rtk' and sim.now > 103) or (failure == 'rtk-during-service' and sim.now > sim.service_fault_at) else 4,
                                              'diff_age': 4. if failure == 'rtk-age' and sim.now > 103 else 1.},
                     '/chassis_incident': chassis,
                     '/robot_combination_localization/combination_status': {'status': 200},
@@ -205,6 +209,12 @@ class MotionTest(unittest.TestCase):
             sim, results = self.run_motion('dock', failure, recovery=True)
             self.assertFalse(results)
             self.assertFalse(sim.homing)
+
+    def test_dock_service_reports_first_guard_failure(self):
+        sim, results = self.run_motion('dock', 'rtk-during-service', recovery=True)
+        self.assertFalse(results)
+        self.assertEqual(sim.error, 'RTK corrections or localization lost during motion')
+        self.assertFalse(sim.homing)
 
     def test_retired_calibration_never_reads_or_writes_files(self):
         responses = []
