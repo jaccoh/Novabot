@@ -92,7 +92,8 @@ class MotionTest(unittest.TestCase):
                 sim.calls.append(self.name)
                 if self.name == CANCEL: sim.homing = False
                 if self.name == '/enable_aruco_localization': sim.detector = req.data
-                return types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(success=True, return_code=0))
+                refused = self.name == CANCEL and failure == 'cancel-refused'
+                return types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(success=True, return_code=1 if refused else 0))
         class AutoCharging:
             class Goal:
                 def __init__(self):
@@ -170,7 +171,7 @@ class MotionTest(unittest.TestCase):
                     '/chassis_incident': chassis,
                     '/robot_combination_localization/combination_status': {'status': 200},
                 }
-                if sim.detector and failure != 'missing-pattern' and not (failure == 'pattern-lost' and sim.now > 104):
+                if sim.detector and failure != 'missing-pattern' and not (failure in ('pattern-lost', 'cancel-refused') and sim.now > 104):
                     values['/aruco/pose'] = {'header': dict(h, frame_id='aruco_tag'), 'pose': {'position': {'x': -(2.5 if failure == 'distant-pattern' else .1 - sim.x), 'y': 0., 'z': -.15}, 'orientation': {'x': 0., 'y': 0., 'z': 0., 'w': 1.}}}
                 if failure == 'manual' and sim.now > 103: values['/cloud_move_cmd'] = {}
                 if failure == 'stale' and sim.now > 103: values.pop('/robot_combination_localization/odom')
@@ -306,6 +307,14 @@ class MotionTest(unittest.TestCase):
         self.assertFalse(results)
         self.assertEqual(sim.error, 'RTK corrections or localization lost during motion')
         self.assertFalse(sim.homing)
+
+    def test_failed_cancellation_keeps_the_original_cause_in_the_error(self):
+        # 2026-09-30 20:11: a refused cancel inside `finally` replaced the guard
+        # fault ("robot is busy") by "dock service did not confirm" in the logs.
+        sim, results = self.run_motion('dock', 'cancel-refused', recovery=True)
+        self.assertFalse(results)
+        self.assertIn('dock pattern lost', sim.error)
+        self.assertIn('cancellation not confirmed', sim.error)
 
     def test_retired_calibration_never_reads_or_writes_files(self):
         responses = []

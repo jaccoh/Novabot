@@ -5098,6 +5098,7 @@ def handle_dock_measurement_move(params, respond):
         if not future.done() or future.result() is None or future.result().return_code != 0:
             raise ValueError("visual docking cancellation not confirmed; use the mower STOP button")
 
+    failure = None
     try:
         topics = (("/robot_decision/map_position", "geometry_msgs/msg/Pose"),
                   ("/robot_combination_localization/odom", "nav_msgs/msg/Odometry"),
@@ -5244,6 +5245,9 @@ def handle_dock_measurement_move(params, respond):
             native_code = int(result_future.result().result.code)
         if _marker_frame_fingerprint() != signature:
             raise ValueError("native frame changed during motion")
+    except Exception as error:
+        failure = error
+        raise
     finally:
         state["cancelled"] = True
         try:
@@ -5253,7 +5257,12 @@ def handle_dock_measurement_move(params, respond):
                 cmd.publish(Twist())
                 spin()
             if dock_attempted and not completed:
-                cancel_docking()
+                try:
+                    cancel_docking()
+                except ValueError as cancel_error:
+                    # A refused cancel must not hide why the approach stopped
+                    # (2026-09-30 20:11: "did not confirm" masked a guard fault).
+                    raise ValueError("%s; %s" % (failure, cancel_error) if failure else str(cancel_error))
         finally:
             try:
                 if detector_attempted:

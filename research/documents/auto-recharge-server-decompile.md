@@ -182,6 +182,30 @@ dock", toen bewoog hij wel). Voor onze flows is de praktische conclusie: **STEP_
    `charging_station.yaml`-wijziging herstart moet worden. De node leest dat bestand niet; de herstart is onschadelijk
    maar zinloos voor dit doel.
 
+## robot_decision (decompile 2026-09-30 21:38, `research/ghidra_output/robot_decision_recharge_decompiled.c`)
+
+Binary `install/compound_decision/lib/compound_decision/robot_decision`, script `research/ghidra-scripts/DecompRobotDecisionRecharge.java`.
+
+- **`handleAutoRechargeTask` geeft `success=true` bij acceptatie** (zet vlag `this+0x736`, log "Receiving recharge task no
+  guide pose mode command for mapping task"); alleen als er al een recharge loopt `success=false` ("Cannot recharge when
+  recharge task is executing"). De eerdere conclusie dat de Trigger geen `success` gaf was fout. Wat op 20:11 gebeurde:
+  onze guard (`merged_work_status` moet in 0/2/4/5 zitten) brak af zodra robot_decision zijn eigen statemachine startte
+  (chassis-log 20:11:23.04 `RechargeStatus = 50`), en de daarna in `finally` uitgevoerde `cancel_recharge` werd geweigerd
+  ("Cannot cancel recharge when recharge task is executing"), waardoor `service()` in de `finally` met "dock service did not
+  confirm" de echte fout overschreef. v4 bewaart sinds 21:41 de oorspronkelijke fout in de melding.
+- **`rechargeDeal(no_guide_pose)`** in volgorde: action server bereikbaar (anders fout 111) → `recharge_status > 89` → "Already
+  in recharging status, No need to recharge" (`updateErrorStatus(2)`, wist NIETS) → `error_status > 149` → "please unlock"
+  → … → **`updateErrorStatus(0)`** (hier wordt een taakfout zoals 126 gewist) → 400 ms → chassis/lokalisatie-check → bij
+  no-guide-pose `updateTaskType(2)` (MAPPING) → goal `non_charging_pose_mode=1, max_retry=5` (guide-pose-modus:
+  `getChargingPose` → `overwrite=1, max_retry=10`, en `updateTaskType(1)` als het tasktype MAPPING was).
+- **`updateErrorStatus(new)`**: `new=0` overschrijft alles ≤150; een `new<100` kan een bestaande fout ≥100 niet
+  overschrijven ("Error cannot overwrite"); ≥151 alleen geforceerd. Bevestigt `server/src/mqtt/errorKind.ts`.
+- **Error 126 wissen** kan dus alleen via een taakstart die `updateErrorStatus(0)` bereikt: mow-start (`coverStartDeal`),
+  resume (`coverContinueDeal`) of een recharge-start terwijl `recharge_status ≤ 89`. Gedockt en ladend zou een
+  `auto_recharge`/`go_to_charge` de fout wissen en daarna in `auto_recharge_server` direct op "Already in charging status"
+  (`isRobotCharging`) slagen zonder beweging; wordt het laden niet als zodanig herkend, dan volgt de STEP_BACK-poging.
+  Niet live geverifieerd.
+
 ## Open punten
 
 - Oorzaak van de te kleine odom-verplaatsing in STEP_BACK (0,15 m/s, 1,1 s, < 4 cm) op .244.
