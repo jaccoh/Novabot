@@ -113,7 +113,8 @@ class MotionTest(unittest.TestCase):
                     '/robot_decision/map_position': p,
                     '/robot_combination_localization/odom': {'header': h, 'twist': {'twist': {'linear': {'x': 0. if failure in ('moving-at-start', 'creeping') else speed, 'y': 0., 'z': 0.}, 'angular': {'x': 0., 'y': 0., 'z': 0.}}}},
                     '/robot_decision/robot_status': {'merged_work_status': 4 if sim.x > -.01 and failure != 'no-contact' else 2 if sim.homing else 0, 'error_status': 0, 'battery_power': 80},
-                    '/bestpos_parsed_data': {'qual': 5 if failure == 'rtk' and sim.now > 103 else 4, 'diff_age': 1.},
+                    '/bestpos_parsed_data': {'qual': 5 if failure == 'float' else 1 if failure == 'rtk' and sim.now > 103 else 4,
+                                             'diff_age': 4. if failure == 'rtk-age' and sim.now > 103 else 1.},
                     '/chassis_incident': chassis,
                     '/robot_combination_localization/combination_status': {'status': 200},
                 }
@@ -166,6 +167,14 @@ class MotionTest(unittest.TestCase):
         self.assertAlmostEqual(sim.x, -.5, delta=.02)
         self.assertTrue(all(v in (0., -.08) for v in sim.published))
 
+    def test_first_departure_accepts_float_but_later_motion_does_not(self):
+        sim, results = self.run_motion(failure='float')
+        self.assertEqual(results[0]['result'], 0)
+        self.assertAlmostEqual(sim.x, -.5, delta=.02)
+        sim, results = self.run_motion(failure='float', from_dock=False)
+        self.assertFalse(results)
+        self.assertFalse(any(v < 0 for v in sim.published))
+
     def test_real_handler_visual_dock_requires_contact(self):
         sim, results = self.run_motion('dock')
         self.assertEqual(results[0]['docked'], True)
@@ -203,7 +212,7 @@ class MotionTest(unittest.TestCase):
         self.assertNotIn('/robot_decision/auto_recharge', sim.calls)
 
     def test_real_handler_aborts_and_stops_for_fault_loss_or_operator_intervention(self):
-        for failure in ('stop', 'heartbeat', 'stalled', 'rtk', 'bumper', 'manual', 'stale'):
+        for failure in ('stop', 'heartbeat', 'stalled', 'rtk', 'rtk-age', 'bumper', 'manual', 'stale'):
             with self.subTest(failure=failure):
                 sim, results = self.run_motion(failure=failure)
                 self.assertFalse(results)

@@ -4976,8 +4976,15 @@ def handle_dock_measurement_move(params, respond):
             raise ValueError("robot is busy, low on battery or in error")
         if not _dock_motion_chassis_ok(read("/chassis_incident", 3)):
             raise ValueError("chassis stop or fault")
-        if not _marker_rtk_fixed(read("/bestpos_parsed_data", 1.5)) or int(read("/robot_combination_localization/combination_status", 1.5)["status"]) != 200:
-            raise ValueError("RTK Fixed or localization lost during motion")
+        rtk = read("/bestpos_parsed_data", 1.5)
+        age = float(rtk.get("diff_age", float("inf")))
+        quality = int(rtk["qual"])
+        # The first bounded, body-axis departure initializes heading. Float is
+        # acceptable there; every later movement and measurement needs Fixed.
+        if (quality not in ((4, 5) if action == "reverse" and from_dock else (4,)) or
+                not math.isfinite(age) or not 0 <= age <= 3 or
+                int(read("/robot_combination_localization/combination_status", 1.5)["status"]) != 200):
+            raise ValueError("RTK corrections or localization lost during motion")
         odom = read("/robot_combination_localization/odom", .5)
         stamp = _marker_stamp(odom)
         if not 0 <= time.time() - stamp <= .5:

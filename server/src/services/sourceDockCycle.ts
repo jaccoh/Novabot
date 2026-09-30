@@ -1,7 +1,7 @@
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToExtended } from '../mqtt/mapSync.js';
 import { isFrameUnvalidated } from './frameValidation.js';
-import { stablePosition } from './positionTelemetry.js';
+import { freshPositionState } from './positionTelemetry.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
 import { readMowerMapSnapshot, withMowerMapOperation } from './mowerMapOperation.js';
 import { beginCopyAlignment, captureCopyAlignment, consumeCopyAlignment, frameSnapshotSignature, getCopyAlignment, type CopyAlignmentView } from './copyAlignment.js';
@@ -84,10 +84,10 @@ async function run(c: Cycle): Promise<void> {
       if (!before) throw new Error('Source mower files could not be read.');
       const signature = frameSnapshotSignature(before);
       const dock = snapshotDockPose(before)!;
-      const start = stablePosition(c.sourceSn, { docked: true });
+      const start = freshPositionState(c.sourceSn);
       // Leaving the dock initializes heading. Contact and stable telemetry
       // qualify departure; saved-dock accuracy is checked after returning.
-      if (!start) throw new Error('Start stationary on the source mower’s own dock with fresh RTK Fixed and charging contact.');
+      if (!start.docked || !start.running || !start.pose) throw new Error('Start stationary on the source mower’s own dock with fresh charging contact and localization.');
       check(c);
       disarmEdgeWatch(c.sourceSn, 'automatic source dock measurement');
       const move = (action: 'reverse' | 'dock', distance: number, fromDock: boolean) =>

@@ -3183,7 +3183,8 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
       }
       let movementStarted = false;
       const roundTrip = async (snapshot: Record<string, unknown>, afterWrite: boolean) => {
-        if (!stablePosition(sn, { docked: true })) throw new ReanchorError(M`Begin stilstaand op het eigen dock met vers laadcontact en RTK Fixed.`);
+        const departure = freshPositionState(sn);
+        if (!departure.docked || !departure.running || !departure.pose) throw new ReanchorError(M`Begin stilstaand op het eigen dock met vers laadcontact en lokalisatie.`);
         const signature = frameSnapshotSignature(snapshot);
         const move = (action: 'reverse' | 'dock') => guardedDockMove(sn, operation,
           { action, distance: action === 'reverse' ? .5 : 0, fromDock: action === 'reverse', signature }, check,

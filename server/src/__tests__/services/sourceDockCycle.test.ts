@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-const h = vi.hoisted(() => ({ online: true, docked: true, poseX: 0, publish: vi.fn(), command: vi.fn(), capture: vi.fn(), consume: vi.fn(), measureDock: vi.fn(), manual: undefined as (() => void) | undefined }));
+const h = vi.hoisted(() => ({ online: true, docked: true, running: true, fixed: true, poseX: 0, publish: vi.fn(), command: vi.fn(), capture: vi.fn(), consume: vi.fn(), measureDock: vi.fn(), manual: undefined as (() => void) | undefined }));
 vi.mock('../../mqtt/broker.js', () => ({ isDeviceOnline: () => h.online }));
 vi.mock('../../mqtt/mapSync.js', () => ({ publishToExtended: h.publish }));
 vi.mock('../../services/frameValidation.js', () => ({ isFrameUnvalidated: () => false }));
-vi.mock('../../services/positionTelemetry.js', () => ({ freshPositionState: () => ({ docked: h.docked }), stablePosition: (_sn: string, options?: { docked?: boolean }) => options?.docked && !h.docked ? null : ({ x: h.poseX, y: 0 }) }));
+vi.mock('../../services/positionTelemetry.js', () => ({ freshPositionState: () => ({ docked: h.docked, running: h.running, fixed: h.fixed, pose: { x: h.poseX, y: 0 } }), stablePosition: (_sn: string, options?: { docked?: boolean }) => !h.fixed || options?.docked && !h.docked ? null : ({ x: h.poseX, y: 0 }) }));
 vi.mock('../../services/dockPhotoReference.js', () => ({ snapshotDockPose: () => ({ x: 0, y: 0, orientation: 0 }) }));
 vi.mock('../../services/reanchorGps.js', () => ({ measureReanchorDock: h.measureDock }));
 vi.mock('../../services/scheduleRunner.js', () => ({ disarmEdgeWatch: vi.fn() }));
@@ -24,7 +24,7 @@ const tick = (action: 'pulse' | 'stop' = 'pulse') => sourceDockCycle(id, 'target
 beforeEach(() => {
   vi.useFakeTimers(); elapsed = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
-  id = crypto.randomUUID(); h.online = true; h.docked = true; h.poseX = 0;
+  id = crypto.randomUUID(); h.online = true; h.docked = true; h.running = true; h.fixed = true; h.poseX = 0;
   h.publish.mockReset(); h.command.mockReset(); h.capture.mockReset(); h.consume.mockReset();
   h.measureDock.mockReset().mockImplementation(async () => ({ dist: 0, latestDist: 0, runtime: { x: 0, y: 0, capture_started: Date.now(), capture_finished: Date.now() - 1 } }));
   h.command.mockImplementation(async (cmd, params) => {
@@ -124,6 +124,17 @@ it('refuses departure without charging contact', async () => {
   h.docked = false;
   start(); tick(); await advance();
   expect(tick('stop').phase).toBe('error'); expect(h.command).not.toHaveBeenCalled();
+});
+
+it('allows a docked departure before RTK Fixed, but still requires running localization', async () => {
+  h.fixed = false;
+  start(); tick(); await advance();
+  expect(h.command.mock.calls.some(([cmd, params]) => cmd === 'dock_measurement_move' && params.action === 'reverse')).toBe(true);
+  tick('stop'); await advance(300);
+  h.running = false;
+  const next = crypto.randomUUID();
+  id = next; start(); tick(); await advance();
+  expect(tick('stop').phase).toBe('error');
 });
 
 it('checks saved dock accuracy only after departure has initialized heading and the mower returned', async () => {
