@@ -35,6 +35,10 @@ vi.mock('../../services/copyAlignment.js', () => ({
 // Device transfer/readback is covered by installZoneCopy.test.ts. The route
 // must await that boundary and only then consume the one-use alignment.
 vi.mock('../../services/installZoneCopy.js', () => ({ installZoneCopy: vi.fn() }));
+vi.mock('../../services/dockReturnCycle.js', () => ({
+  startDockReturn: vi.fn(),
+  dockReturn: vi.fn((cycleId: string, sn: string, action: string) => ({ cycleId, sn, phase: action })),
+}));
 
 vi.mock('../../mqtt/broker.js', () => ({
   isDeviceOnline: vi.fn().mockReturnValue(true),
@@ -144,6 +148,7 @@ import { withConfirmedCopyDocks } from '../../services/dockChannelRepair.js';
 import { captureCopyAlignment, consumeCopyAlignment, validateCopyAlignment } from '../../services/copyAlignment.js';
 import { installZoneCopy } from '../../services/installZoneCopy.js';
 import { persistZoneCopy } from '../../services/zoneCopy.js';
+import { withMowerMapOperation } from '../../services/mowerMapOperation.js';
 
 const app = express();
 app.use(express.json());
@@ -193,6 +198,18 @@ describe('zone copy routes', () => {
     addRow(A, 'map0_0_obstacle', 'obstacle', square(2, 2, 2));
     addRow(A, 'map0tocharge_unicom', 'unicom', [dockA, { x: -0.4, y: 0.94 }]);
     addRow(B, 'map0tocharge_unicom', 'unicom', [dockB, { x: 0.3, y: -0.8 }]);
+  });
+
+  it('allows dock-return supervision through its own map-operation lease', async () => {
+    const cycle = '00000000-0000-0000-0000-000000000001';
+    await withMowerMapOperation(B, async () => {
+      for (const action of ['pulse', 'stop']) {
+        const response = await request(server).post(`/api/dashboard/maps/${B}/dock-return/${cycle}`).send({ action });
+        expect(response.status).toBe(200);
+        expect(response.body.phase).toBe(action);
+      }
+      expect((await request(server).post(url('/preview')).send({ canonical: 'map0' })).status).toBe(409);
+    });
   });
 
   it('a photo point or legacy position token cannot bypass the marker wizard', async () => {

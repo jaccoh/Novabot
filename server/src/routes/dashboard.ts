@@ -134,9 +134,9 @@ export const dashboardRouter = Router();
 dashboardRouter.use(['/maps/:sn', '/calibration/:sn'], (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) { next(); return; }
   const { sn } = req.params;
-  // Supervision pulses of a running source-dock cycle are keepalives, not map
-  // writes; the target holds the lease during that cycle's own reads.
-  if (/^\/copy-from\/[^/]+\/alignment\/auto-source\/[^/]+$/.test(req.path)) { next(); return; }
+  // Supervision pulses and stops are not map writes; their cycles hold the lease.
+  if (/^\/copy-from\/[^/]+\/alignment\/auto-source\/[^/]+$/.test(req.path) ||
+      /^\/dock-return\/[^/]+$/.test(req.path)) { next(); return; }
   // A failed install leaves the frame unvalidated with the install pending;
   // applying again is the repair, so that request passes the frame gate.
   const retry = req.method === 'POST' && req.path === '/apply' && isMapInstallPending(sn);
