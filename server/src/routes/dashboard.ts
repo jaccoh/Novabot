@@ -75,6 +75,7 @@ import { previewZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy
 import { installZoneCopy } from '../services/installZoneCopy.js';
 import { beginCopyAlignment, captureCopyAlignment, getCopyAlignment, validateCopyAlignment, consumeCopyAlignment } from '../services/copyAlignment.js';
 import { startSourceDockCycle, sourceDockCycle } from '../services/sourceDockCycle.js';
+import { startDockReturn, dockReturn } from '../services/dockReturnCycle.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
 import { selectParaRepush } from '../mqtt/paraRepush.js';
 import { MOW_PARA_SETTLE_MS } from '../services/mowingService.js';
@@ -1998,6 +1999,25 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/alignment/auto-source/:cycleId
   const action = req.body?.action;
   if (action !== 'pulse' && action !== 'stop') { res.status(400).json({ error: 'Invalid cycle action.' }); return; }
   try { res.json(sourceDockCycle(cycleId, sn, source, action)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
+
+dashboardRouter.post('/maps/:sn/dock-return', (req: Request, res: Response) => {
+  const { sn } = req.params;
+  if (rejectUnlessOpenNova(sn, req, res, M`Terugkeren naar het dock`)) return;
+  const { cycleId, supervised, ownDockNearby } = req.body ?? {};
+  if (typeof cycleId !== 'string' || supervised !== true || ownDockNearby !== true) {
+    res.status(400).json({ error: 'Bevestig toezicht en dat de maaier vlak voor zijn eigen dock staat.' }); return;
+  }
+  try { res.json(startDockReturn(cycleId, sn)); }
+  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+});
+
+dashboardRouter.post('/maps/:sn/dock-return/:cycleId', (req: Request, res: Response) => {
+  const { sn, cycleId } = req.params;
+  const action = req.body?.action;
+  if (action !== 'pulse' && action !== 'stop') { res.status(400).json({ error: 'Invalid cycle action.' }); return; }
+  try { res.json(dockReturn(cycleId, sn, action)); }
   catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
 });
 

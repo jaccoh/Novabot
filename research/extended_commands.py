@@ -4976,9 +4976,11 @@ def handle_dock_measurement_move(params, respond):
         if (int(robot["merged_work_status"]) not in ((0, 2, 4, 5) if docking else (0, 4, 5)) or
                 int(robot["error_status"]) not in (0, 8, 113) or int(robot["battery_power"]) < 30):
             raise ValueError("robot is busy, low on battery or in error")
-        # Charging contact asserts both charge_stop flags even on a healthy
-        # docked mower. Only the bounded first departure may pass those flags.
-        if not _dock_motion_chassis_ok(read("/chassis_incident", 3), action == "reverse" and from_dock):
+        # Charging contact asserts both charge_stop flags on a healthy docked
+        # mower. Permit them only for departure or confirmed docking contact.
+        dock_contact = int(robot["merged_work_status"]) == 4
+        if not _dock_motion_chassis_ok(read("/chassis_incident", 3),
+                                       (action == "reverse" and from_dock) or (docking and dock_contact)):
             raise ValueError("chassis stop or fault")
         rtk = read("/bestpos_parsed_data", 1.5)
         age = float(rtk.get("diff_age", float("inf")))

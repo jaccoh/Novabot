@@ -112,7 +112,7 @@ class MotionTest(unittest.TestCase):
                     p['position']['x'] += .15
                     p['orientation'].update(z=math.sin(.4 / 2), w=math.cos(.4 / 2))
                 chassis = {k: False for k in ('warning_push_button_stop', 'error_push_button_stop', 'warning_collision_stop', 'error_collision_stop', 'warning_upraise_stop', 'error_upraise_stop', 'error_turn_over', 'error_lora', 'warning_lora_rtk_data_overtime')}
-                if from_dock or failure == 'charge-fault':
+                if from_dock or (action == 'dock' and sim.x == 0.) or failure == 'charge-fault':
                     chassis.update(warning_charge_stop=True, error_charge_stop=True)
                 if failure == 'bumper' and sim.now > 103: chassis['error_collision_stop'] = True
                 values = {
