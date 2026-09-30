@@ -4873,11 +4873,13 @@ def _dock_motion_progress(start, pose, previous, distance):
     return along
 
 
-def _dock_motion_chassis_ok(data):
+def _dock_motion_chassis_ok(data, allow_charge_stop=False):
     required = ("warning_push_button_stop", "error_push_button_stop", "warning_collision_stop",
                 "error_collision_stop", "warning_upraise_stop", "error_upraise_stop", "error_turn_over")
     return (all(data.get(k) is False for k in required) and _marker_lora_healthy(data) and
-            not any(v is True for k, v in data.items() if k.startswith(("warning_", "error_", "classb_"))))
+            not any(v is True for k, v in data.items()
+                    if k.startswith(("warning_", "error_", "classb_")) and
+                    not (allow_charge_stop and k in ("warning_charge_stop", "error_charge_stop"))))
 
 
 def _recovery_marker_forward(marker):
@@ -4974,7 +4976,9 @@ def handle_dock_measurement_move(params, respond):
         if (int(robot["merged_work_status"]) not in ((0, 2, 4, 5) if docking else (0, 4, 5)) or
                 int(robot["error_status"]) not in (0, 8, 113) or int(robot["battery_power"]) < 30):
             raise ValueError("robot is busy, low on battery or in error")
-        if not _dock_motion_chassis_ok(read("/chassis_incident", 3)):
+        # Charging contact asserts both charge_stop flags even on a healthy
+        # docked mower. Only the bounded first departure may pass those flags.
+        if not _dock_motion_chassis_ok(read("/chassis_incident", 3), action == "reverse" and from_dock):
             raise ValueError("chassis stop or fault")
         rtk = read("/bestpos_parsed_data", 1.5)
         age = float(rtk.get("diff_age", float("inf")))

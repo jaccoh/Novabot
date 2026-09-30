@@ -44,8 +44,12 @@ class MotionTest(unittest.TestCase):
     def test_chassis_faults_and_missing_stop_sensor_are_rejected(self):
         d = {k: False for k in ('warning_push_button_stop', 'error_push_button_stop', 'warning_collision_stop', 'error_collision_stop', 'warning_upraise_stop', 'error_upraise_stop', 'error_turn_over', 'error_lora', 'warning_lora_rtk_data_overtime')}
         self.assertTrue(c._dock_motion_chassis_ok(d))
+        charging = dict(d, warning_charge_stop=True, error_charge_stop=True)
+        self.assertFalse(c._dock_motion_chassis_ok(charging))
+        self.assertTrue(c._dock_motion_chassis_ok(charging, allow_charge_stop=True))
         for key in d:
             self.assertFalse(c._dock_motion_chassis_ok(dict(d, **{key: True})))
+            self.assertFalse(c._dock_motion_chassis_ok(dict(charging, **{key: True}), allow_charge_stop=True))
         del d['error_push_button_stop']
         self.assertFalse(c._dock_motion_chassis_ok(d))
 
@@ -108,6 +112,8 @@ class MotionTest(unittest.TestCase):
                     p['position']['x'] += .15
                     p['orientation'].update(z=math.sin(.4 / 2), w=math.cos(.4 / 2))
                 chassis = {k: False for k in ('warning_push_button_stop', 'error_push_button_stop', 'warning_collision_stop', 'error_collision_stop', 'warning_upraise_stop', 'error_upraise_stop', 'error_turn_over', 'error_lora', 'warning_lora_rtk_data_overtime')}
+                if from_dock or failure == 'charge-fault':
+                    chassis.update(warning_charge_stop=True, error_charge_stop=True)
                 if failure == 'bumper' and sim.now > 103: chassis['error_collision_stop'] = True
                 values = {
                     '/robot_decision/map_position': p,
@@ -172,6 +178,9 @@ class MotionTest(unittest.TestCase):
         self.assertEqual(results[0]['result'], 0)
         self.assertAlmostEqual(sim.x, -.5, delta=.02)
         sim, results = self.run_motion(failure='float', from_dock=False)
+        self.assertFalse(results)
+        self.assertFalse(any(v < 0 for v in sim.published))
+        sim, results = self.run_motion(failure='charge-fault', from_dock=False)
         self.assertFalse(results)
         self.assertFalse(any(v < 0 for v in sim.published))
 
