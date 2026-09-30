@@ -1195,6 +1195,11 @@ export const CATALOG: Catalog = {
     fr: "Copier une zone",
     de: "Eine Zone kopieren",
   },
+  "Terugkeren naar het dock": {
+    en: "Returning to the dock",
+    fr: "Retourner à la station de charge",
+    de: "Zur Ladestation zurückkehren",
+  },
   "Er is geen vrije dockaanloop naar deze zone. Controleer obstakels en de ligging van het werkgebied.": {
     en: "There is no clear dock approach to this zone. Check the obstacles and the work area's position.",
     fr: "Il n’y a pas d’approche dégagée depuis la station vers cette zone. Vérifiez les obstacles et la position de la zone de travail.",
