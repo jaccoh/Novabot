@@ -4812,6 +4812,9 @@ def handle_set_pos_origin(params, respond):
 _DOCK_MOTIONS = {}
 _DOCK_MOTION_LOCK = threading.Lock()
 _DOCK_MOTION_PROTOCOL = "dock-measurement-motion-v3"
+# A live snapshot delayed the first 0.5s server heartbeat by 2.86s; keep a
+# bounded margin below the server's 5s operator lease and the 0.7m motion cap.
+_DOCK_MOTION_HEARTBEAT_TIMEOUT = 4
 
 
 def handle_dock_measurement_control(params, respond):
@@ -4838,7 +4841,7 @@ def handle_dock_measurement_control(params, respond):
                 _DOCK_MOTIONS[key] = state
             state["cancelled"] = True
         elif action == "keepalive":
-            if state is None or state["cancelled"] or now - state["heartbeat"] > 2:
+            if state is None or state["cancelled"] or now - state["heartbeat"] > _DOCK_MOTION_HEARTBEAT_TIMEOUT:
                 if state is not None:
                     state["cancelled"] = True
                 raise ValueError("motion lease expired")
@@ -4852,7 +4855,7 @@ def handle_dock_measurement_control(params, respond):
 
 def _dock_motion_lease(state):
     now = time.monotonic()
-    if state["cancelled"] or now - state["heartbeat"] > 2 or now - state["created"] > 60:
+    if state["cancelled"] or now - state["heartbeat"] > _DOCK_MOTION_HEARTBEAT_TIMEOUT or now - state["created"] > 60:
         state["cancelled"] = True
         raise ValueError("dock measurement stopped or heartbeat expired")
 

@@ -23,7 +23,9 @@ class MotionTest(unittest.TestCase):
             c.handle_dock_measurement_control({'motion_id': ID, 'action': 'arm'}, lambda *a: None)
             with self.assertRaises(ValueError):
                 c.handle_dock_measurement_control({'motion_id': ID, 'action': 'arm'}, lambda *a: None)
-        with patch.object(c.time, 'monotonic', return_value=103):
+        with patch.object(c.time, 'monotonic', return_value=102.86):
+            c.handle_dock_measurement_control({'motion_id': ID, 'action': 'keepalive'}, lambda *a: None)
+        with patch.object(c.time, 'monotonic', return_value=107):
             with self.assertRaises(ValueError):
                 c.handle_dock_measurement_control({'motion_id': ID, 'action': 'keepalive'}, lambda *a: None)
         self.assertTrue(c._DOCK_MOTIONS[ID]['cancelled'])
