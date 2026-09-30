@@ -4938,6 +4938,7 @@ def handle_dock_measurement_move(params, respond):
     pose_samples = deque(maxlen=128)
     cmd = node.create_publisher(Twist, "/cmd_vel", 1)
     lock = node.create_publisher(UInt8, "/release_charge_lock", 1)
+    lamp = node.create_publisher(UInt8, "/led_set", 1)
     clients = {name: node.create_client(Trigger, "/robot_decision/" + name) for name in ("cancel_recharge", "auto_recharge")}
     cancel_goal = node.create_client(CancelGoal, "/auto_charging/_action/cancel_goal")
     detector = node.create_client(SetBool, "/enable_aruco_localization")
@@ -4947,6 +4948,7 @@ def handle_dock_measurement_move(params, respond):
     completed = False
     approach_start = None
     last_marker_forward = float("inf")
+    lamp_on = False
 
     def record(topic, msg):
         now, data = time.monotonic(), message_to_ordereddict(msg)
@@ -5122,6 +5124,13 @@ def handle_dock_measurement_move(params, respond):
             if not recovery and (math.hypot(start[0] - dock[0], start[1] - dock[1]) > .95 or abs(_marker_angle_delta(start[2], dock[2])) > .12):
                 raise ValueError("mower is not facing its own nearby dock")
             camera_until = _marker_camera_use("begin")
+            # auto_recharge normally lights the marker, but our safety check
+            # needs to see it before starting that service.
+            if lamp.get_subscription_count() == 0:
+                raise ValueError("dock approach lamp unavailable")
+            lamp.publish(UInt8(data=255))
+            lamp_on = True
+            spin(.1)
             detector_attempted = True
             request = SetBool.Request(); request.data = True
             service(detector, request)
@@ -5172,6 +5181,8 @@ def handle_dock_measurement_move(params, respond):
     finally:
         state["cancelled"] = True
         try:
+            if lamp_on:
+                lamp.publish(UInt8(data=0))
             for _ in range(3):
                 cmd.publish(Twist())
                 spin()

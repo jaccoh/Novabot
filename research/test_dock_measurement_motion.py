@@ -55,7 +55,7 @@ class MotionTest(unittest.TestCase):
 
     def run_motion(self, action='reverse', failure=None, from_dock=None, recovery=False):
         if from_dock is None: from_dock = action == 'reverse'
-        sim = types.SimpleNamespace(now=100., next_map=100., x=0. if from_dock else -.5 if action == 'reverse' else -.7, velocity=0., homing=False, detector=False, calls=[], published=[], destroyed=False, service_fault_at=float('inf'))
+        sim = types.SimpleNamespace(now=100., next_map=100., x=0. if from_dock else -.5 if action == 'reverse' else -.7, velocity=0., homing=False, detector=False, calls=[], published=[], lights=[], destroyed=False, service_fault_at=float('inf'))
         subscriptions = {}
         state = {'created': 100., 'heartbeat': 100., 'cancelled': False, 'used': False}
         c._DOCK_MOTIONS[ID] = state
@@ -80,11 +80,12 @@ class MotionTest(unittest.TestCase):
                 return types.SimpleNamespace(done=lambda: True, result=lambda: types.SimpleNamespace(success=True, return_code=0))
         class Publisher:
             def __init__(self, topic): self.topic = topic
-            def get_subscription_count(self): return 1
+            def get_subscription_count(self): return 0 if self.topic == '/led_set' and failure == 'lamp-unavailable' else 1
             def publish(self, msg):
                 if self.topic == '/cmd_vel':
                     sim.velocity = msg.linear.x
                     sim.published.append(sim.velocity)
+                if self.topic == '/led_set': sim.lights.append(msg['data'])
         class Node:
             def create_publisher(self, kind, topic, qos): return Publisher(topic)
             def create_client(self, kind, name): return Client(name)
@@ -201,6 +202,7 @@ class MotionTest(unittest.TestCase):
         self.assertEqual(results[0]['protocol'], 'dock-measurement-motion-v3')
         self.assertTrue(results[0]['docked'])
         self.assertAlmostEqual(sim.x, 0.)
+        self.assertEqual(sim.lights, [255, 0])
         # The ordinary copy cycle retains its absolute saved-dock guard.
         sim, results = self.run_motion('dock', 'shifted-map')
         self.assertFalse(results)
@@ -209,6 +211,11 @@ class MotionTest(unittest.TestCase):
             sim, results = self.run_motion('dock', failure, recovery=True)
             self.assertFalse(results)
             self.assertFalse(sim.homing)
+            self.assertEqual(sim.lights, [255, 0])
+        sim, results = self.run_motion('dock', 'lamp-unavailable', recovery=True)
+        self.assertFalse(results)
+        self.assertEqual(sim.lights, [])
+        self.assertNotIn('/robot_decision/auto_recharge', sim.calls)
 
     def test_dock_service_reports_first_guard_failure(self):
         sim, results = self.run_motion('dock', 'rtk-during-service', recovery=True)
