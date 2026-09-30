@@ -489,7 +489,7 @@ describe('toepassen op de maaier: status voor het dashboard', () => {
     await request(server).post(applyUrl).send({}); await tick();
     expect((await request(server).post(applyUrl).send({})).status).toBe(409);
     expect(phases()).toEqual(['syncing']);
-    expect(vi.mocked(publishToExtended).mock.calls.filter(c => c[1].sync_map)).toHaveLength(1);
+    await vi.waitFor(() => expect(vi.mocked(publishToExtended).mock.calls.filter(c => c[1].sync_map)).toHaveLength(1));
     await answer({ sync_map_respond: { result: 0 } }); await tick();
     await answer({ regenerate_per_map_files_respond: { result: 0 } });
     await new Promise(r => setTimeout(r, 80));

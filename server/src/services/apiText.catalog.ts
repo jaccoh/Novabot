@@ -70,10 +70,10 @@ export const CATALOG: Catalog = {
     fr: "L’origine diffère de la sauvegarde et de la correction proposée. Vérifiez d’abord.",
     de: "Der Ursprung weicht sowohl von der Sicherung als auch von der vorgeschlagenen Korrektur ab. Zuerst untersuchen.",
   },
-  "Begin stilstaand op het eigen dock met vers laadcontact en RTK Fixed.": {
-    en: "Start stationary on the own dock with fresh charging contact and RTK Fixed.",
-    fr: "Commencez à l’arrêt sur la station d’origine avec un contact de charge récent et RTK Fixed.",
-    de: "Starten Sie im Stillstand auf der eigenen Ladestation mit aktuellem Ladekontakt und RTK Fixed.",
+  "Begin stilstaand op het eigen dock met vers laadcontact en lokalisatie.": {
+    en: "Start stationary on the own dock with fresh charging contact and localization.",
+    fr: "Commencez à l’arrêt sur la station d’origine avec un contact de charge récent et la localisation active.",
+    de: "Starten Sie im Stillstand auf der eigenen Ladestation mit aktuellem Ladekontakt und aktiver Lokalisierung.",
   },
   "Na de oorsprongwijziging is geen verse gelokaliseerde positie minstens 40 cm van het dock gemeten.": {
     en: "After changing the origin, no fresh localized position at least 40 cm from the dock was measured.",
