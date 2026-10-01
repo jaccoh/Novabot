@@ -268,8 +268,8 @@
     "saveError": "Speichern fehlgeschlagen",
     "copyAuto": {
       "title": "Quellmäher automatisch messen",
-      "description": "Der Quellmäher fährt etwa 50 cm rückwärts, misst, fährt weitere 20 cm zurück, misst erneut und dockt mit der Kamera an. Lassen Sie diesen Assistenten geöffnet.",
-      "confirm": "Ich stehe beim Quellmäher. Er steht auf seiner eigenen Station und der gerade Ausfahrweg von 1,2 m ist frei.",
+      "description": "Der Quellmäher fährt etwa 1 m rückwärts, misst, fährt weitere 20 cm zurück, misst erneut und dockt mit der Kamera an. Lassen Sie diesen Assistenten geöffnet.",
+      "confirm": "Ich stehe beim Quellmäher. Er steht auf seiner eigenen Station und der gerade Ausfahrweg von 1,5 m ist frei.",
       "start": "Rückwärtsfahrt, Messung und Andocken starten",
       "stop": "Messzyklus stoppen",
       "stopping": "Stopp angefordert; auf den Mäher warten.",
@@ -277,7 +277,7 @@
       "phases": {
         "starting": "Starten",
         "checking": "Eigene Station und Lokalisierung prüfen",
-        "reverse_first": "Etwa 50 cm rückwärts fahren",
+        "reverse_first": "Etwa 1 m rückwärts fahren",
         "measure_first": "Stillstand und erste Dockmessung",
         "reverse_second": "Weitere 20 cm rückwärts fahren",
         "measure_second": "Stillstand und zweite Dockmessung",

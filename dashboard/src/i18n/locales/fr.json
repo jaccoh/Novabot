@@ -268,8 +268,8 @@
     "saveError": "Échec de l'enregistrement",
     "copyAuto": {
       "title": "Mesurer automatiquement la tondeuse source",
-      "description": "La tondeuse source recule d’environ 50 cm, mesure, recule encore de 20 cm, mesure à nouveau puis rejoint sa station avec la caméra. Gardez cet assistant ouvert.",
-      "confirm": "Je suis près de la tondeuse source. Elle est sur sa propre station et le trajet droit de sortie de 1,2 m est libre.",
+      "description": "La tondeuse source recule d’environ 1 m, mesure, recule encore de 20 cm, mesure à nouveau puis rejoint sa station avec la caméra. Gardez cet assistant ouvert.",
+      "confirm": "Je suis près de la tondeuse source. Elle est sur sa propre station et le trajet droit de sortie de 1,5 m est libre.",
       "start": "Lancer le recul, les mesures et l’amarrage",
       "stop": "Arrêter le cycle de mesure",
       "stopping": "Arrêt demandé ; attente de la tondeuse.",
@@ -277,7 +277,7 @@
       "phases": {
         "starting": "Démarrage",
         "checking": "Vérification de la station et de la localisation",
-        "reverse_first": "Recul d’environ 50 cm",
+        "reverse_first": "Recul d’environ 1 m",
         "measure_first": "Immobilisation et première mesure",
         "reverse_second": "Recul de 20 cm supplémentaires",
         "measure_second": "Immobilisation et deuxième mesure",

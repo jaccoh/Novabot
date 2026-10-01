@@ -300,8 +300,8 @@
     "saveError": "Saving failed",
     "copyAuto": {
       "title": "Measure source mower automatically",
-      "description": "The source mower reverses about 50 cm, measures, reverses another 20 cm, measures again and docks using its camera. Keep this wizard open.",
-      "confirm": "I am beside the source mower. It is on its own dock and the straight 1.2 m departure path is clear.",
+      "description": "The source mower reverses about 1 m, measures, reverses another 20 cm, measures again and docks using its camera. Keep this wizard open.",
+      "confirm": "I am beside the source mower. It is on its own dock and the straight 1.5 m departure path is clear.",
       "start": "Start reversing, measuring and docking",
       "stop": "Stop measurement cycle",
       "stopping": "Stop requested; waiting for the mower.",
@@ -309,7 +309,7 @@
       "phases": {
         "starting": "Starting",
         "checking": "Checking own dock and localization",
-        "reverse_first": "Reversing about 50 cm",
+        "reverse_first": "Reversing about 1 m",
         "measure_first": "Settling and first dock measurement",
         "reverse_second": "Reversing another 20 cm",
         "measure_second": "Settling and second dock measurement",

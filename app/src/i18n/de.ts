@@ -1,6 +1,6 @@
 export default {
   reanchorUpdateRequired: "Aktualisiere den OpenNova-Server für die beaufsichtigte Neuverankerung.",
-  reanchorSupervisedIntro: "Der Mäher fährt etwa 50 cm rückwärts und kehrt über das Dockmuster zurück, um seine Richtung zu initialisieren. Falls der Ursprung korrigiert werden muss, wiederholt er diese Prüfung danach. Bleibe beim Mäher und halte den Weg frei.",
+  reanchorSupervisedIntro: "Der Mäher fährt etwa 1 m rückwärts und kehrt über das Dockmuster zurück, um seine Richtung zu initialisieren. Falls der Ursprung korrigiert werden muss, wiederholt er diese Prüfung danach. Bleibe beim Mäher und halte den Weg frei.",
   reanchorConfirmOwnDock: "Ich bin beim Mäher an seiner eigenen Station. Die Station wurde seit der Aufnahme dieser Zonen nicht versetzt.",
   reanchorStop: "Stoppen",
   reanchorRetryHint: "Fahre den Mäher mit dem Joystick zurück auf seine eigene Station und starte die vollständige Prüfung erneut.",

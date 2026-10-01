@@ -1,6 +1,6 @@
 export default {
   reanchorUpdateRequired: "Werk de OpenNova-server bij om begeleid te herankeren.",
-  reanchorSupervisedIntro: "De maaier rijdt ongeveer 50 cm achteruit en keert via het dockpatroon terug om de richting te initialiseren. Als de oorsprong moet worden hersteld, herhaalt hij deze controle daarna. Blijf bij de maaier en houd het pad vrij.",
+  reanchorSupervisedIntro: "De maaier rijdt ongeveer 1 m achteruit en keert via het dockpatroon terug om de richting te initialiseren. Als de oorsprong moet worden hersteld, herhaalt hij deze controle daarna. Blijf bij de maaier en houd het pad vrij.",
   reanchorConfirmOwnDock: "Ik sta bij de maaier op zijn eigen dock. Het dock is niet verplaatst sinds deze zones zijn opgenomen.",
   reanchorStop: "Stoppen",
   reanchorRetryHint: "Zet de maaier met de joystick terug op zijn eigen dock en start de volledige controle opnieuw.",

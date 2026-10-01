@@ -1,6 +1,6 @@
 export default {
   reanchorUpdateRequired: "Mettez à jour le serveur OpenNova pour utiliser le réancrage supervisé.",
-  reanchorSupervisedIntro: "La tondeuse recule d’environ 50 cm et revient grâce au motif de la station pour initialiser son orientation. Si l’origine doit être corrigée, elle répète ensuite ce contrôle. Restez près de la tondeuse et dégagez le passage.",
+  reanchorSupervisedIntro: "La tondeuse recule d’environ 1 m et revient grâce au motif de la station pour initialiser son orientation. Si l’origine doit être corrigée, elle répète ensuite ce contrôle. Restez près de la tondeuse et dégagez le passage.",
   reanchorConfirmOwnDock: "Je suis près de la tondeuse sur sa propre station. La station n’a pas été déplacée depuis l’enregistrement de ces zones.",
   reanchorStop: "Arrêter",
   reanchorRetryHint: "Ramenez la tondeuse sur sa propre station avec le joystick, puis relancez le contrôle complet.",

@@ -1,6 +1,6 @@
 export default {
   reanchorUpdateRequired: "Update the OpenNova server to use supervised re-anchoring.",
-  reanchorSupervisedIntro: "The mower reverses about 50 cm and returns using the dock pattern to initialize its heading. If the origin needs correction, it repeats this check afterwards. Stay with the mower and keep the path clear.",
+  reanchorSupervisedIntro: "The mower reverses about 1 m and returns using the dock pattern to initialize its heading. If the origin needs correction, it repeats this check afterwards. Stay with the mower and keep the path clear.",
   reanchorConfirmOwnDock: "I am with the mower on its own dock. The dock has not moved since these zones were recorded.",
   reanchorStop: "Stop",
   reanchorRetryHint: "Return the mower to its own dock with the joystick, then restart the complete check.",

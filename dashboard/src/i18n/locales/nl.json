@@ -371,8 +371,8 @@
     "saveError": "Opslaan mislukt",
     "copyAuto": {
       "title": "Bronmaaier automatisch meten",
-      "description": "De bronmaaier rijdt circa 50 cm achteruit, meet, rijdt nog 20 cm achteruit, meet opnieuw en dockt via de camera. Houd deze wizard open.",
-      "confirm": "Ik sta bij de bronmaaier. Hij staat op zijn eigen dock en de rechte uitrit van 1,2 m is vrij.",
+      "description": "De bronmaaier rijdt circa 1 m achteruit, meet, rijdt nog 20 cm achteruit, meet opnieuw en dockt via de camera. Houd deze wizard open.",
+      "confirm": "Ik sta bij de bronmaaier. Hij staat op zijn eigen dock en de rechte uitrit van 1,5 m is vrij.",
       "start": "Start uitrijden, meten en docken",
       "stop": "Stop meetcyclus",
       "stopping": "Stop aangevraagd; wachten op de maaier.",
@@ -380,7 +380,7 @@
       "phases": {
         "starting": "Starten",
         "checking": "Eigen dock en lokalisatie controleren",
-        "reverse_first": "Circa 50 cm achteruitrijden",
+        "reverse_first": "Circa 1 m achteruitrijden",
         "measure_first": "Stilstand en eerste dockmeting",
         "reverse_second": "Nog circa 20 cm achteruitrijden",
         "measure_second": "Stilstand en tweede dockmeting",
