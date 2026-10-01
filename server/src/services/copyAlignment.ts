@@ -258,6 +258,15 @@ export async function captureCopyAlignment(alignmentId: string, side: CopyAlignm
 }
 
 /** Both leases remain held through fresh observations, device install and the caller's commit. */
+/** A pointed source dock has no marker session to re-verify; the installer still compares a fresh read of the target. */
+export function pointedDockVerifier(targetSn: string, operation: MowerMapOperation) {
+  return async () => ({ verifyRuntime: async (): Promise<Record<string, unknown>> => {
+    const current = await readMowerMapSnapshot(targetSn, operation);
+    if (!current || current.result !== 0) throw new Error('The final check could not read the mower map files.');
+    return current;
+  } });
+}
+
 export async function validateCopyAlignment(alignmentId: string, input: {
   targetSn: string; sourceSn: string; canonical: string; sourceSnapshot: Snapshot; targetSnapshot: Snapshot;
   sourceOperation: MowerMapOperation; targetOperation: MowerMapOperation;

@@ -463,3 +463,15 @@ it('rejects session expiry while fresh runtime measurements are in flight', asyn
   });
   await expect(validate(id)).rejects.toThrow('expired');
 });
+
+it('a pointed source dock verifies by re-reading the target, and refuses an unreadable or failed read', async () => {
+  const { pointedDockVerifier } = await import('../../services/copyAlignment.js');
+  const operation = { sn: 'B', id: 'lease' } as unknown as MowerMapOperation;
+  vi.mocked(readMowerMapSnapshot).mockResolvedValueOnce({ result: 0, pos_json: 'p', csv_files: {} });
+  await expect((await pointedDockVerifier('B', operation)()).verifyRuntime()).resolves.toMatchObject({ pos_json: 'p' });
+  expect(readMowerMapSnapshot).toHaveBeenLastCalledWith('B', operation);
+  for (const read of [null, { result: 1, error: 'busy' }]) {
+    vi.mocked(readMowerMapSnapshot).mockResolvedValueOnce(read);
+    await expect((await pointedDockVerifier('B', operation)()).verifyRuntime()).rejects.toThrow('could not read');
+  }
+});

@@ -30,6 +30,7 @@ vi.mock('../../services/copyAlignment.js', () => ({
     return { dockAtB: id === 'far' ? { x: 50, y: 50 } : { x: 0.1, y: -0.5 }, verifyRuntime: async () => {} };
   }),
   consumeCopyAlignment: vi.fn(),
+  pointedDockVerifier: vi.fn(() => async () => ({ verifyRuntime: async () => ({}) })),
 }));
 
 // Device transfer/readback is covered by installZoneCopy.test.ts. The route
@@ -146,6 +147,7 @@ import { isDeviceOnline } from '../../mqtt/broker.js';
 import { mapRepo } from '../../db/repositories/index.js';
 import { withConfirmedCopyDocks } from '../../services/dockChannelRepair.js';
 import { captureCopyAlignment, consumeCopyAlignment, validateCopyAlignment } from '../../services/copyAlignment.js';
+import { deviceSettingsRepo } from '../../db/repositories/deviceSettings.js';
 import { installZoneCopy } from '../../services/installZoneCopy.js';
 import { persistZoneCopy } from '../../services/zoneCopy.js';
 import { withMowerMapOperation } from '../../services/mowerMapOperation.js';
@@ -212,18 +214,39 @@ describe('zone copy routes', () => {
     });
   });
 
-  it('a photo point or legacy position token cannot bypass the marker wizard', async () => {
+  it('an ambiguous or legacy position input cannot bypass the marker wizard', async () => {
     const before = mapRepo.findByMowerSn(B);
     for (const suffix of ['', '/preview']) for (const extra of [
-      { dockAtB: dockB }, { dockAtB: dockB, alignmentId: 'verified' },
+      { dockAtB: dockB, alignmentId: 'verified' }, { dockAtB: { x: 'a', y: 1 } }, { dockAtB: { x: 0, y: Number.NaN } },
       { measurementId: 'old-position-token', alignmentId: 'verified' }, { alignmentId: 'unknown' },
     ]) {
       const res = await request(server).post(url(suffix)).send({ canonical: 'map0', ...extra });
-      expect(res.status).toBe(409);
+      expect([400, 409]).toContain(res.status);
       expect(mapRepo.findByMowerSn(B)).toEqual(before);
     }
     expect(publishToExtended).not.toHaveBeenCalled();
     expect(consumeCopyAlignment).not.toHaveBeenCalled();
+  });
+
+  it('quick placement: a pointed source dock previews and copies without a marker measurement, and the origin is remembered', async () => {
+    const preview = await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: dockB });
+    expect(preview.status).toBe(200);
+    expect(preview.body.ok).toBe(true);
+    expect(preview.body.channels[0].canonical).toBe('map0tocharge_unicom');
+    expect(mapRepo.findByMowerSn(B)).toHaveLength(1);
+    expect(validateCopyAlignment).not.toHaveBeenCalled();
+
+    const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB, name: 'Achtertuin' });
+    expect(res.status).toBe(200);
+    expect(res.body.map.canonicalName).toBe('map0');
+    expect(mapRepo.findByMowerSn(B).map(r => r.canonical_name).sort()).toEqual(['map0', 'map0_0_obstacle', 'map0tocharge_unicom']);
+    expect(consumeCopyAlignment).not.toHaveBeenCalled();
+    expect(validateCopyAlignment).not.toHaveBeenCalled();
+    // Nudging later re-runs the copy from this origin; the listing exposes it.
+    const origin = deviceSettingsRepo.findBySn(B).find(r => r.key === 'zone_copy:map0');
+    expect(JSON.parse(origin!.value)).toMatchObject({ sourceSn: A, sourceCanonical: 'map0', dockAtB: dockB });
+    const listed = await request(server).get(`/api/dashboard/maps/${B}`);
+    expect(listed.body.maps.find((m: { canonicalName: string }) => m.canonicalName === 'map0').copyOrigin).toMatchObject({ sourceSn: A, sourceCanonical: 'map0', dockAtB: dockB });
   });
 
   it('rejects malformed copy options before measurement or mutation', async () => {
@@ -298,6 +321,7 @@ describe('zone copy routes', () => {
     expect(vi.mocked(installZoneCopy).mock.calls[0][2]).toEqual({ alias: res.body.map.mapName, acceptChannel: true });
     const rows = mapRepo.findByMowerSn(B).map(r => r.canonical_name).sort();
     expect(rows).toEqual(['map0', 'map0_0_obstacle', 'map0tocharge_unicom']);
+    expect(JSON.parse(deviceSettingsRepo.findBySn(B).find(r => r.key === 'zone_copy:map0')!.value)).toMatchObject({ sourceSn: A, sourceCanonical: 'map0' });
     await new Promise(r => setTimeout(r, 0));
     const sent = vi.mocked(publishToExtended).mock.calls.map(c => Object.keys(c[1] as object)[0]);
     expect(sent).toEqual([]);

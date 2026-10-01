@@ -73,7 +73,7 @@ import { freshPositionState, stablePosition } from '../services/positionTelemetr
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
 import { installZoneCopy } from '../services/installZoneCopy.js';
-import { beginCopyAlignment, captureCopyAlignment, getCopyAlignment, validateCopyAlignment, consumeCopyAlignment } from '../services/copyAlignment.js';
+import { beginCopyAlignment, captureCopyAlignment, getCopyAlignment, validateCopyAlignment, consumeCopyAlignment, pointedDockVerifier } from '../services/copyAlignment.js';
 import { startSourceDockCycle, sourceDockCycle } from '../services/sourceDockCycle.js';
 import { startDockReturn, dockReturn } from '../services/dockReturnCycle.js';
 import { applyMapsToMower as autoPushMapsInBackground, getMapApplySnapshot } from '../services/mowerMapApply.js';
@@ -737,6 +737,13 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
     }
   }
 
+  // Copied zones remember their source and the pointed/measured source dock, so
+  // the dashboard can offer to nudge them (re-copy from a corrected dockAtB).
+  const copyOrigins = new Map<string, unknown>();
+  for (const s of deviceSettingsRepo.findBySn(sn)) {
+    if (!s.key.startsWith(ZONE_COPY_ORIGIN_KEY)) continue;
+    try { copyOrigins.set(s.key.slice(ZONE_COPY_ORIGIN_KEY.length), JSON.parse(s.value)); } catch { /* unreadable origin: no nudge offer */ }
+  }
   const maps = rows.map(r => {
     let mapArea: LocalPoint[] = [];
     let mapMaxMin: Record<string, number> | null = null;
@@ -772,6 +779,7 @@ dashboardRouter.get('/maps/:sn', (req: Request, res: Response) => {
       // Where the zone came from (#120): mower (driven), drawn, import, or
       // null for rows older than the column.
       source: r.source ?? null,
+      copyOrigin: (r.map_type ?? 'work') === 'work' && r.canonical_name ? copyOrigins.get(r.canonical_name) ?? null : null,
     };
   });
 
@@ -1945,8 +1953,13 @@ dashboardRouter.post('/maps/:sn/repair-dock-channel', async (req: Request, res: 
 // Spec: docs/superpowers/specs/2026-09-24-copy-zone-between-mowers-design.md
 // De kopie is een getekende zone met voorgevulde geometrie: zelfde rijen,
 // zelfde push (autoPushMapsInBackground), zelfde kanaal-prompt in het dashboard.
+/** device_settings key prefix + slot (map0..map4): where a copied zone came from. */
+const ZONE_COPY_ORIGIN_KEY = 'zone_copy:';
 interface ZoneCopyBody {
+  /** Marker measurement with both mowers (cm). */
   alignmentId?: string;
+  /** Or: where the source dock stands, pointed on the target's map (dm). */
+  dockAtB?: { x: number; y: number };
   canonical?: string;
   withObstacles?: boolean;
   name?: string;
@@ -2038,7 +2051,9 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/alignment', async (req: Reques
   }
 });
 
-function requiresCopyAlignment(body: unknown, res: Response): body is ZoneCopyBody & { alignmentId: string } {
+type CopyInput = ZoneCopyBody & ({ alignmentId: string; dockAtB?: undefined } | { alignmentId?: undefined; dockAtB: { x: number; y: number } });
+/** Exactly one correspondence: a marker measurement, or a pointed source dock. */
+function validCopyBody(body: unknown, res: Response): body is CopyInput {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     res.status(400).json({ ok: false, reason: 'invalid_body', error: 'Een kopieerverzoek moet een JSON-object zijn.' }); return false;
   }
@@ -2049,8 +2064,18 @@ function requiresCopyAlignment(body: unknown, res: Response): body is ZoneCopyBo
     ['withObstacles', 'acceptChannel'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')) {
     res.status(400).json({ ok: false, reason: 'invalid_body', error: 'Ongeldige zone of kopieeropties.' }); return false;
   }
-  if (typeof value.alignmentId === 'string' && value.alignmentId.length > 0 && !('dockAtB' in body) && !('measurementId' in body)) return true;
-  res.status(409).json({ ok: false, reason: 'alignment_required', error: 'Doorloop eerst de verplichte metingen bij het bronlaadstation. Een fotopunt of losse positiemeting kan deze stap niet vervangen.' });
+  const dock = value.dockAtB as Record<string, unknown> | undefined;
+  const hasAlignment = typeof value.alignmentId === 'string' && value.alignmentId.length > 0;
+  const hasDock = !!dock && typeof dock === 'object' && Number.isFinite(dock.x) && Number.isFinite(dock.y);
+  if ('measurementId' in body || (!('alignmentId' in body) && !('dockAtB' in body))) {
+    res.status(409).json({ ok: false, reason: 'alignment_required', error: 'Meet het bronlaadstation met beide maaiers of wijs het aan op de kaart van de doelmaaier. Een losse positiemeting kan deze stap niet vervangen.' });
+    return false;
+  }
+  if ('alignmentId' in body && 'dockAtB' in body) {
+    res.status(400).json({ ok: false, reason: 'ambiguous_dock', error: 'Kies óf de meting óf het aangewezen laadstation, niet beide.' }); return false;
+  }
+  if (hasAlignment || hasDock) return true;
+  res.status(400).json({ ok: false, reason: 'bad_dock', error: 'Geef de positie van het laadstation van de bronmaaier als eindige x/y in meters.' });
   return false;
 }
 
@@ -2059,14 +2084,16 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request,
   const { sn, source } = req.params;
   if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
   const body = (req.body ?? {}) as ZoneCopyBody;
-  if (!requiresCopyAlignment(body, res)) return;
+  if (!validCopyBody(body, res)) return;
   if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source)) {
     res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
   }
   try {
     await withConfirmedCopyDocks(sn, source, async docks => {
-      const alignment = await validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks });
-      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, replaceCanonical: body.replaceCanonical, docks }, T);
+      const dockAtB = body.alignmentId
+        ? (await validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks })).dockAtB
+        : body.dockAtB;
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), dockAtB, { withObstacles: body.withObstacles !== false, replaceCanonical: body.replaceCanonical, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       res.json({
         ...r.plan,
@@ -2089,16 +2116,16 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
     return;
   }
   const body = (req.body ?? {}) as ZoneCopyBody;
-  if (!requiresCopyAlignment(body, res)) return;
+  if (!validCopyBody(body, res)) return;
   if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source)) {
     res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
   }
   // Altijd server-side herberekenen: de client stuurt alleen de correspondentie, nooit geometrie.
   try {
     await withConfirmedCopyDocks(sn, source, async docks => {
-      const alignment = getCopyAlignment(body.alignmentId, sn, source, String(body.canonical ?? ''));
-      if (!alignment.dockAtB) throw new Error('Meet het bronlaadstation eerst tweemaal met iedere maaier.');
-      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), alignment.dockAtB, { withObstacles: body.withObstacles !== false, replaceCanonical: body.replaceCanonical, docks }, T);
+      const dockAtB = body.alignmentId ? getCopyAlignment(body.alignmentId, sn, source, String(body.canonical ?? '')).dockAtB : body.dockAtB;
+      if (!dockAtB) throw new Error('Meet het bronlaadstation eerst tweemaal met iedere maaier.');
+      const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), dockAtB, { withObstacles: body.withObstacles !== false, replaceCanonical: body.replaceCanonical, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       if (!r.plan.ok) {
         res.status(409).json({ ok: false, reason: r.plan.refusal, error: zoneCopyRefusalText(r.plan.refusal!, T) });
@@ -2107,9 +2134,16 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
       const typedName = (body.name ?? '').trim();
       const alias = typedName || (r.sourceAlias ? `${r.sourceAlias} (${T`kopie`})` : null);
       const acceptChannel = body.acceptChannel !== false;
-      const saved = await installZoneCopy(sn, r.plan, { alias, acceptChannel }, docks,
-        () => validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks }));
-      consumeCopyAlignment(body.alignmentId);
+      // A pointed dock has no marker session to re-verify; the installer still
+      // compares a fresh read of the target against what it just installed.
+      const verify = body.alignmentId
+        ? () => validateCopyAlignment(body.alignmentId, { targetSn: sn, sourceSn: source, canonical: String(body.canonical ?? ''), ...docks })
+        : pointedDockVerifier(sn, docks.targetOperation);
+      const saved = await installZoneCopy(sn, r.plan, { alias, acceptChannel }, docks, verify);
+      if (body.alignmentId) consumeCopyAlignment(body.alignmentId);
+      // Nudging re-runs the copy from this correspondence (replaceCanonical = this slot).
+      deviceSettingsRepo.upsert(sn, `${ZONE_COPY_ORIGIN_KEY}${r.plan.canonical}`,
+        JSON.stringify({ sourceSn: source, sourceCanonical: String(body.canonical ?? ''), dockAtB, at: new Date().toISOString() }));
       res.json({
         ok: true,
         map: {
@@ -2413,6 +2447,8 @@ dashboardRouter.delete('/maps/:sn/:mapId', async (req: Request, res: Response) =
   }
 
   const deleted = mapRepo.deleteWithCascade(mapId, sn);
+  // A deleted zone has nothing left to nudge from.
+  if ((row.map_type ?? 'work') === 'work' && row.canonical_name) deviceSettingsRepo.remove(sn, `${ZONE_COPY_ORIGIN_KEY}${row.canonical_name}`);
 
   // STORAGE_PATH env var lands the ZIPs under e.g. /data/storage/maps in Docker.
   // The old code used a cwd-relative path (./storage/maps) which silently
