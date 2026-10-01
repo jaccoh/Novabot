@@ -56,6 +56,9 @@ export interface MapData {
   /** Original CSV filename as stored on disk. Useful as a fallback when
    *  canonicalName couldn't be derived (legacy rows pre-auto-derive). */
   fileName: string | null;
+  /** Set on a zone copied from another mower: where it came from and where the
+   *  source dock was placed in this mower's frame, so the copy can be nudged. */
+  copyOrigin?: { sourceSn: string; sourceCanonical: string; dockAtB: LocalPoint; at?: string } | null;
 }
 
 /** Response from /maps/:sn includes charger GPS for local→GPS conversion */

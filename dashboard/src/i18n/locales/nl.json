@@ -743,7 +743,24 @@
       "err_target_unreachable": "De maaier kan dat punt vanaf zijn plek niet bereiken.",
       "err_generic": "Naar het punt rijden mislukte: {{error}}",
       "stockOnly": "Vereist OpenNova-firmware: de stock firmware accepteert dit commando maar rijdt nooit."
-    }
+    },
+    "copyMode": "Plaatsing",
+    "copyModePoint": "Snel: laadstation van de bron aanwijzen (10–30 cm)",
+    "copyModeMeasure": "Precies: met beide maaiers meten (cm)",
+    "copyPointHint": "Klik op de kaart of sleep de oranje markering naar de plek waar het laadstation van {{source}} fysiek staat. De voorvertoonde zone kun je ook zelf verslepen; daarna rekent de server opnieuw.",
+    "copyPointMarker": "Laadstation van {{source}}",
+    "copyPointNeedsDock": "Geen bruikbare dockpositie van deze maaier: zet hem op het dock of kalibreer de kaart eerst.",
+    "nudgeButton": "Bijsturen",
+    "nudgeTitle": "Zone bijsturen: {{name}}",
+    "nudgeHint": "Versleep de zone, of rij de maaier naar een herkenbaar punt en klik op de kaart waar hij hoort te staan. De gemeten maaierpositie geldt als waarheid; alleen verschuiven, geen rotatie.",
+    "nudgePick": "Punt aanwijzen",
+    "nudgePicking": "Klik op de kaart waar de maaier hoort te staan",
+    "nudgePairs": "{{n}} punt(en) · verschuiving {{dx}} m / {{dy}} m",
+    "nudgeResidual": "restafwijking tot {{cm}} cm",
+    "nudgeClear": "Punten wissen",
+    "nudgeNoLive": "Geen verse maaierpositie beschikbaar.",
+    "copyZoneApplyNudge": "Verschuiving toepassen",
+    "copyZoneNudged": "{{name}} verschoven en opnieuw naar de maaier gestuurd."
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",

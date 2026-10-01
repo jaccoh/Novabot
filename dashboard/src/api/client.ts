@@ -363,17 +363,20 @@ export async function controlSourceDockCycle(sn: string, source: string, cycleId
   return res.json();
 }
 
+/** One correspondence: the marker alignment (cm) or the source dock pointed on this mower's map (dm). */
+export type ZoneCopyBy = { alignmentId: string; dockAtB?: undefined } | { alignmentId?: undefined; dockAtB: LocalPoint };
+
 /** Plan zonder te schrijven. Invoerfouten (400/404/409) komen als Error met de servertekst. */
-export async function previewZoneCopy(sn: string, source: string, canonical: string, alignmentId: string, withObstacles = true, replaceCanonical?: string): Promise<ZoneCopyPlan> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, alignmentId, withObstacles, replaceCanonical });
+export async function previewZoneCopy(sn: string, source: string, canonical: string, by: ZoneCopyBy, withObstacles = true, replaceCanonical?: string): Promise<ZoneCopyPlan> {
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}/preview`, { canonical, ...by, withObstacles, replaceCanonical });
   return res.json();
 }
 
 export async function copyZone(
-  sn: string, source: string, canonical: string, alignmentId: string,
+  sn: string, source: string, canonical: string, by: ZoneCopyBy,
   opts: { withObstacles?: boolean; name?: string; acceptChannel?: boolean; replaceCanonical?: string } = {},
 ): Promise<ZoneCopyResult> {
-  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, alignmentId, ...opts });
+  const res = await post(`${BASE}/maps/${encodeURIComponent(sn)}/copy-from/${encodeURIComponent(source)}`, { canonical, ...by, ...opts });
   return res.json();
 }
 

@@ -640,7 +640,24 @@
       "err_target_unreachable": "Der Mäher kann diesen Punkt von seiner Position aus nicht erreichen.",
       "err_generic": "Fahrt zum Punkt fehlgeschlagen: {{error}}",
       "stockOnly": "Benötigt OpenNova-Firmware: Die Original-Firmware nimmt den Befehl an, fährt aber nie."
-    }
+    },
+    "copyMode": "Platzierung",
+    "copyModePoint": "Schnell: Ladestation der Quelle anzeigen (10–30 cm)",
+    "copyModeMeasure": "Präzise: mit beiden Mähern messen (cm)",
+    "copyPointHint": "Klicken Sie auf die Karte oder ziehen Sie die orange Markierung dorthin, wo die Ladestation von {{source}} physisch steht. Die Vorschau-Zone lässt sich auch direkt verschieben; der Server plant danach neu.",
+    "copyPointMarker": "Ladestation von {{source}}",
+    "copyPointNeedsDock": "Keine brauchbare Dockposition dieses Mähers: erst andocken oder die Karte kalibrieren.",
+    "nudgeButton": "Nachjustieren",
+    "nudgeTitle": "Zone nachjustieren: {{name}}",
+    "nudgeHint": "Verschieben Sie die Zone, oder fahren Sie den Mäher zu einem erkennbaren Punkt und klicken Sie auf der Karte, wo er stehen sollte. Die gemessene Mäherposition gilt als Wahrheit; nur Verschiebung, keine Drehung.",
+    "nudgePick": "Punkt wählen",
+    "nudgePicking": "Klicken Sie auf der Karte, wo der Mäher stehen sollte",
+    "nudgePairs": "{{n}} Punkt(e) · Verschiebung {{dx}} m / {{dy}} m",
+    "nudgeResidual": "Restabweichung bis {{cm}} cm",
+    "nudgeClear": "Punkte löschen",
+    "nudgeNoLive": "Keine aktuelle Mäherposition verfügbar.",
+    "copyZoneApplyNudge": "Verschiebung anwenden",
+    "copyZoneNudged": "{{name}} verschoben und erneut an den Mäher gesendet."
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

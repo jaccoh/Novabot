@@ -31,7 +31,7 @@ import {
   refreshPreviewPath, getPlanPath, refreshPlanPath,
   fetchCoveragePlannerRadius, updateCoveragePlannerRadius,
   applyPolygonOffset, fetchPolygonOffset, isUnsupportedFirmwareError,
-  previewZoneCopy, copyZone, captureZoneCopyAlignment, fetchDevices, type ZoneCopyPlan, type ZoneCopyAlignment, applyMapsToMower,
+  previewZoneCopy, copyZone, captureZoneCopyAlignment, fetchDevices, type ZoneCopyPlan, type ZoneCopyAlignment, type ZoneCopyBy, applyMapsToMower,
   type VirtualWall, type EditGeometryDto, type CoveragePathEntry,
 } from '../../api/client';
 import { localToGps, gpsToLocal, isUsableChargerGps, calibrateGps, uncalibrateGps, splitMapCalibration } from '../../utils/coords';
@@ -104,8 +104,11 @@ const COPY_PREVIEW_STYLES = {
   obstacle: { color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.45, weight: 2 },
   channel:  { color: '#f59e0b', dashArray: '6 4', weight: 4 },
 } as const;
+/** Orange pin: "the source mower's dock stands here" (point mode, draggable). */
+const sourceDockIcon = L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+  html: '<div style="width:22px;height:22px;border-radius:50%;background:#f59e0b;border:3px solid #fff;box-shadow:0 0 0 2px #f59e0b;cursor:grab"></div>' });
 
-/** Each copy requires fresh observations of the same physical source dock. */
+/** One correspondence per copy: the source dock measured by both mowers (cm), or pointed on this map (dm). */
 interface CopyPanelState {
   sources: DeviceState[];
   sourceSn: string | null;
@@ -118,6 +121,16 @@ interface CopyPanelState {
   error: string | null;
   alignment: ZoneCopyAlignment | null;
   atSourceDock: boolean;
+  mode: 'point' | 'measure';
+  /** Where the source dock stands, in this mower's frame (point mode). */
+  dockAtB: LocalPoint | null;
+  /** Nudging an existing copy: re-run it from a shifted dockAtB. */
+  nudge: { name: string; base: LocalPoint; pairs: { live: LocalPoint; clicked: LocalPoint }[]; picking: boolean } | null;
+}
+/** Mean of (where the mower really stands − where the copy says it stands); frames are UTM-aligned, so no rotation. */
+function nudgeDelta(pairs: { live: LocalPoint; clicked: LocalPoint }[]): LocalPoint {
+  if (!pairs.length) return { x: 0, y: 0 };
+  return { x: pairs.reduce((s, p) => s + p.live.x - p.clicked.x, 0) / pairs.length, y: pairs.reduce((s, p) => s + p.live.y - p.clicked.y, 0) / pairs.length };
 }
 
 /** Bepaal kaarttype — primair uit mapType veld, fallback op mapId/mapName patronen */
@@ -964,6 +977,29 @@ function ChargerPlacer({ onPlace }: { onPlace: (lat: number, lng: number) => voi
       onPlace(e.latlng.lat, e.latlng.lng);
     },
   });
+  return null;
+}
+
+/** Drags the copy preview as a whole; the delta in mower metres moves dockAtB.
+ *  Map panning is off while dragging; the map click that Leaflet still fires on
+ *  mouseup after a drag is ignored by the caller (see copyDragEndedAt). */
+function CopyDragHandler({ start, toLocal, onMove, onEnd }: {
+  start: LocalPoint; toLocal: (latlng: L.LatLng) => LocalPoint;
+  onMove: (delta: LocalPoint) => void; onEnd: (delta: LocalPoint) => void;
+}) {
+  const map = useMap();
+  const cb = useRef({ toLocal, onMove, onEnd });
+  useEffect(() => { cb.current = { toLocal, onMove, onEnd }; });
+  useEffect(() => {
+    map.dragging.disable();
+    const delta = (e: L.LeafletMouseEvent) => { const p = cb.current.toLocal(e.latlng); return { x: p.x - start.x, y: p.y - start.y }; };
+    const move = (e: L.LeafletMouseEvent) => cb.current.onMove(delta(e));
+    const up = (e: L.LeafletMouseEvent) => cb.current.onEnd(delta(e));
+    map.on('mousemove', move);
+    map.on('mouseup', up);
+    map.getContainer().style.cursor = 'grabbing';
+    return () => { map.off('mousemove', move); map.off('mouseup', up); map.dragging.enable(); map.getContainer().style.cursor = ''; };
+  }, [map, start]);
   return null;
 }
 
@@ -2062,7 +2098,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setPlacingCharger(false);
     setEditCal(null);
     setSelectedMapId(null);
-    const pending: CopyPanelState = { sources: [], sourceSn: null, sourceMaps: [], canonical: null, replaceCanonical: null, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false };
+    const pending: CopyPanelState = { sources: [], sourceSn: null, sourceMaps: [], canonical: null, replaceCanonical: null, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false, mode: 'point', dockAtB: null, nudge: null };
     setCopyPanel(pending);
     try {
       const sources = (await fetchDevices()).filter(d => d.deviceType === 'mower' && d.sn !== sn);
@@ -2072,18 +2108,46 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }
   }, [mapWriteSupported, sn, t]);
 
+  /** First guess for the source dock on this map: its reported GPS (metres off,
+   *  each charger has its own base error) or 2 m beside our own dock. */
+  const guessSourceDock = useCallback((sourceSn: string, sources: DeviceState[]): LocalPoint => {
+    const own = { x: chargingPose?.x ?? 0, y: chargingPose?.y ?? 0 };
+    const s = sources.find(d => d.sn === sourceSn)?.sensors;
+    const lat = parseFloat(s?.latitude ?? s?.rtk_latitude ?? ''), lng = parseFloat(s?.longitude ?? s?.rtk_longitude ?? '');
+    if (!isUsableChargerGps(chargerGps) || !Number.isFinite(lat) || !Number.isFinite(lng) || (Math.abs(lat) < 1e-3 && Math.abs(lng) < 1e-3)) return { x: own.x + 2, y: own.y };
+    const l = gpsToLocal({ lat, lng }, chargerGps);
+    return { x: l.x + own.x, y: l.y + own.y };
+  }, [chargerGps, chargingPose]);
+
   const chooseCopySource = useCallback(async (sourceSn: string) => {
     if (!copyPanel || copyPanel.pending) return;
-    const pending: CopyPanelState = { ...copyPanel, sourceSn, sourceMaps: [], canonical: null, alignment: null, atSourceDock: false, pending: 'source', plan: null, error: null };
+    const pending: CopyPanelState = { ...copyPanel, sourceSn, sourceMaps: [], canonical: null, alignment: null, atSourceDock: false, pending: 'source', plan: null, error: null, dockAtB: null, nudge: null };
     setCopyPanel(pending);
     try {
       const { maps: srcMaps } = await fetchMaps(sourceSn);
       const work = srcMaps.filter(m => m.mapType === 'work' && m.canonicalName);
-      setCopyPanel(prev => prev === pending ? { ...prev, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, pending: null } : prev);
+      setCopyPanel(prev => prev === pending ? { ...prev, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, pending: null, dockAtB: guessSourceDock(sourceSn, prev.sources) } : prev);
     } catch (err) {
       setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
     }
-  }, [copyPanel]);
+  }, [copyPanel, guessSourceDock]);
+
+  /** Nudge an existing copy: same wizard, same source and slot, starting from the dockAtB it was placed with. */
+  const openNudge = useCallback(async (m: Omit<MapData, 'mapArea'>) => {
+    if (!mapWriteSupported || !m.copyOrigin || !m.canonicalName) return;
+    setNavigateMode(false); setWallDrawMode(false); setPlacingCharger(false); setEditCal(null); setSelectedMapId(m.mapId);
+    const { sourceSn, sourceCanonical, dockAtB } = m.copyOrigin;
+    const pending: CopyPanelState = { sources: [], sourceSn, sourceMaps: [], canonical: sourceCanonical, replaceCanonical: m.canonicalName, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false, mode: 'point', dockAtB,
+      nudge: { name: m.mapName || m.canonicalName, base: dockAtB, pairs: [], picking: false } };
+    setCopyPanel(pending);
+    try {
+      const [devices, { maps: srcMaps }] = await Promise.all([fetchDevices(), fetchMaps(sourceSn)]);
+      const sources = devices.filter(d => d.deviceType === 'mower' && d.sn !== sn);
+      setCopyPanel(prev => prev === pending ? { ...prev, sources, sourceMaps: srcMaps.filter(x => x.mapType === 'work' && x.canonicalName), pending: null } : prev);
+    } catch (err) {
+      setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
+    }
+  }, [mapWriteSupported, sn]);
 
   const updateCopyPanel = useCallback((patch: Partial<CopyPanelState>) => {
     setCopyPanel(prev => {
@@ -2105,37 +2169,83 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }
   }, [sn, copyPanel]);
 
+  /** The one correspondence the server plans from, or null while it is missing. */
+  const copyBy = useCallback((p: CopyPanelState): ZoneCopyBy | null => {
+    if (p.mode === 'point') return p.dockAtB && Number.isFinite(p.dockAtB.x) && Number.isFinite(p.dockAtB.y) ? { dockAtB: p.dockAtB } : null;
+    return p.alignment?.phase === 'ready' ? { alignmentId: p.alignment.alignmentId } : null;
+  }, []);
+
   const runCopyPreview = useCallback(async () => {
-    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || copyPanel.pending || copyPanel.alignment?.phase !== 'ready') return;
+    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || copyPanel.pending) return;
+    const by = copyBy(copyPanel);
+    if (!by) return;
     const pending: CopyPanelState = { ...copyPanel, pending: 'preview', error: null, plan: null };
     setCopyPanel(pending);
     try {
-      const plan = await previewZoneCopy(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, copyPanel.withObstacles, copyPanel.replaceCanonical ?? undefined);
+      const plan = await previewZoneCopy(sn, copyPanel.sourceSn, copyPanel.canonical, by, copyPanel.withObstacles, copyPanel.replaceCanonical ?? undefined);
       setCopyPanel(prev => prev === pending ? { ...prev, plan, pending: null } : prev);
     } catch (err) {
       setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
     }
-  }, [sn, copyPanel]);
+  }, [sn, copyPanel, copyBy]);
+
+  // Point mode previews as you place: every dockAtB / zone / slot change re-plans server-side.
+  useEffect(() => {
+    if (!copyPanel || copyPanel.mode !== 'point' || copyPanel.pending || copyPanel.plan || copyPanel.error || !copyPanel.sourceSn || !copyPanel.canonical || !copyPanel.dockAtB) return;
+    const timer = setTimeout(() => { void runCopyPreview(); }, 350);
+    return () => clearTimeout(timer);
+  }, [copyPanel, runCopyPreview]);
+
+  /** Place the pointed source dock (point mode); a new place drops the stale plan so the effect re-previews. */
+  const setCopyDock = useCallback((dockAtB: LocalPoint) => {
+    if (!Number.isFinite(dockAtB.x) || !Number.isFinite(dockAtB.y)) return;
+    setCopyPanel(prev => !prev || prev.pending || prev.mode !== 'point' ? prev : { ...prev, dockAtB, plan: null, error: null });
+  }, []);
+
+  /** Nudge pair: the mower stands on a spot the user then clicks on the map. The live position is the truth. */
+  const addNudgePair = useCallback((clicked: LocalPoint) => {
+    const live = { x: parseFloat(mapX ?? ''), y: parseFloat(mapY ?? '') };
+    setCopyPanel(prev => {
+      if (!prev?.nudge || prev.pending) return prev;
+      if (!Number.isFinite(live.x) || !Number.isFinite(live.y)) return { ...prev, nudge: { ...prev.nudge, picking: false }, error: t('map.nudgeNoLive') };
+      const pairs = [...prev.nudge.pairs, { live, clicked }];
+      const d = nudgeDelta(pairs);
+      return { ...prev, nudge: { ...prev.nudge, pairs, picking: false }, dockAtB: { x: prev.nudge.base.x + d.x, y: prev.nudge.base.y + d.y }, plan: null, error: null };
+    });
+  }, [mapX, mapY, t]);
+
+  // Dragging the preview polygon: delta in mower metres, applied to dockAtB on release.
+  const [copyDrag, setCopyDrag] = useState<{ start: LocalPoint; delta: LocalPoint } | null>(null);
+  const copyDragEndedAt = useRef(0);
+  const copyDragToLocal = useCallback((latlng: L.LatLng) => localFromDisplay({ lat: latlng.lat, lng: latlng.lng }), [localFromDisplay]);
+  const endCopyDrag = useCallback((delta: LocalPoint) => {
+    setCopyDrag(null);
+    copyDragEndedAt.current = Date.now();
+    if (Math.hypot(delta.x, delta.y) < 0.01) return;
+    setCopyPanel(prev => !prev?.dockAtB || prev.pending || prev.mode !== 'point' ? prev : { ...prev, dockAtB: { x: prev.dockAtB.x + delta.x, y: prev.dockAtB.y + delta.y }, plan: null, error: null });
+  }, []);
 
   const placeCopiedZone = useCallback(async () => {
-    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || copyPanel.pending || copyPanel.alignment?.phase !== 'ready' || !copyPanel.plan?.ok) return;
+    if (!sn || !copyPanel?.sourceSn || !copyPanel.canonical || copyPanel.pending || !copyPanel.plan?.ok) return;
+    const by = copyBy(copyPanel);
+    if (!by) return;
     const pending: CopyPanelState = { ...copyPanel, pending: 'apply', error: null };
     setCopyPanel(pending);
     try {
-      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, copyPanel.alignment.alignmentId, { withObstacles: copyPanel.withObstacles, acceptChannel: true, replaceCanonical: copyPanel.replaceCanonical ?? undefined });
+      const r = await copyZone(sn, copyPanel.sourceSn, copyPanel.canonical, by, { withObstacles: copyPanel.withObstacles, acceptChannel: true, replaceCanonical: copyPanel.replaceCanonical ?? undefined });
       if (!r.ok || !r.map) throw new Error(t('map.copyZoneFailed'));
       await reloadMaps();
       setSelectedMapId(r.map.mapId);
       setCopyPanel(prev => prev === pending ? null : prev);
       const slot = r.map.canonicalName ?? '';
-      toast(t('map.copyZoneDone', { name: r.map.mapName ?? slot, slot }), 'success');
+      toast(t(copyPanel.nudge ? 'map.copyZoneNudged' : 'map.copyZoneDone', { name: r.map.mapName ?? slot, slot }), 'success');
       if (r.needsChannel && r.map.canonicalName) {
         setChannelPrompt({ canonical: r.map.canonicalName, name: r.map.mapName ?? r.map.canonicalName });
       }
     } catch (err) {
       setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
     }
-  }, [sn, copyPanel, reloadMaps, t, toast]);
+  }, [sn, copyPanel, copyBy, reloadMaps, t, toast]);
 
   // Toepassen op de maaier (sync → grids → planner terug). De zone staat al
   // op de kaart; deze regel zegt dat de maaier nog niet klaar is.
@@ -4210,16 +4320,45 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
           {/* Click-to-place charger handler */}
           {placingCharger && <ChargerPlacer onPlace={handlePlaceCharger} />}
-          {/* Measured copy preview; no editable placement marker. */}
-          {editMode === 'none' && copyPanel?.plan && copyPanel.plan.work.length >= 3 && (
-            <Polygon positions={copyPositions(copyPanel.plan.work)} pathOptions={COPY_PREVIEW_STYLES.work} />
+          {/* Copy preview. In point mode the whole zone can be dragged and the
+              orange marker (source dock) placed; the measured mode has no handles. */}
+          {editMode === 'none' && copyPanel?.plan && copyPanel.plan.work.length >= 3 && (() => {
+            const d = copyDrag?.delta ?? { x: 0, y: 0 };
+            const shift = (pts: LocalPoint[]) => d.x || d.y ? pts.map(p => ({ x: p.x + d.x, y: p.y + d.y })) : pts;
+            const draggable = copyPanel.mode === 'point' && !copyPanel.pending && !copyPanel.nudge?.picking;
+            return (
+              <>
+                <Polygon positions={copyPositions(shift(copyPanel.plan.work))} pathOptions={{ ...COPY_PREVIEW_STYLES.work, ...(copyDrag ? { fillOpacity: 0.25, dashArray: '6 4' } : {}) }}
+                  eventHandlers={draggable ? { mousedown: (e: L.LeafletMouseEvent) => { L.DomEvent.stopPropagation(e); setCopyDrag({ start: copyDragToLocal(e.latlng), delta: { x: 0, y: 0 } }); } } : undefined} />
+                {copyPanel.plan.obstacles.map(o => (
+                  <Polygon key={`copy-${o.canonical}`} positions={copyPositions(shift(o.points))} pathOptions={COPY_PREVIEW_STYLES.obstacle} />
+                ))}
+                {copyPanel.plan.channels.map(c => (
+                  <Polyline key={`copy-${c.canonical}`} positions={copyPositions(shift(c.points))} pathOptions={COPY_PREVIEW_STYLES.channel} />
+                ))}
+              </>
+            );
+          })()}
+          {editMode === 'none' && copyDrag && (
+            <CopyDragHandler start={copyDrag.start} toLocal={copyDragToLocal}
+              onMove={delta => setCopyDrag(prev => prev ? { ...prev, delta } : prev)} onEnd={endCopyDrag} />
           )}
-          {editMode === 'none' && copyPanel?.plan?.obstacles.map(o => (
-            <Polygon key={`copy-${o.canonical}`} positions={copyPositions(o.points)} pathOptions={COPY_PREVIEW_STYLES.obstacle} />
-          ))}
-          {editMode === 'none' && copyPanel?.plan?.channels.map(c => (
-            <Polyline key={`copy-${c.canonical}`} positions={copyPositions(c.points)} pathOptions={COPY_PREVIEW_STYLES.channel} />
-          ))}
+          {editMode === 'none' && copyPanel?.mode === 'point' && copyPanel.sourceSn && !copyDrag && (
+            <ChargerPlacer onPlace={(lat, lng) => {
+              if (Date.now() - copyDragEndedAt.current < 300) return;
+              const p = localFromDisplay({ lat, lng });
+              if (copyPanel.nudge?.picking) addNudgePair(p); else if (!copyPanel.nudge) setCopyDock(p);
+            }} />
+          )}
+          {editMode === 'none' && copyPanel?.mode === 'point' && !copyPanel.nudge && copyPanel.dockAtB && (() => {
+            const g = displayFromMower(copyPanel.dockAtB);
+            return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? (
+              <Marker position={[g.lat, g.lng]} draggable={!copyPanel.pending} icon={sourceDockIcon}
+                eventHandlers={{ dragend: e => { const ll = (e.target as L.Marker).getLatLng(); setCopyDock(localFromDisplay({ lat: ll.lat, lng: ll.lng })); } }}>
+                <Tooltip direction="top" offset={[0, -12]}>{t('map.copyPointMarker', { source: copySourceName })}</Tooltip>
+              </Marker>
+            ) : null;
+          })()}
           {/* Charger marker (draggable to reposition) — apply same calibration offset as polygons */}
           {chargerHasGps && (
             <Marker
@@ -5225,7 +5364,56 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   <input type="checkbox" checked={copyPanel.withObstacles} disabled={!!copyPanel.pending} onChange={e => updateCopyPanel({ withObstacles: e.target.checked })} />
                   {t('map.copyZoneWithObstacles')}
                 </label>
-                {copyPanel.canonical && (
+                {!copyPanel.nudge && (
+                  <div className="text-[11px] text-gray-400 space-y-1">
+                    <div>{t('map.copyMode')}</div>
+                    {(['point', 'measure'] as const).map(mode => (
+                      <label key={mode} className="flex items-start gap-2 text-gray-300">
+                        <input className="mt-0.5" type="radio" name="copy-mode" checked={copyPanel.mode === mode} disabled={!!copyPanel.pending}
+                          onChange={() => setCopyPanel(prev => prev && !prev.pending ? { ...prev, mode, plan: null, error: null, alignment: null, atSourceDock: false,
+                            dockAtB: mode === 'point' && prev.sourceSn ? prev.dockAtB ?? guessSourceDock(prev.sourceSn, prev.sources) : prev.dockAtB } : prev)} />
+                        {t(mode === 'point' ? 'map.copyModePoint' : 'map.copyModeMeasure')}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {copyPanel.canonical && copyPanel.mode === 'point' && (
+                  <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
+                    {copyPanel.nudge ? (
+                      <>
+                        <p className="text-xs font-medium text-amber-300">{t('map.nudgeTitle', { name: copyPanel.nudge.name })}</p>
+                        <p className="text-[11px] leading-snug text-gray-200">{t('map.nudgeHint')}</p>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => setCopyPanel(prev => prev?.nudge ? { ...prev, nudge: { ...prev.nudge, picking: !prev.nudge.picking }, error: null } : prev)}
+                            disabled={!!copyPanel.pending}
+                            className={`flex-1 text-xs px-2 py-1.5 rounded ${copyPanel.nudge.picking ? 'bg-amber-600 text-white' : 'bg-gray-700 text-gray-200 hover:bg-gray-600'} disabled:opacity-40 transition-colors`}>
+                            <Crosshair className="inline w-3 h-3 mr-1" />{t(copyPanel.nudge.picking ? 'map.nudgePicking' : 'map.nudgePick')}
+                          </button>
+                          {copyPanel.nudge.pairs.length > 0 && (
+                            <button onClick={() => setCopyPanel(prev => prev?.nudge ? { ...prev, nudge: { ...prev.nudge, pairs: [], picking: false }, dockAtB: prev.nudge.base, plan: null, error: null } : prev)}
+                              disabled={!!copyPanel.pending} className="text-[11px] text-gray-400 hover:text-gray-200 disabled:opacity-40">{t('map.nudgeClear')}</button>
+                          )}
+                        </div>
+                        {(() => {
+                          const d = { x: copyPanel.dockAtB!.x - copyPanel.nudge.base.x, y: copyPanel.dockAtB!.y - copyPanel.nudge.base.y };
+                          const mean = nudgeDelta(copyPanel.nudge.pairs);
+                          const residual = Math.max(0, ...copyPanel.nudge.pairs.map(p => Math.hypot(p.live.x - p.clicked.x - mean.x, p.live.y - p.clicked.y - mean.y)));
+                          return (
+                            <p className="text-[11px] text-gray-300">
+                              {t('map.nudgePairs', { n: copyPanel.nudge.pairs.length, dx: d.x.toFixed(2), dy: d.y.toFixed(2) })}
+                              {copyPanel.nudge.pairs.length > 1 && <span className={residual > 0.15 ? 'text-amber-300' : 'text-gray-400'}> · {t('map.nudgeResidual', { cm: Math.round(residual * 100) })}</span>}
+                            </p>
+                          );
+                        })()}
+                      </>
+                    ) : (
+                      <p className="text-[11px] leading-snug text-gray-200">{t('map.copyPointHint', { source: copySourceName })}</p>
+                    )}
+                    {!isUsableChargerGps(chargerGps) && <p className="text-[11px] text-red-300">{t('map.copyPointNeedsDock')}</p>}
+                    {copyPanel.pending === 'preview' && <p className="text-[11px] text-gray-400" role="status">{t('common.loading')}</p>}
+                  </div>
+                )}
+                {copyPanel.canonical && copyPanel.mode === 'measure' && (
                   <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
                     {copyPhase === 'source_first' && sn && copyPanel.sourceSn && <SourceDockMeasurement
                       key={`${sn}:${copyPanel.sourceSn}:${copyPanel.canonical}`}
@@ -5289,10 +5477,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   </button>
                   <button
                     onClick={() => void placeCopiedZone()}
-                    disabled={copyPhase !== 'ready' || !copyPanel.plan?.ok || !!copyPanel.pending}
+                    disabled={!copyBy(copyPanel) || !copyPanel.plan?.ok || !!copyPanel.pending}
                     className="flex-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 transition-colors"
                   >
-                    {copyPanel.pending === 'apply' ? t('map.copyZonePlacing') : t('map.copyZonePlace')}
+                    {copyPanel.pending === 'apply' ? t('map.copyZonePlacing') : t(copyPanel.nudge ? 'map.copyZoneApplyNudge' : 'map.copyZonePlace')}
                   </button>
                 </div>
               </>
@@ -5594,6 +5782,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                         {t('map.edit.copy')}
                       </button>
                     </>
+                  )}
+                  {m.mapType === 'work' && m.copyOrigin && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void openNudge(m); }}
+                      disabled={applying || !mapWriteSupported}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-amber-900/40 text-amber-300 hover:bg-amber-900/70 hover:text-amber-200 transition-colors disabled:opacity-40"
+                      title={t('map.nudgeHint')}
+                    >
+                      <MoveIcon className="w-3 h-3" />
+                      {t('map.nudgeButton')}
+                    </button>
                   )}
                   <button
                     onClick={() => {

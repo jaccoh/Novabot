@@ -672,7 +672,24 @@
       "err_target_unreachable": "The mower cannot reach that point from where it is.",
       "err_generic": "Driving to the point failed: {{error}}",
       "stockOnly": "Needs OpenNova firmware: the stock firmware accepts this command but never drives."
-    }
+    },
+    "copyMode": "Placement",
+    "copyModePoint": "Quick: point at the source dock (10–30 cm)",
+    "copyModeMeasure": "Precise: measure with both mowers (cm)",
+    "copyPointHint": "Click the map or drag the orange marker to where the dock of {{source}} physically stands. You can also drag the previewed zone itself; the server re-plans afterwards.",
+    "copyPointMarker": "Dock of {{source}}",
+    "copyPointNeedsDock": "No usable dock position for this mower: dock it or calibrate the map first.",
+    "nudgeButton": "Nudge",
+    "nudgeTitle": "Nudge zone: {{name}}",
+    "nudgeHint": "Drag the zone, or drive the mower to a recognisable spot and click the map where it should be. The measured mower position is the truth; translation only, no rotation.",
+    "nudgePick": "Pick a point",
+    "nudgePicking": "Click the map where the mower should be",
+    "nudgePairs": "{{n}} point(s) · shift {{dx}} m / {{dy}} m",
+    "nudgeResidual": "residual up to {{cm}} cm",
+    "nudgeClear": "Clear points",
+    "nudgeNoLive": "No fresh mower position available.",
+    "copyZoneApplyNudge": "Apply shift",
+    "copyZoneNudged": "{{name}} shifted and sent to the mower again."
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

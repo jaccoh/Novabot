@@ -640,7 +640,24 @@
       "err_target_unreachable": "La tondeuse ne peut pas atteindre ce point depuis sa position.",
       "err_generic": "Échec du trajet vers le point : {{error}}",
       "stockOnly": "Nécessite le firmware OpenNova : le firmware d’origine accepte la commande mais ne roule jamais."
-    }
+    },
+    "copyMode": "Placement",
+    "copyModePoint": "Rapide : indiquer la station de la source (10–30 cm)",
+    "copyModeMeasure": "Précis : mesurer avec les deux tondeuses (cm)",
+    "copyPointHint": "Cliquez sur la carte ou faites glisser le repère orange là où se trouve physiquement la station de {{source}}. Vous pouvez aussi déplacer la zone prévisualisée ; le serveur recalcule ensuite.",
+    "copyPointMarker": "Station de {{source}}",
+    "copyPointNeedsDock": "Aucune position de station exploitable pour cette tondeuse : mettez-la sur la station ou calibrez d’abord la carte.",
+    "nudgeButton": "Ajuster",
+    "nudgeTitle": "Ajuster la zone : {{name}}",
+    "nudgeHint": "Déplacez la zone, ou conduisez la tondeuse vers un point reconnaissable et cliquez sur la carte où elle devrait être. La position mesurée de la tondeuse fait foi ; translation seulement, pas de rotation.",
+    "nudgePick": "Choisir un point",
+    "nudgePicking": "Cliquez sur la carte où la tondeuse devrait être",
+    "nudgePairs": "{{n}} point(s) · décalage {{dx}} m / {{dy}} m",
+    "nudgeResidual": "résidu jusqu’à {{cm}} cm",
+    "nudgeClear": "Effacer les points",
+    "nudgeNoLive": "Aucune position récente de la tondeuse.",
+    "copyZoneApplyNudge": "Appliquer le décalage",
+    "copyZoneNudged": "{{name}} décalée et renvoyée à la tondeuse."
   },
   "firmware": {
     "requiresOpenNova": "Nécessite le firmware personnalisé OpenNova. Le firmware d'origine ne peut pas recevoir cette commande.",
