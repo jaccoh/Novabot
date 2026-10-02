@@ -10,6 +10,7 @@ import { freshPositionState } from './positionTelemetry.js';
 import { isMapInstallPending, isFrameUnvalidated, markFrameUnvalidated, markMapInstallPending, clearMapInstallPending } from './frameValidation.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { snapshotDockPose } from './dockPhotoReference.js';
+import { sameMapFile } from './portableSnapshot.js';
 
 // The mower unzips, restarts its mapping node and rasterises every slot; on a
 // big garden that is tens of seconds.
@@ -116,7 +117,13 @@ export async function installVerifiedMapZip(
     }
     const actualCsv = after?.csv_files as Record<string, string> | undefined;
     const actualX3 = after?.x3_csv_files as Record<string, string> | undefined;
-    if (!after || !actualCsv || !actualX3 || Object.keys(actualX3).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualX3[name] !== contents) || !snapshotAnchorMatches(after, anchor) || Object.keys(actualCsv).length !== expectedCsv.size || [...expectedCsv].some(([name, contents]) => actualCsv[name] !== contents)) { apply.fail('sync_failed'); return null; }
+    // novabot_mapping rewrites map_info.json seconds after its restart (see sameMapInfo).
+    const changed = [...expectedCsv].filter(([name, contents]) => !sameMapFile(name, contents, actualX3?.[name]) || !sameMapFile(name, contents, actualCsv?.[name])).map(([name]) => name);
+    const extra = [...Object.keys(actualCsv ?? {}), ...Object.keys(actualX3 ?? {})].filter(name => !expectedCsv.has(name));
+    if (!after || !actualCsv || !actualX3 || changed.length || extra.length || !snapshotAnchorMatches(after, anchor)) {
+      console.warn(`[AUTO-PUSH] ${sn}: kaartbestanden na installatie wijken af (anders: ${changed.join(', ') || '-'}; extra: ${extra.join(', ') || '-'}; anker ${snapshotAnchorMatches(after ?? {}, anchor) ? 'ok' : 'fout'})`);
+      apply.fail('sync_failed'); return null;
+    }
     return after;
   } finally { syncSnapshots.delete(operation.id); }
 }

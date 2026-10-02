@@ -16,7 +16,7 @@ import { installZoneCopy } from '../../services/installZoneCopy.js';
 import { installVerifiedMapZip } from '../../services/mowerMapApply.js';
 import { isMowerMapOperationBusy, withMowerMapOperation } from '../../services/mowerMapOperation.js';
 import { clearPositionTelemetry, ingestPositionTelemetry } from '../../services/positionTelemetry.js';
-import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated, loadFrameValidationFromDb, markMapInstallPending } from '../../services/frameValidation.js';
+import { clearFrameUnvalidated, clearMapInstallPending, isFrameUnvalidated, isMapInstallPending, loadFrameValidationFromDb, markMapInstallPending } from '../../services/frameValidation.js';
 import { mapRepo, deviceSettingsRepo } from '../../db/repositories/index.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from '../../services/dockPhotoReference.js';
 import { planZoneCopy } from '../../services/zoneCopy.js';
@@ -155,4 +155,45 @@ it.each(['runtime', 'unknown', 'rasters', 'late_files', 'late_rasters', 'late_or
   // Even a verified reinstall cannot release failed runtime/origin validation.
   clearMapInstallPending(sn);
   expect(isFrameUnvalidated(sn)).toBe(kind === 'runtime' || kind === 'late_origin');
+});
+
+it('accepts a target whose primary map_info.json the firmware rewrote in its own format', async () => {
+  const target = snapshot();
+  // novabot_mapping's formatting of the same dock pose, map_size recomputed.
+  target.csv_files['map_info.json'] = `{\n   "charging_pose" : {\n      "orientation" : ${dock.orientation},\n      "x" : 0.029999999999999999,\n      "y" : 0.72999999999999998\n   },\n`
+    + '   "map0_work.csv" : {\n      "map_size" : 48.100000000000001\n   }\n}\n';
+  await run(plan(), target);
+  expect(installVerifiedMapZip).toHaveBeenCalledTimes(1);
+  const sent = JSON.parse(vi.mocked(installVerifiedMapZip).mock.calls[0][1].expectedCsv.get('map_info.json')!);
+  expect(sent.charging_pose).toEqual(dock);
+  expect(Object.keys(sent).sort()).toEqual(['charging_pose', 'map0_work.csv', 'map1_work.csv']);
+});
+
+it('retries after a failed install and replaces the slot files that install left behind', async () => {
+  markMapInstallPending(sn);
+  const target = snapshot();
+  const leftover = { 'map1_work.csv': '4,0\n10,0\n10,8\n4,8\n', 'map1tocharge_unicom.csv': '.03,.73\n4,.73\n',
+    'map2_work.csv': '20,0\n24,0\n24,4\n', 'map2_0_obstacle.csv': '21,1\n22,1\n22,2\n' };
+  const info = JSON.stringify({ charging_pose: dock, 'map0_work.csv': { map_size: 48 }, 'map1_work.csv': { map_size: 48 }, 'map2_work.csv': { map_size: 8 } });
+  target.csv_files = { ...target.csv_files, ...leftover, 'map_info.json': info };
+  target.x3_csv_files = { ...target.x3_csv_files, ...leftover, 'map_info.json': info };
+  await run(plan(), target);
+  const sent = vi.mocked(installVerifiedMapZip).mock.calls[0][1].expectedCsv;
+  expect(sent.get('map1_work.csv')).toBe('5.000000,0.000000\n11.000000,0.000000\n11.000000,8.000000\n5.000000,8.000000\n');
+  expect([...sent.keys()].filter(n => n.startsWith('map2'))).toEqual([]);
+  expect(Object.keys(JSON.parse(sent.get('map_info.json')!)).sort()).toEqual(['charging_pose', 'map0_work.csv', 'map1_work.csv']);
+  expect(mapRepo.findBySnAndCanonical(sn, 'map1')).toBeDefined();
+  expect(isMapInstallPending(sn)).toBe(false);
+});
+
+it('accepts the firmware rewriting map_info.json between the install and the final check', async () => {
+  verifyRuntime.mockImplementationOnce(async () => {
+    const installed = installedSnapshot.csv_files as Record<string, string>;
+    const zones = Object.keys(JSON.parse(installed['map_info.json'])).filter(k => k !== 'charging_pose').reverse();
+    const rewritten = `{\n   "charging_pose" : {\n      "orientation" : ${dock.orientation},\n      "x" : 0.029999999999999999,\n      "y" : 0.72999999999999998\n   },\n`
+      + zones.map(k => `   "${k}" : {\n      "map_size" : 1\n   }`).join(',\n') + '\n}\n';
+    return { ...installedSnapshot, csv_files: { ...installed, 'map_info.json': rewritten } };
+  });
+  await run();
+  expect(mapRepo.findBySnAndCanonical(sn, 'map1')).toBeDefined();
 });

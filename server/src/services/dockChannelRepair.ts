@@ -9,7 +9,7 @@ import { isOpenNovaMower } from './mowerFileCapability.js';
 import { snapshotDockPose, getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
 import { withMowerMapOperation, readMowerMapSnapshot, type MowerMapOperation } from './mowerMapOperation.js';
 import { DOCK_SEAT_TOLERANCE_M, stablePosition } from './positionTelemetry.js';
-import { isFrameUnvalidated, clearMapInstallPending } from './frameValidation.js';
+import { isFrameUnvalidated, isMapInstallPending, clearMapInstallPending } from './frameValidation.js';
 import { snapshotAnchorMatches } from './anchor.js';
 import { parseMapCsv, mergeConnectorCopies, reconcileMowerCsvTrees } from './portableSnapshot.js';
 import { dockChannelPoints } from './zoneCopy.js';
@@ -52,7 +52,11 @@ export function assertStoredGeometry(sn: string, snapshot: Snapshot) {
   const rows = mapRepo.findByMowerSn(sn).filter(r => r.canonical_name);
   const names = Object.keys(csv).filter(n => n.endsWith('.csv')).sort();
   const rowName = (r: typeof rows[number]) => `${r.canonical_name}${r.map_type === 'work' ? '_work' : ''}.csv`;
-  if (JSON.stringify(names) !== JSON.stringify(rows.map(rowName).sort())) throw new Error('Server en maaier bevatten verschillende kaarten; synchroniseer die eerst.');
+  const expected = rows.map(rowName).sort();
+  // While an install is pending the mower may still hold files of the
+  // unfinished one; every stored zone must be there unchanged regardless.
+  const present = isMapInstallPending(sn) ? names.filter(n => expected.includes(n)) : names;
+  if (JSON.stringify(present) !== JSON.stringify(expected)) throw new Error('Server en maaier bevatten verschillende kaarten; synchroniseer die eerst.');
   for (const row of rows) {
     const points = parseMapCsv(csv[rowName(row)], rowName(row));
     const saved = JSON.parse(row.map_area ?? 'null');
@@ -63,8 +67,8 @@ export function assertStoredGeometry(sn: string, snapshot: Snapshot) {
   }
 }
 
-async function readDock(sn: string, operation: MowerMapOperation) {
-  if (!isDeviceOnline(sn) || !isOpenNovaMower(sn) || isFrameUnvalidated(sn)) throw new Error('Een online OpenNova-maaier met gevalideerd frame is vereist.');
+async function readDock(sn: string, operation: MowerMapOperation, retryingInstall = false) {
+  if (!isDeviceOnline(sn) || !isOpenNovaMower(sn) || (isFrameUnvalidated(sn) && !(retryingInstall && isMapInstallPending(sn)))) throw new Error('Een online OpenNova-maaier met gevalideerd frame is vereist.');
   const snapshot = await readMowerMapSnapshot(sn, operation);
   const pose = snapshotDockPose(snapshot);
   if (!snapshot || !pose || typeof snapshot.pos_json !== 'string') throw new Error('De dockbestanden van de maaier komen niet overeen.');
@@ -77,7 +81,8 @@ export async function withConfirmedCopyDocks<T>(target: string, source: string, 
   return withMowerMapOperation(target, targetOp => withMowerMapOperation(source, async sourceOp => {
     if (requireDocked) ready(target);
     const a = await readDock(source, sourceOp);
-    const b = await readDock(target, targetOp);
+    // The copy is itself the repair of an install the target never finished.
+    const b = await readDock(target, targetOp, true);
     assertStoredGeometry(source, a.snapshot);
     assertStoredGeometry(target, b.snapshot);
     if (!snapshotAnchorMatches(a.snapshot, a.pose) || !snapshotAnchorMatches({ ...a.snapshot, csv_files: a.snapshot.x3_csv_files }, a.pose)) throw new Error('Het dockkanaal van de bronmaaier wijkt af van zijn opgeslagen dock.');

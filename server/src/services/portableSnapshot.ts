@@ -58,6 +58,27 @@ export function mergeConnectorCopies(csv: Record<string, string>, x3: Record<str
   return merged;
 }
 
+/**
+ * Same zones and the same dock pose. novabot_mapping rewrites the primary
+ * map_info.json seconds after a restart in its own float format and key
+ * order, with map_size recomputed, while the x3 copy keeps the bytes it was
+ * given; the two are compared on content, never byte for byte.
+ */
+export function sameMapInfo(expected: string, actual: string | undefined): boolean {
+  if (actual === expected) return true;
+  if (!actual) return false;
+  try {
+    const want = JSON.parse(expected), got = JSON.parse(actual);
+    if (Object.keys(want).sort().join() !== Object.keys(got).sort().join()) return false;
+    const p = want.charging_pose, q = got.charging_pose;
+    return Math.hypot(Number(p.x) - Number(q.x), Number(p.y) - Number(q.y)) <= 1e-6 && Math.abs(Number(p.orientation) - Number(q.orientation)) <= 1e-6;
+  } catch { return false; }
+}
+
+/** Polygon files byte for byte, map_info.json on content. */
+export const sameMapFile = (name: string, expected: string, actual: string | undefined): boolean =>
+  name === 'map_info.json' ? sameMapInfo(expected, actual) : actual === expected;
+
 /** Both mower CSV trees as one map: the same files, byte-equal except the
  *  connectors (merged as above) and map_info.json (metadata the caller
  *  compares itself). Null when they are two different maps. A natively mapped

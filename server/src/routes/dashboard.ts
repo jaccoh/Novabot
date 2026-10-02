@@ -138,8 +138,9 @@ dashboardRouter.use(['/maps/:sn', '/calibration/:sn'], (req, res, next) => {
   if (/^\/copy-from\/[^/]+\/alignment\/auto-source\/[^/]+$/.test(req.path) ||
       /^\/dock-return\/[^/]+$/.test(req.path)) { next(); return; }
   // A failed install leaves the frame unvalidated with the install pending;
-  // applying again is the repair, so that request passes the frame gate.
-  const retry = req.method === 'POST' && req.path === '/apply' && isMapInstallPending(sn);
+  // applying again is the repair, and so is copying a zone (a full CSV
+  // install that brings its own dock channel), so those pass the frame gate.
+  const retry = req.method === 'POST' && (req.path === '/apply' || /^\/copy-from\/[^/]+(?:\/preview)?$/.test(req.path)) && isMapInstallPending(sn);
   if (isMowerMapOperationBusy(sn) || (isFrameUnvalidated(sn) && !retry)) {
     res.status(409).json({ ok: false, reason: isMowerMapOperationBusy(sn) ? 'map_operation_busy' : 'frame_unvalidated', error: 'Rond eerst de kaart- of herankerprocedure af.' }); return;
   }

@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync, renameSync } from 'node:fs';
-import { reconcileMowerCsvTrees } from './portableSnapshot.js';
+import { reconcileMowerCsvTrees, sameMapFile, sameMapInfo } from './portableSnapshot.js';
 import path from 'node:path';
 import { db } from '../db/database.js';
 import { mapRepo, deviceSettingsRepo } from '../db/repositories/index.js';
@@ -8,7 +8,7 @@ import { validateMapRasters } from '../maps/validateGrid.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { csvZip, type ConfirmedCopyDocks } from './dockChannelRepair.js';
 import { getPhotoDockPose, PHOTO_DOCK_KEY } from './dockPhotoReference.js';
-import { clearMapInstallPending, isFrameUnvalidated, markFrameUnvalidated } from './frameValidation.js';
+import { clearMapInstallPending, isFrameUnvalidated, isMapInstallPending, markFrameUnvalidated } from './frameValidation.js';
 import { beginMapApply } from './mapApplyStatus.js';
 import { assertMowerMapOperation } from './mowerMapOperation.js';
 import { installVerifiedMapZip } from './mowerMapApply.js';
@@ -33,17 +33,24 @@ export async function installZoneCopy(
     }
   };
   ready();
-  if (!plan.ok || isFrameUnvalidated(sn)) throw new Error('De kopie of het kaartframe is niet bevestigd.');
+  // A copy is a full CSV install, so like /apply it may retry a pending one.
+  if (!plan.ok || (isFrameUnvalidated(sn) && !isMapInstallPending(sn))) throw new Error('De kopie of het kaartframe is niet bevestigd.');
   const original = before.csv_files as Record<string, string>;
   const x3 = before.x3_csv_files as Record<string, string>;
   // Filtered connectors in csv_file with the full route in x3_csv_file are one
   // map (natively mapped touching zones); the copy ships the full route to both.
   const merged = reconcileMowerCsvTrees(original, x3);
-  if (!merged || merged['map_info.json'] !== x3['map_info.json']) {
+  if (!merged || !sameMapInfo(x3['map_info.json'], merged['map_info.json'])) {
     throw new Error('De twee kaartkopieën op de doelmaaier verschillen; synchroniseer die eerst.');
   }
   const csv = { ...merged };
   const workName = `${plan.canonical}_work.csv`;
+  // Files of an install that never completed, unknown to the DB, are
+  // replaced by the retry rather than blocking it.
+  if (isMapInstallPending(sn)) {
+    const known = new Set(mapRepo.findByMowerSn(sn).map(r => r.canonical_name));
+    for (const name of Object.keys(csv)) if (name.endsWith('.csv') && !known.has(name.replace(/(?:_work)?\.csv$/, ''))) delete csv[name];
+  }
   if (plan.replacesExisting) {
     const slot = plan.canonical;
     const related = new RegExp(`^(?:${slot}_work|${slot}_\\d+_obstacle|${slot}tocharge_unicom|${slot}tomap\\d+_\\d+_unicom|map\\d+to${slot}_\\d+_unicom)\\.csv$`);
@@ -54,6 +61,7 @@ export async function installZoneCopy(
   for (const area of additions) csv[`${area.canonical}.csv`] = area.points.map(p => `${p.x.toFixed(6)},${p.y.toFixed(6)}`).join('\n') + '\n';
   const metadata = JSON.parse(csv['map_info.json']);
   metadata[workName] = { map_size: Math.round(polygonArea(plan.work) * 100) / 100 };
+  for (const key of Object.keys(metadata)) if (key !== 'charging_pose' && !(key in csv)) delete metadata[key];
   csv['map_info.json'] = JSON.stringify(metadata, null, 3) + '\n';
 
   const rows = mapRepo.findByMowerSn(sn), photo = getPhotoDockPose(sn);
@@ -95,7 +103,7 @@ export async function installZoneCopy(
     }
     if (['csv_files', 'x3_csv_files'].some(key => {
         const files = current[key] as Record<string, string> | undefined;
-        return !files || Object.keys(files).length !== Object.keys(csv).length || Object.entries(csv).some(([name, text]) => files[name] !== text);
+        return !files || Object.keys(files).length !== Object.keys(csv).length || Object.entries(csv).some(([name, text]) => !sameMapFile(name, text, files[name]));
       })) throw new Error('De kaartbestanden zijn tijdens de eindcontrole gewijzigd.');
     if (['map_files_b64', 'map_files_text'].some(key => {
       const previous = after[key] as Record<string, string>;

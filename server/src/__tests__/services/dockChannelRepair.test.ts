@@ -157,6 +157,24 @@ it('dashboard copies use confirmed native docks and refuse old-channel conflicts
   await expect(withConfirmedCopyDocks(sn, source, copy)).rejects.toThrow('RTK Fixed');
 });
 
+it('admits a target whose own failed install is pending, but never a source in that state', async () => {
+  const src = snapshot(); src.csv_files['map0tocharge_unicom.csv'] = goodChannel; src.x3_csv_files = { ...src.csv_files };
+  rows(source, src);
+  mapRepo.updateAreaAndBoundsByIdAndMower(`${sn}-map0tocharge_unicom.csv`, sn, JSON.stringify([{ x: .03, y: .73 }, { x: .03, y: 1.93 }]), '{}');
+  // The unfinished install left a zone on the target that the DB never learned.
+  const leftover = { ...src.csv_files, 'map1_work.csv': '4,0\n10,0\n10,8\n4,8\n' };
+  const target = { ...src, csv_files: leftover, x3_csv_files: { ...leftover } };
+  vi.mocked(readMowerMapSnapshot).mockImplementation(async s => s === source ? src : target);
+  markMapInstallPending(sn);
+  const result = await withConfirmedCopyDocks(sn, source, docks => previewZoneCopy(sn, source, 'map0', pose, { docks }));
+  expect(result.ok && result.plan.ok).toBe(true);
+  clearMapInstallPending(sn);
+  await expect(withConfirmedCopyDocks(sn, source, vi.fn())).rejects.toThrow('verschillende kaarten');
+  vi.mocked(readMowerMapSnapshot).mockResolvedValue(src);
+  markMapInstallPending(source);
+  await expect(withConfirmedCopyDocks(sn, source, vi.fn())).rejects.toThrow('gevalideerd frame');
+});
+
 if (process.env.DOCK_REPAIR_SNAPSHOT) it('checks the supplied offline mower snapshot without device access', () => {
   const native = JSON.parse(readFileSync(process.env.DOCK_REPAIR_SNAPSHOT!, 'utf8'));
   const plan = planDockChannelRepair(native);

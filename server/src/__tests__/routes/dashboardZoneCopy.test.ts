@@ -249,6 +249,16 @@ describe('zone copy routes', () => {
     expect(listed.body.maps.find((m: { canonicalName: string }) => m.canonicalName === 'map0').copyOrigin).toMatchObject({ sourceSn: A, sourceCanonical: 'map0', dockAtB: dockB });
   });
 
+  it('a copy may be retried while the install it left behind is still pending', async () => {
+    markMapInstallPending(B);
+    try {
+      expect((await request(server).post(url('/preview')).send({ canonical: 'map0', dockAtB: dockB })).status).toBe(200);
+      const res = await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB });
+      expect(res.status).toBe(200);
+      expect(res.body.map.canonicalName).toBe('map0');
+    } finally { clearMapInstallPending(B); }
+  });
+
   it('rejects malformed copy options before measurement or mutation', async () => {
     for (const suffix of ['', '/preview']) for (const body of [
       [], { canonical: ['map0'] }, { canonical: 'map0', name: 42 },
