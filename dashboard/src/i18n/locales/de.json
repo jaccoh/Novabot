@@ -657,7 +657,9 @@
     "nudgeClear": "Punkte löschen",
     "nudgeNoLive": "Keine aktuelle Mäherposition verfügbar.",
     "copyZoneApplyNudge": "Verschiebung anwenden",
-    "copyZoneNudged": "{{name}} verschoben und erneut an den Mäher gesendet."
+    "copyZoneNudged": "{{name}} verschoben und erneut an den Mäher gesendet.",
+    "copyGhostHint": "Grün gestrichelt = die Zone, wie die Karte von {{source}} sie auf dem Foto platziert. Die orange Kopie liegt bereits darauf; nur verschieben, wenn es nicht passt.",
+    "copyGhostMissing": "Die Karte von {{source}} ist nicht auf dem Foto kalibriert: kein grüner Schatten, Startposition aus seinem GPS (kann Meter abweichen)."
   },
   "firmware": {
     "requiresOpenNova": "Erfordert die OpenNova Custom-Firmware. Stock-Firmware kann diesen Befehl nicht empfangen.",

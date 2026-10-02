@@ -126,7 +126,21 @@ interface CopyPanelState {
   dockAtB: LocalPoint | null;
   /** Nudging an existing copy: re-run it from a shifted dockAtB. */
   nudge: { name: string; base: LocalPoint; pairs: { live: LocalPoint; clicked: LocalPoint }[]; picking: boolean } | null;
+  /** The source mower's own photo frame: lets its zones be drawn here as a green
+   *  ghost and gives the copy its first placement (both maps calibrated on the
+   *  same imagery bridge the two GPS worlds). Null when the source is uncalibrated. */
+  sourceFrame: { maps: MapData[]; chargerGps: GpsPoint; chargingPose: LocalPoint; cal: MapCalibration; polygonOffset: LocalPoint } | null;
 }
+/** The server anchors a copy on the source's dock channel start (getPolygonAnchor); fall back to its charging pose. */
+function sourceAnchorLocal(maps: MapData[], chargingPose: LocalPoint): LocalPoint {
+  const channel = maps.find(m => m.canonicalName === 'map0tocharge_unicom') ?? maps.find(m => /^map\d+tocharge_unicom$/.test(m.canonicalName ?? ''));
+  const p = channel?.mapArea[0];
+  return p && Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : chargingPose;
+}
+const GHOST_STYLES = {
+  work:     { color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.12, weight: 2, dashArray: '5 4' },
+  obstacle: { color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.2, weight: 1, dashArray: '3 3' },
+} as const;
 /** Mean of (where the mower really stands − where the copy says it stands); frames are UTM-aligned, so no rotation. */
 function nudgeDelta(pairs: { live: LocalPoint; clicked: LocalPoint }[]): LocalPoint {
   if (!pairs.length) return { x: 0, y: 0 };
@@ -2098,7 +2112,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setPlacingCharger(false);
     setEditCal(null);
     setSelectedMapId(null);
-    const pending: CopyPanelState = { sources: [], sourceSn: null, sourceMaps: [], canonical: null, replaceCanonical: null, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false, mode: 'point', dockAtB: null, nudge: null };
+    const pending: CopyPanelState = { sources: [], sourceSn: null, sourceMaps: [], canonical: null, replaceCanonical: null, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false, mode: 'point', dockAtB: null, nudge: null, sourceFrame: null };
     setCopyPanel(pending);
     try {
       const sources = (await fetchDevices()).filter(d => d.deviceType === 'mower' && d.sn !== sn);
@@ -2119,18 +2133,57 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     return { x: l.x + own.x, y: l.y + own.y };
   }, [chargerGps, chargingPose]);
 
+  /** The source mower's photo frame, when its map is calibrated; older servers answer the calibration separately. */
+  const loadSourceFrame = useCallback(async (sourceSn: string): Promise<{ maps: MapData[]; frame: CopyPanelState['sourceFrame'] }> => {
+    const resp = await fetchMaps(sourceSn);
+    if (!isUsableChargerGps(resp.chargerGps)) return { maps: resp.maps, frame: null };
+    const cal = resp.calibration ?? await fetchCalibration(sourceSn).catch(() => null);
+    if (!cal) return { maps: resp.maps, frame: null };
+    const cp = resp.chargingPose ? { x: resp.chargingPose.x, y: resp.chargingPose.y } : { x: 0, y: 0 };
+    return { maps: resp.maps, frame: { maps: resp.maps, chargerGps: resp.chargerGps, chargingPose: cp, cal, polygonOffset: resp.polygonOffset ?? { x: 0, y: 0 } } };
+  }, []);
+
+  /** Project the source's own local metres onto this map through the source's calibration. */
+  const sourceToDisplay = useCallback((frame: NonNullable<CopyPanelState['sourceFrame']>, pts: LocalPoint[]): GpsPoint[] => {
+    const { display, geometryOffset: off } = splitMapCalibration(frame.cal, frame.cal, frame.polygonOffset, frame.chargerGps);
+    const toGps = (p: LocalPoint) => localToGps({ x: p.x - frame.chargingPose.x, y: p.y - frame.chargingPose.y }, frame.chargerGps);
+    const all = frame.maps.flatMap(m => m.mapArea).filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+    const center = all.length ? toGps({ x: all.reduce((s, p) => s + p.x, 0) / all.length, y: all.reduce((s, p) => s + p.y, 0) / all.length }) : frame.chargerGps;
+    return pts.map(p => calibrateGps(toGps(p), display, center, off));
+  }, []);
+
+  /** First placement: the source dock where the source's calibrated map puts it on the photo, read back in our frame. */
+  const placeOnGhost = useCallback((frame: CopyPanelState['sourceFrame']): LocalPoint | null => {
+    if (!frame || !isUsableChargerGps(chargerGps)) return null;
+    const [g] = sourceToDisplay(frame, [sourceAnchorLocal(frame.maps, frame.chargingPose)]);
+    const p = localFromDisplay(g);
+    return Number.isFinite(p.x) && Number.isFinite(p.y) ? p : null;
+  }, [chargerGps, localFromDisplay, sourceToDisplay]);
+
   const chooseCopySource = useCallback(async (sourceSn: string) => {
     if (!copyPanel || copyPanel.pending) return;
-    const pending: CopyPanelState = { ...copyPanel, sourceSn, sourceMaps: [], canonical: null, alignment: null, atSourceDock: false, pending: 'source', plan: null, error: null, dockAtB: null, nudge: null };
+    const pending: CopyPanelState = { ...copyPanel, sourceSn, sourceMaps: [], canonical: null, alignment: null, atSourceDock: false, pending: 'source', plan: null, error: null, dockAtB: null, nudge: null, sourceFrame: null };
     setCopyPanel(pending);
     try {
-      const { maps: srcMaps } = await fetchMaps(sourceSn);
+      const { maps: srcMaps, frame } = await loadSourceFrame(sourceSn);
       const work = srcMaps.filter(m => m.mapType === 'work' && m.canonicalName);
-      setCopyPanel(prev => prev === pending ? { ...prev, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, pending: null, dockAtB: guessSourceDock(sourceSn, prev.sources) } : prev);
+      setCopyPanel(prev => prev === pending ? { ...prev, sourceMaps: work, canonical: work[0]?.canonicalName ?? null, pending: null, sourceFrame: frame,
+        dockAtB: placeOnGhost(frame) ?? guessSourceDock(sourceSn, prev.sources) } : prev);
     } catch (err) {
       setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
     }
-  }, [copyPanel, guessSourceDock]);
+  }, [copyPanel, guessSourceDock, loadSourceFrame, placeOnGhost]);
+
+  /** Green ghost: the chosen source zone and its obstacles as the source's photo calibration places them. */
+  const sourceGhost = useMemo(() => {
+    const f = copyPanel?.sourceFrame;
+    if (!f || !copyPanel?.canonical || copyPanel.mode !== 'point') return null;
+    const asPositions = (pts: LocalPoint[]): [number, number][] => sourceToDisplay(f, pts).filter(g => Number.isFinite(g.lat) && Number.isFinite(g.lng)).map(g => [g.lat, g.lng]);
+    const work = f.maps.find(m => m.canonicalName === copyPanel.canonical);
+    if (!work || work.mapArea.length < 3) return null;
+    const prefix = `${copyPanel.canonical}_`;
+    return { work: asPositions(work.mapArea), obstacles: f.maps.filter(m => m.mapType === 'obstacle' && m.canonicalName?.startsWith(prefix) && m.mapArea.length >= 3).map(m => ({ key: m.canonicalName!, positions: asPositions(m.mapArea) })) };
+  }, [copyPanel?.sourceFrame, copyPanel?.canonical, copyPanel?.mode, sourceToDisplay]);
 
   /** Nudge an existing copy: same wizard, same source and slot, starting from the dockAtB it was placed with. */
   const openNudge = useCallback(async (m: Omit<MapData, 'mapArea'>) => {
@@ -2138,16 +2191,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setNavigateMode(false); setWallDrawMode(false); setPlacingCharger(false); setEditCal(null); setSelectedMapId(m.mapId);
     const { sourceSn, sourceCanonical, dockAtB } = m.copyOrigin;
     const pending: CopyPanelState = { sources: [], sourceSn, sourceMaps: [], canonical: sourceCanonical, replaceCanonical: m.canonicalName, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false, mode: 'point', dockAtB,
-      nudge: { name: m.mapName || m.canonicalName, base: dockAtB, pairs: [], picking: false } };
+      nudge: { name: m.mapName || m.canonicalName, base: dockAtB, pairs: [], picking: false }, sourceFrame: null };
     setCopyPanel(pending);
     try {
-      const [devices, { maps: srcMaps }] = await Promise.all([fetchDevices(), fetchMaps(sourceSn)]);
+      const [devices, { maps: srcMaps, frame }] = await Promise.all([fetchDevices(), loadSourceFrame(sourceSn)]);
       const sources = devices.filter(d => d.deviceType === 'mower' && d.sn !== sn);
-      setCopyPanel(prev => prev === pending ? { ...prev, sources, sourceMaps: srcMaps.filter(x => x.mapType === 'work' && x.canonicalName), pending: null } : prev);
+      setCopyPanel(prev => prev === pending ? { ...prev, sources, sourceMaps: srcMaps.filter(x => x.mapType === 'work' && x.canonicalName), sourceFrame: frame, pending: null } : prev);
     } catch (err) {
       setCopyPanel(prev => prev === pending ? { ...prev, pending: null, error: err instanceof Error ? err.message : String(err) } : prev);
     }
-  }, [mapWriteSupported, sn]);
+  }, [mapWriteSupported, sn, loadSourceFrame]);
 
   const updateCopyPanel = useCallback((patch: Partial<CopyPanelState>) => {
     setCopyPanel(prev => {
@@ -4320,6 +4373,13 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           )}
           {/* Click-to-place charger handler */}
           {placingCharger && <ChargerPlacer onPlace={handlePlaceCharger} />}
+          {/* Green ghost: the source zone as its own calibrated map places it on the photo. */}
+          {editMode === 'none' && sourceGhost && (
+            <>
+              <Polygon positions={sourceGhost.work} pathOptions={GHOST_STYLES.work} interactive={false} />
+              {sourceGhost.obstacles.map(o => <Polygon key={`ghost-${o.key}`} positions={o.positions} pathOptions={GHOST_STYLES.obstacle} interactive={false} />)}
+            </>
+          )}
           {/* Copy preview. In point mode the whole zone can be dragged and the
               orange marker (source dock) placed; the measured mode has no handles. */}
           {editMode === 'none' && copyPanel?.plan && copyPanel.plan.work.length >= 3 && (() => {
@@ -5407,7 +5467,12 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                         })()}
                       </>
                     ) : (
-                      <p className="text-[11px] leading-snug text-gray-200">{t('map.copyPointHint', { source: copySourceName })}</p>
+                      <>
+                        <p className="text-[11px] leading-snug text-gray-200">{t('map.copyPointHint', { source: copySourceName })}</p>
+                        <p className={`text-[11px] leading-snug ${sourceGhost ? 'text-emerald-300' : 'text-amber-300'}`}>
+                          {t(sourceGhost ? 'map.copyGhostHint' : 'map.copyGhostMissing', { source: copySourceName })}
+                        </p>
+                      </>
                     )}
                     {!isUsableChargerGps(chargerGps) && <p className="text-[11px] text-red-300">{t('map.copyPointNeedsDock')}</p>}
                     {copyPanel.pending === 'preview' && <p className="text-[11px] text-gray-400" role="status">{t('common.loading')}</p>}

@@ -689,7 +689,9 @@
     "nudgeClear": "Clear points",
     "nudgeNoLive": "No fresh mower position available.",
     "copyZoneApplyNudge": "Apply shift",
-    "copyZoneNudged": "{{name}} shifted and sent to the mower again."
+    "copyZoneNudged": "{{name}} shifted and sent to the mower again.",
+    "copyGhostHint": "Green dashed = the zone as the map of {{source}} places it on the photo. The orange copy already lies on it; drag only if it is off.",
+    "copyGhostMissing": "The map of {{source}} is not calibrated on the photo: no green ghost, first placement from its GPS (can be metres off)."
   },
   "firmware": {
     "requiresOpenNova": "Requires OpenNova custom firmware. Stock firmware can't receive this command.",

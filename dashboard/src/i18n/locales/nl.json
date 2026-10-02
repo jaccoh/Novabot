@@ -760,7 +760,9 @@
     "nudgeClear": "Punten wissen",
     "nudgeNoLive": "Geen verse maaierpositie beschikbaar.",
     "copyZoneApplyNudge": "Verschuiving toepassen",
-    "copyZoneNudged": "{{name}} verschoven en opnieuw naar de maaier gestuurd."
+    "copyZoneNudged": "{{name}} verschoven en opnieuw naar de maaier gestuurd.",
+    "copyGhostHint": "Groen gestippeld = de zone zoals de kaart van {{source}} hem op de foto plaatst. De oranje kopie ligt er al op; versleep alleen als het niet klopt.",
+    "copyGhostMissing": "De kaart van {{source}} is niet op de foto gekalibreerd: geen groene schim, startpositie uit zijn GPS (kan meters afwijken)."
   },
   "firmware": {
     "requiresOpenNova": "Vereist OpenNova custom firmware. Stock firmware kan dit commando niet ontvangen.",
