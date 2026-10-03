@@ -608,6 +608,12 @@
     },
     "copyZonePlace": "Plaatsen",
     "copyZonePlacing": "Bezig…",
+    "copyBusy": {
+      "source": "Bronzones laden.",
+      "capture": "Dockpositie meten.",
+      "preview": "De kaarten van beide maaiers lezen en de kopie plannen.",
+      "apply": "Beide maaiers controleren voordat de kopie naar de maaier gaat."
+    },
     "copyZoneDone": "{{name}} geplaatst als {{slot}}; de maaier ontvangt de zone nu.",
     "copyZoneFailed": "Kopiëren is niet gelukt.",
     "channelPromptLater": "Later",

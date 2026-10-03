@@ -2303,6 +2303,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Toepassen op de maaier (sync → grids → planner terug). De zone staat al
   // op de kaart; deze regel zegt dat de maaier nog niet klaar is.
   const applyView = mapApplyView(sensors);
+  // The source-dock cycle ('auto') has its own progress in the copy panel.
+  const copyBusy = copyPanel?.pending && copyPanel.pending !== 'auto' ? copyPanel.pending : null;
   const [dismissedApplyError, setDismissedApplyError] = useState<string | null>(null);
   useEffect(() => { if (applyView.state === 'busy') setDismissedApplyError(null); }, [applyView.state]);
   const retryMapApply = useCallback(async () => {
@@ -5334,15 +5336,25 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           </div>
         )}
 
-        {/* Kaart op de maaier zetten: stap voor stap, of waarom het mislukte */}
-        {(applyView.state === 'busy' || (applyView.state === 'failed' && dismissedApplyError !== applyView.error)) && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[900] max-w-[calc(100%-1.5rem)] w-max bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg px-3 py-2 shadow-xl text-[12px] flex items-center gap-2.5">
+        {/* Kaart op de maaier zetten: stap voor stap, of waarom het mislukte.
+            Een zone-kopie toont hier ook zijn eigen wachttijd (plannen, en de
+            controle van beide maaiers voordat de server de stappen meldt). */}
+        {(applyView.state === 'busy' || copyBusy || (applyView.state === 'failed' && dismissedApplyError !== applyView.error)) && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[1100] max-w-[calc(100%-1.5rem)] w-max bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg px-3 py-2 shadow-xl text-[12px] flex items-center gap-2.5" role="status">
             {applyView.state === 'busy' ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
                 <div className="leading-snug">
                   <div className="text-gray-100 font-medium">{t('map.apply.title')} · {t('map.apply.step', { step: applyView.step })}</div>
                   <div className="text-gray-400">{t(`map.apply.${applyView.phase}`)} {t('map.apply.hint')}</div>
+                </div>
+              </>
+            ) : copyBusy ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
+                <div className="leading-snug">
+                  <div className="text-gray-100 font-medium">{t('map.copyZone')}</div>
+                  <div className="text-gray-400">{t(`map.copyBusy.${copyBusy}`)}</div>
                 </div>
               </>
             ) : applyView.state === 'failed' ? (
@@ -5475,7 +5487,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       </>
                     )}
                     {!isUsableChargerGps(chargerGps) && <p className="text-[11px] text-red-300">{t('map.copyPointNeedsDock')}</p>}
-                    {copyPanel.pending === 'preview' && <p className="text-[11px] text-gray-400" role="status">{t('common.loading')}</p>}
                   </div>
                 )}
                 {copyPanel.canonical && copyPanel.mode === 'measure' && (
@@ -5513,7 +5524,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                     <p className="text-[11px] leading-snug text-amber-300">{t('map.copyAlignmentTestNotice')}</p>
                   </div>
                 )}
-                {copyPanel.pending === 'source' && <p className="text-[11px] text-gray-400" role="status">{t('common.loading')}</p>}
                 {copyPanel.error && <p className="text-[11px] text-red-400" role="alert">{copyPanel.error}</p>}
                 {copyPanel.plan && (
                   <div className="text-[11px] leading-snug space-y-0.5">

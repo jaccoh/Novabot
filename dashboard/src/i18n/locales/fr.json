@@ -505,6 +505,12 @@
     },
     "copyZonePlace": "Placer",
     "copyZonePlacing": "Placement…",
+    "copyBusy": {
+      "source": "Chargement des zones source.",
+      "capture": "Mesure de la position de la base.",
+      "preview": "Lecture des cartes des deux tondeuses et planification de la copie.",
+      "apply": "Vérification des deux tondeuses avant l'envoi de la copie."
+    },
     "copyZoneDone": "{{name}} placée comme {{slot}} ; la tondeuse la reçoit maintenant.",
     "copyZoneFailed": "La copie a échoué.",
     "channelPromptLater": "Plus tard",

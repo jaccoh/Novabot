@@ -537,6 +537,12 @@
     },
     "copyZonePlace": "Place",
     "copyZonePlacing": "Placing…",
+    "copyBusy": {
+      "source": "Loading the source zones.",
+      "capture": "Measuring the dock position.",
+      "preview": "Reading both mowers' maps and planning the copy.",
+      "apply": "Checking both mowers before the copy is sent to the mower."
+    },
     "copyZoneDone": "{{name}} placed as {{slot}}; the mower is receiving it now.",
     "copyZoneFailed": "Copying failed.",
     "channelPromptLater": "Later",

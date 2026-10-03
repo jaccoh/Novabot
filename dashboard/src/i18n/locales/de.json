@@ -505,6 +505,12 @@
     },
     "copyZonePlace": "Platzieren",
     "copyZonePlacing": "Wird platziert…",
+    "copyBusy": {
+      "source": "Quellzonen werden geladen.",
+      "capture": "Dockposition wird gemessen.",
+      "preview": "Die Karten beider Mäher werden gelesen und die Kopie geplant.",
+      "apply": "Beide Mäher werden geprüft, bevor die Kopie an den Mäher geht."
+    },
     "copyZoneDone": "{{name}} als {{slot}} platziert; der Mäher erhält die Zone jetzt.",
     "copyZoneFailed": "Kopieren fehlgeschlagen.",
     "channelPromptLater": "Später",
