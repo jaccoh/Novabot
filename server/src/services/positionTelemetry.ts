@@ -73,6 +73,10 @@ export function ingestPositionTelemetry(sn: string, data: Record<string, unknown
  * to metres (1.15 m on 2026-09-26), not for centimetres of seating.
  */
 export const DOCK_SEAT_TOLERANCE_M = 0.1;
+/** A pointed source dock is only 10-30 cm accurate, and a docked mower's
+ *  localization wanders up to ~13 cm around its saved dock (.244, 2026-10-02/03);
+ *  the 10 cm gate refused quick copies it could not improve. */
+export const QUICK_COPY_SEAT_TOLERANCE_M = 0.3;
 
 export function stablePosition(sn: string, { after = 0, count = 8, maxSpread = 0.05, docked = false } = {}) {
   const state = freshPositionState(sn);

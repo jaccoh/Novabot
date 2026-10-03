@@ -249,6 +249,14 @@ describe('zone copy routes', () => {
     expect(listed.body.maps.find((m: { canonicalName: string }) => m.canonicalName === 'map0').copyOrigin).toMatchObject({ sourceSn: A, sourceCanonical: 'map0', dockAtB: dockB });
   });
 
+  it('quick placement relaxes the dock gate to 30 cm; a marker measurement keeps the default', async () => {
+    expect((await request(server).post(url()).send({ canonical: 'map0', dockAtB: dockB })).status).toBe(200);
+    expect(vi.mocked(withConfirmedCopyDocks).mock.calls.at(-1)?.[4]).toBe(0.3);
+    for (const m of mapRepo.findByMowerSn(B)) if (m.canonical_name !== 'map0tocharge_unicom') mapRepo.deleteById(m.map_id);
+    expect((await request(server).post(url()).send({ canonical: 'map0', alignmentId: 'verified' })).status).toBe(200);
+    expect(vi.mocked(withConfirmedCopyDocks).mock.calls.at(-1)?.[4]).toBeUndefined();
+  });
+
   it('a copy may be retried while the install it left behind is still pending', async () => {
     markMapInstallPending(B);
     try {

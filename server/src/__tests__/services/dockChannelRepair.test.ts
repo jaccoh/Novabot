@@ -157,6 +157,19 @@ it('dashboard copies use confirmed native docks and refuse old-channel conflicts
   await expect(withConfirmedCopyDocks(sn, source, copy)).rejects.toThrow('RTK Fixed');
 });
 
+it('quick placement accepts a docked mower up to 30 cm from its saved dock; the default stays 10 cm', async () => {
+  const src = snapshot(); src.csv_files['map0tocharge_unicom.csv'] = goodChannel; src.x3_csv_files = { ...src.csv_files };
+  rows(source, src);
+  mapRepo.updateAreaAndBoundsByIdAndMower(`${sn}-map0tocharge_unicom.csv`, sn, JSON.stringify([{ x: .03, y: .73 }, { x: .03, y: 1.93 }]), '{}');
+  vi.mocked(readMowerMapSnapshot).mockResolvedValue(src);
+  samples(sn, pose.x + 0.2);
+  await expect(withConfirmedCopyDocks(sn, source, vi.fn())).rejects.toThrow('10 cm');
+  const seen = await withConfirmedCopyDocks(sn, source, docks => docks.seatToleranceM, true, 0.3);
+  expect(seen).toBe(0.3);
+  samples(sn, pose.x + 0.35);
+  await expect(withConfirmedCopyDocks(sn, source, vi.fn(), true, 0.3)).rejects.toThrow('30 cm');
+});
+
 it('admits a target whose own failed install is pending, but never a source in that state', async () => {
   const src = snapshot(); src.csv_files['map0tocharge_unicom.csv'] = goodChannel; src.x3_csv_files = { ...src.csv_files };
   rows(source, src);

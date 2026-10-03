@@ -36,9 +36,9 @@ const plan = () => planZoneCopy({ slot: 1, work: work.map(p => ({ x: p.x + 8, y:
 let installedSnapshot: Record<string, unknown>;
 const verifyRuntime = vi.fn(async () => installedSnapshot);
 const verifyBefore = vi.fn(async () => ({ verifyRuntime }));
-const run = (copyPlan = plan(), targetSnapshot = snapshot()) => withMowerMapOperation(sn, targetOperation => withMowerMapOperation(source, sourceOperation =>
+const run = (copyPlan = plan(), targetSnapshot = snapshot(), seatToleranceM?: number) => withMowerMapOperation(sn, targetOperation => withMowerMapOperation(source, sourceOperation =>
   installZoneCopy(sn, copyPlan, { alias: 'Kopie', acceptChannel: true }, {
-    source: dock, target: dock, sourceSnapshot: snapshot(), targetSnapshot, sourceOperation, targetOperation,
+    source: dock, target: dock, sourceSnapshot: snapshot(), targetSnapshot, sourceOperation, targetOperation, seatToleranceM,
   }, verifyBefore)));
 
 beforeEach(() => {
@@ -184,6 +184,16 @@ it('retries after a failed install and replaces the slot files that install left
   expect(Object.keys(JSON.parse(sent.get('map_info.json')!)).sort()).toEqual(['charging_pose', 'map0_work.csv', 'map1_work.csv']);
   expect(mapRepo.findBySnAndCanonical(sn, 'map1')).toBeDefined();
   expect(isMapInstallPending(sn)).toBe(false);
+});
+
+it('installs a quick placement while the docked mower reads 20 cm from its saved dock', async () => {
+  clearPositionTelemetry(sn);
+  for (let i = 0; i < 8; i++) ingestPositionTelemetry(sn, {
+    rtk_fix_quality: 4, localization_state: 'RUNNING', recharge_status: 9, map_position_x: dock.x, map_position_y: dock.y + 0.2,
+  }, Date.now() - 8000 + i * 1000);
+  await expect(run()).rejects.toThrow('10 cm');
+  await run(plan(), snapshot(), 0.3);
+  expect(mapRepo.findBySnAndCanonical(sn, 'map1')).toBeDefined();
 });
 
 it('accepts the firmware rewriting map_info.json between the install and the final check', async () => {

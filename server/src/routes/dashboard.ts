@@ -69,7 +69,7 @@ import { getPolygonAnchor, snapshotAnchorMatches } from '../services/anchor.js';
 import { alignDockPhoto, getPhotoDockPose, snapshotDockPose } from '../services/dockPhotoReference.js';
 import { repairDockChannels, withConfirmedCopyDocks } from '../services/dockChannelRepair.js';
 import { withMowerMapOperation, isMowerMapOperationBusy, readMowerMapSnapshot } from '../services/mowerMapOperation.js';
-import { freshPositionState, stablePosition } from '../services/positionTelemetry.js';
+import { freshPositionState, stablePosition, QUICK_COPY_SEAT_TOLERANCE_M } from '../services/positionTelemetry.js';
 import { canonicalForDrawnMap } from '../services/canonicalNaming.js';
 import { previewZoneCopy, DOCK_MAX_M, type CopyPlan } from '../services/zoneCopy.js';
 import { installZoneCopy } from '../services/installZoneCopy.js';
@@ -2161,7 +2161,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
         needsChannel: acceptChannel ? r.plan.needsChannel : !r.plan.connectedVia,
         warnings: r.plan.warnings,
       });
-    });
+    }, true, body.alignmentId ? undefined : QUICK_COPY_SEAT_TOLERANCE_M);
   } catch (error) {
     if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: error instanceof Error ? error.message : String(error) });
   }

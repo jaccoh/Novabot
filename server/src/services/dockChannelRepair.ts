@@ -27,12 +27,14 @@ export interface ConfirmedCopyDocks {
   targetSnapshot: Snapshot;
   sourceOperation: MowerMapOperation;
   targetOperation: MowerMapOperation;
+  /** How far the docked target may read from its saved dock; defaults to DOCK_SEAT_TOLERANCE_M. */
+  seatToleranceM?: number;
 }
 
-function ready(sn: string, pose?: Pose) {
+function ready(sn: string, pose?: Pose, tolerance = DOCK_SEAT_TOLERANCE_M) {
   const live = stablePosition(sn, { docked: true });
-  if (!isDeviceOnline(sn) || !live || (pose && Math.hypot(live.x - pose.x, live.y - pose.y) > DOCK_SEAT_TOLERANCE_M)) {
-    throw new Error('Zet de doelmaaier op zijn eigen dock en wacht op stabiele RTK Fixed-lokalisatie binnen 10 cm van de opgeslagen dockpositie.');
+  if (!isDeviceOnline(sn) || !live || (pose && Math.hypot(live.x - pose.x, live.y - pose.y) > tolerance)) {
+    throw new Error(`Zet de doelmaaier op zijn eigen dock en wacht op stabiele RTK Fixed-lokalisatie binnen ${Math.round(tolerance * 100)} cm van de opgeslagen dockpositie.`);
   }
   return live;
 }
@@ -76,7 +78,7 @@ async function readDock(sn: string, operation: MowerMapOperation, retryingInstal
 }
 
 /** The dashboard copy flow never derives either dock from an unverified channel or cached robot pose. */
-export async function withConfirmedCopyDocks<T>(target: string, source: string, run: (docks: ConfirmedCopyDocks) => T | Promise<T>, requireDocked = true): Promise<T> {
+export async function withConfirmedCopyDocks<T>(target: string, source: string, run: (docks: ConfirmedCopyDocks) => T | Promise<T>, requireDocked = true, seatToleranceM = DOCK_SEAT_TOLERANCE_M): Promise<T> {
   if (target === source) throw new Error('Kies een andere bronmaaier.');
   return withMowerMapOperation(target, targetOp => withMowerMapOperation(source, async sourceOp => {
     if (requireDocked) ready(target);
@@ -88,8 +90,8 @@ export async function withConfirmedCopyDocks<T>(target: string, source: string, 
     if (!snapshotAnchorMatches(a.snapshot, a.pose) || !snapshotAnchorMatches({ ...a.snapshot, csv_files: a.snapshot.x3_csv_files }, a.pose)) throw new Error('Het dockkanaal van de bronmaaier wijkt af van zijn opgeslagen dock.');
     const hasChannels = Object.keys(csvOf(b.snapshot)).some(n => DOCK_CHANNEL.test(n));
     if (hasChannels && (!snapshotAnchorMatches(b.snapshot, b.pose) || !snapshotAnchorMatches({ ...b.snapshot, csv_files: b.snapshot.x3_csv_files }, b.pose))) throw new Error('Herstel eerst het bestaande dockkanaal van de doelmaaier.');
-    if (requireDocked) ready(target, b.pose);
-    return run({ source: a.pose, target: b.pose, sourceSnapshot: a.snapshot!, targetSnapshot: b.snapshot!, sourceOperation: sourceOp, targetOperation: targetOp });
+    if (requireDocked) ready(target, b.pose, seatToleranceM);
+    return run({ source: a.pose, target: b.pose, sourceSnapshot: a.snapshot!, targetSnapshot: b.snapshot!, sourceOperation: sourceOp, targetOperation: targetOp, seatToleranceM });
   }));
 }
 

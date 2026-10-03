@@ -28,8 +28,9 @@ export async function installZoneCopy(
     assertMowerMapOperation(sn, operation);
     assertMowerMapOperation(sourceOperation.sn, sourceOperation);
     const position = stablePosition(sn, { docked: true });
-    if (!isDeviceOnline(sn) || !position || Math.hypot(position.x - dock.x, position.y - dock.y) > DOCK_SEAT_TOLERANCE_M) {
-      throw new Error('Zet de doelmaaier op zijn eigen dock met stabiele RTK Fixed-lokalisatie binnen 10 cm van de opgeslagen dockpositie.');
+    const tolerance = docks.seatToleranceM ?? DOCK_SEAT_TOLERANCE_M;
+    if (!isDeviceOnline(sn) || !position || Math.hypot(position.x - dock.x, position.y - dock.y) > tolerance) {
+      throw new Error(`Zet de doelmaaier op zijn eigen dock met stabiele RTK Fixed-lokalisatie binnen ${Math.round(tolerance * 100)} cm van de opgeslagen dockpositie.`);
     }
   };
   ready();
