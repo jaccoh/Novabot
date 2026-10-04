@@ -31,6 +31,12 @@ jobs:
 
       - name: Install deps
         run: npm ci
+        env:
+          # onnxruntime-node's install script fetches the CUDA binaries from
+          # NuGet on linux/x64. The server runs the model on the CPU (bundled
+          # in the package), so skip that download: it only adds a network
+          # step that can time out (ETIMEDOUT on 2026-10-04).
+          ONNXRUNTIME_NODE_INSTALL: skip
 
       - name: Type-check
         run: npx tsc --noEmit
