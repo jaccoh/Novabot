@@ -141,6 +141,17 @@ const GHOST_STYLES = {
   work:     { color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.12, weight: 2, dashArray: '5 4' },
   obstacle: { color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.2, weight: 1, dashArray: '3 3' },
 } as const;
+/** A pick this close to the orange zone means that corner, or failing a corner, that edge point. */
+const NUDGE_SNAP_M = 1.5;
+function snapToZone(p: LocalPoint, work: LocalPoint[] | undefined): LocalPoint {
+  if (!work || work.length < 3) return p;
+  const nearest = (pts: LocalPoint[]) => pts.reduce((best, q) => { const d = Math.hypot(q.x - p.x, q.y - p.y); return d < best.d ? { q, d } : best; }, { q: p, d: Infinity });
+  const corner = nearest(simplifyPolygon(work, 0.3));
+  if (corner.d <= NUDGE_SNAP_M) return corner.q;
+  const edge = nearest(work);
+  return edge.d <= NUDGE_SNAP_M ? edge.q : p;
+}
+
 /** Mean of (where the mower really stands − where the copy says it stands); frames are UTM-aligned, so no rotation. */
 function nudgeDelta(pairs: { live: LocalPoint; clicked: LocalPoint }[]): LocalPoint {
   if (!pairs.length) return { x: 0, y: 0 };
@@ -2255,13 +2266,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setCopyPanel(prev => !prev || prev.pending || prev.mode !== 'point' ? prev : { ...prev, dockAtB, plan: null, error: null });
   }, []);
 
-  /** Nudge pair: the mower stands on a spot the user then clicks on the map. The live position is the truth. */
-  const addNudgePair = useCallback((clicked: LocalPoint) => {
+  /** Nudge pair: the mower stands on a spot the user then clicks on the copy. The live position is the truth.
+   *  The pick snaps to the orange zone, and pairs are kept in the coordinates of the first placement so a
+   *  later pick on the already shifted preview adds up instead of halving the correction. */
+  const addNudgePair = useCallback((picked: LocalPoint) => {
     const live = { x: parseFloat(mapX ?? ''), y: parseFloat(mapY ?? '') };
     setCopyPanel(prev => {
-      if (!prev?.nudge || prev.pending) return prev;
+      if (!prev?.nudge || prev.pending || !prev.dockAtB) return prev;
       if (!Number.isFinite(live.x) || !Number.isFinite(live.y)) return { ...prev, nudge: { ...prev.nudge, picking: false }, error: t('map.nudgeNoLive') };
-      const pairs = [...prev.nudge.pairs, { live, clicked }];
+      const snapped = snapToZone(picked, (prev.plan as { work?: LocalPoint[] } | null)?.work);
+      const shift = { x: prev.dockAtB.x - prev.nudge.base.x, y: prev.dockAtB.y - prev.nudge.base.y };
+      const pairs = [...prev.nudge.pairs, { live, clicked: { x: snapped.x - shift.x, y: snapped.y - shift.y } }];
       const d = nudgeDelta(pairs);
       return { ...prev, nudge: { ...prev.nudge, pairs, picking: false }, dockAtB: { x: prev.nudge.base.x + d.x, y: prev.nudge.base.y + d.y }, plan: null, error: null };
     });
@@ -2269,6 +2284,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   // Dragging the preview polygon: delta in mower metres, applied to dockAtB on release.
   const [copyDrag, setCopyDrag] = useState<{ start: LocalPoint; delta: LocalPoint } | null>(null);
+  // Set by a nudge apply, consumed below once handlePlaceCharger exists.
+  const [pinShift, setPinShift] = useState<LocalPoint | null>(null);
   const copyDragEndedAt = useRef(0);
   const copyDragToLocal = useCallback((latlng: L.LatLng) => localFromDisplay({ lat: latlng.lat, lng: latlng.lng }), [localFromDisplay]);
   const endCopyDrag = useCallback((delta: LocalPoint) => {
@@ -2289,6 +2306,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
       if (!r.ok || !r.map) throw new Error(t('map.copyZoneFailed'));
       await reloadMaps();
       setSelectedMapId(r.map.mapId);
+      if (copyPanel.nudge && copyPanel.dockAtB) setPinShift({ x: copyPanel.dockAtB.x - copyPanel.nudge.base.x, y: copyPanel.dockAtB.y - copyPanel.nudge.base.y });
       setCopyPanel(prev => prev === pending ? null : prev);
       const slot = r.map.canonicalName ?? '';
       toast(t(copyPanel.nudge ? 'map.copyZoneNudged' : 'map.copyZoneDone', { name: r.map.mapName ?? slot, slot }), 'success');
@@ -2305,6 +2323,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const applyView = mapApplyView(sensors);
   // The source-dock cycle ('auto') has its own progress in the copy panel.
   const copyBusy = copyPanel?.pending && copyPanel.pending !== 'auto' ? copyPanel.pending : null;
+  // The server only installs a copy on a docked mower; say so before the button does.
+  const targetDocked = ['CHARGING', 'FINISHED'].includes((sensors?.battery_state ?? '').toUpperCase());
   const [dismissedApplyError, setDismissedApplyError] = useState<string | null>(null);
   useEffect(() => { if (applyView.state === 'busy') setDismissedApplyError(null); }, [applyView.state]);
   const retryMapApply = useCallback(async () => {
@@ -3717,6 +3737,16 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     }
   }, [sn, savedCal, polygonOffset, t, aligningDockPhoto, reloadMaps, toast]);
 
+  // A nudge measured where the zone really lies in the mower's frame; the zone
+  // moved there, so the photo pin takes the opposite step and zone, channel,
+  // charger and mower keep their place on the photo. The mower is untouched.
+  useEffect(() => {
+    if (!pinShift || !isUsableChargerGps(chargerGps)) return;
+    setPinShift(null);
+    const pin = localToGps({ x: -pinShift.x, y: -pinShift.y }, chargerGps);
+    void handlePlaceCharger(pin.lat, pin.lng);
+  }, [pinShift, chargerGps, handlePlaceCharger]);
+
   // Push maps to mower via SSH
   // Navigate-to: the click is a map point, the mower wants map metres. Undo
   // exactly what the map does to draw local points (localToGps from the dock
@@ -4412,6 +4442,17 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               if (copyPanel.nudge?.picking) addNudgePair(p); else if (!copyPanel.nudge) setCopyDock(p);
             }} />
           )}
+          {/* Nudge pairs: where the mower stood (white) and where the shifted copy now puts that spot (orange); a good fit closes the gap. */}
+          {editMode === 'none' && copyPanel?.nudge && copyPanel.dockAtB && copyPanel.nudge.pairs.flatMap((pair, i) => {
+            const shift = { x: copyPanel.dockAtB!.x - copyPanel.nudge!.base.x, y: copyPanel.dockAtB!.y - copyPanel.nudge!.base.y };
+            const a = displayFromMower(pair.live), b = displayFromMower({ x: pair.clicked.x + shift.x, y: pair.clicked.y + shift.y });
+            if (![a.lat, a.lng, b.lat, b.lng].every(Number.isFinite)) return [];
+            return [
+              <Polyline key={`nudge-line-${i}`} positions={[[a.lat, a.lng], [b.lat, b.lng]]} pathOptions={{ color: '#f59e0b', weight: 2, dashArray: '4 3' }} />,
+              <CircleMarker key={`nudge-live-${i}`} center={[a.lat, a.lng]} radius={5} pathOptions={{ color: '#ffffff', fillColor: '#ffffff', fillOpacity: 1, weight: 1 }} />,
+              <CircleMarker key={`nudge-pick-${i}`} center={[b.lat, b.lng]} radius={5} pathOptions={{ color: '#f59e0b', fillOpacity: 0, weight: 2 }} />,
+            ];
+          })}
           {editMode === 'none' && copyPanel?.mode === 'point' && !copyPanel.nudge && copyPanel.dockAtB && (() => {
             const g = displayFromMower(copyPanel.dockAtB);
             return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? (
@@ -5353,8 +5394,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
                 <div className="leading-snug">
-                  <div className="text-gray-100 font-medium">{t('map.copyZone')}</div>
-                  <div className="text-gray-400">{t(`map.copyBusy.${copyBusy}`)}</div>
+                  <div className="text-gray-100 font-medium">{copyPanel?.nudge ? t('map.nudgeTitle', { name: copyPanel.nudge.name }) : t('map.copyZone')}</div>
+                  <div className="text-gray-400">{t(copyPanel?.nudge && copyBusy === 'preview' ? 'map.nudgeReplanning' : `map.copyBusy.${copyBusy}`)}</div>
                 </div>
               </>
             ) : applyView.state === 'failed' ? (
@@ -5378,7 +5419,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         {copyPanel && editMode === 'none' && (
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-80 max-h-[calc(100%-1.5rem)] overflow-y-auto space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">{t('map.copyZone')}</span>
+              <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">{copyPanel.nudge ? t('map.nudgeTitle', { name: copyPanel.nudge.name }) : t('map.copyZone')}</span>
               <button onClick={() => setCopyPanel(null)} disabled={copyPanel.pending === 'apply'} className="text-gray-500 hover:text-gray-300 disabled:opacity-40" title={t('common.cancel')}>
                 <X className="w-4 h-4" />
               </button>
@@ -5387,6 +5428,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <p className="text-[11px] text-gray-400" role="status">{copyPanel.error ?? t(copyPanel.pending ? 'common.loading' : 'map.copyZoneNoSources')}</p>
             ) : (
               <>
+                {!copyPanel.nudge && (<>
                 <label className="block text-[11px] text-gray-400">
                   {t('map.copyZoneSource')}
                   <select
@@ -5436,6 +5478,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   <input type="checkbox" checked={copyPanel.withObstacles} disabled={!!copyPanel.pending} onChange={e => updateCopyPanel({ withObstacles: e.target.checked })} />
                   {t('map.copyZoneWithObstacles')}
                 </label>
+                </>)}
                 {!copyPanel.nudge && (
                   <div className="text-[11px] text-gray-400 space-y-1">
                     <div>{t('map.copyMode')}</div>
@@ -5453,8 +5496,8 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
                     {copyPanel.nudge ? (
                       <>
-                        <p className="text-xs font-medium text-amber-300">{t('map.nudgeTitle', { name: copyPanel.nudge.name })}</p>
                         <p className="text-[11px] leading-snug text-gray-200">{t('map.nudgeHint')}</p>
+                        <p className={`text-[11px] leading-snug ${targetDocked ? 'text-emerald-300' : 'text-amber-300'}`}>{t(targetDocked ? 'map.nudgeDocked' : 'map.nudgeDockFirst')}</p>
                         <div className="flex items-center gap-2">
                           <button onClick={() => setCopyPanel(prev => prev?.nudge ? { ...prev, nudge: { ...prev.nudge, picking: !prev.nudge.picking }, error: null } : prev)}
                             disabled={!!copyPanel.pending}
@@ -5552,10 +5595,10 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                   </button>
                   <button
                     onClick={() => void placeCopiedZone()}
-                    disabled={!copyBy(copyPanel) || !copyPanel.plan?.ok || !!copyPanel.pending}
+                    disabled={!copyBy(copyPanel) || !copyPanel.plan?.ok || !!copyPanel.pending || !targetDocked}
                     className="flex-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 transition-colors"
                   >
-                    {copyPanel.pending === 'apply' ? t('map.copyZonePlacing') : t(copyPanel.nudge ? 'map.copyZoneApplyNudge' : 'map.copyZonePlace')}
+                    {copyPanel.pending === 'apply' ? t('map.copyZonePlacing') : !targetDocked ? t('map.copyDockFirstButton') : t(copyPanel.nudge ? 'map.copyZoneApplyNudge' : 'map.copyZonePlace')}
                   </button>
                 </div>
               </>

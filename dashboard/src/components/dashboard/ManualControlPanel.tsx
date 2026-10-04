@@ -4,6 +4,10 @@ import { joystickStart, joystickMove, joystickStop } from '../../api/socket';
 import { sendExtendedCommand } from '../../api/client';
 import { bladesMaySpin, deriveMowerActivity } from '../../utils/mowerActivity';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
+import { useCameraSnapshot } from '../../hooks/useCameraSnapshot';
+import { Camera, CameraOff, Eye, EyeOff, Loader, RefreshCw } from 'lucide-react';
+
+const CAMERA_PREF_KEY = 'novabot.joystickCamera';
 
 /** Saw-blade icon — the MaterialCommunityIcons "saw-blade" the OpenNova app uses. */
 function SawBlade({ className }: { className?: string }) {
@@ -58,6 +62,19 @@ export function ManualControlPanel({ sn, online, sensors }: Props) {
   // blade_on/off zijn extended commands → alleen OpenNova firmware. De joystick
   // zelf blijft ongemoeid (stock-ondersteuning niet geverifieerd).
   const firmwareSupported = isOpenNovaFirmware(sensors?.sw_version ?? sensors?.version);
+
+  // Front camera above the joystick, as in the app; only custom firmware runs
+  // the camera service. The choice to hide it is remembered per browser.
+  const [showCamera, setShowCamera] = useState(() => {
+    try { return localStorage.getItem(CAMERA_PREF_KEY) !== '0'; } catch { return true; }
+  });
+  const toggleCamera = () => setShowCamera(v => {
+    try { localStorage.setItem(CAMERA_PREF_KEY, v ? '0' : '1'); } catch { /* ignore */ }
+    return !v;
+  });
+  const cameraAvailable = firmwareSupported && online;
+  const cameraOn = cameraAvailable && showCamera;
+  const camera = useCameraSnapshot(sn, 'front', cameraOn);
 
   // Blade state. When the operator turns the blade on manually we set a local
   // flag; movement is then allowed even though the firmware may briefly report
@@ -227,7 +244,47 @@ export function ManualControlPanel({ sn, online, sensors }: Props) {
   const motorRunning = bladeOn || bladeSpeed > 0;
 
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className={`flex flex-col items-center gap-4 max-w-full ${cameraOn ? 'w-[348px]' : 'w-[268px]'}`}>
+      {cameraAvailable && (
+        <div className="w-full">
+          <div className="flex items-center gap-1.5 mb-1">
+            <Camera className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="text-[11px] text-gray-300">{t('camera.camera', 'Camera')}</span>
+            <div className="ml-auto flex items-center gap-1">
+              {showCamera && (
+                <button onClick={camera.retry} title={t('camera.reload', 'Beeld opnieuw laden')}
+                  className="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700/60 transition-colors">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button onClick={toggleCamera} title={showCamera ? t('camera.hide', 'Camera verbergen') : t('camera.show', 'Camera tonen')}
+                className="p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-700/60 transition-colors">
+                {showCamera ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+          {showCamera && (
+            <div className="relative w-full aspect-video bg-black rounded-lg overflow-hidden">
+              {camera.error ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-3">
+                  <CameraOff className="w-6 h-6 text-gray-500" />
+                  <span className="text-xs text-gray-400">{t('camera.unavailable', 'Camera unavailable')}</span>
+                  <button onClick={camera.retry}
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-gray-700/60 text-gray-200 hover:bg-gray-600/60 transition-colors">
+                    <RefreshCw className="w-3 h-3" />{t('camera.retry', 'Retry')}
+                  </button>
+                </div>
+              ) : camera.imageSrc ? (
+                <img src={camera.imageSrc} alt={t('camera.camera', 'Camera')} className="w-full h-full object-contain" />
+              ) : camera.loading && (
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs text-gray-400">
+                  <Loader className="w-4 h-4 animate-spin" />{t('camera.connecting', 'Connecting...')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {/* Speed selector */}
       <div className="flex gap-1.5 w-full">
         {SPEED_LEVELS.map((s, i) => (

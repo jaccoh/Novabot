@@ -684,6 +684,10 @@ export function MowerControls({
   // Frame re-anchor required after a bundle restore — nav is blocked until the
   // map frame is re-anchored on the dock (mirrors app HomeScreen frameUnvalidated).
   const frameUnvalidated = (sensors?.frame_unvalidated ?? '0') === '1';
+  // A running or unfinished map install sets the same flag (start stays
+  // blocked), but needs no re-anchor; the map shows its own progress then.
+  const mapInstallPending = (sensors?.map_install_pending ?? '0') === '1';
+  const needsReanchor = frameUnvalidated && !mapInstallPending;
   const [showReanchor, setShowReanchor] = useState(false);
 
   // Why the mower is on the dock. Without this a run cut short by rain, a low
@@ -929,7 +933,7 @@ export function MowerControls({
     <div className="relative" ref={toolbarRef}>
       {/* Re-anchor required banner — shown when the map frame is unvalidated
           (after a bundle restore). Tapping opens the re-anchor wizard. */}
-      {frameUnvalidated && (
+      {needsReanchor && (
         <button
           onClick={() => setShowReanchor(true)}
           disabled={!firmwareSupported}
@@ -958,7 +962,7 @@ export function MowerControls({
             no-map/busy. */}
         {/* Her-ankeren nodig: een tooltip op een uitgeschakelde knop vindt
             niemand. Deze chip zegt het en opent meteen de wizard. */}
-        {frameUnvalidated && (
+        {needsReanchor && (
           <button
             onClick={() => setShowReanchor(true)}
             title={t('controls.reanchorRequiredBody',
@@ -1009,6 +1013,7 @@ export function MowerControls({
               : noMap ? (t('controls.noMapCreateFirst') ?? 'Create a map first')
               // Stond hier niet, terwijl frameUnvalidated de knop wél uitzet:
               // de startknop was grijs zonder dat iets vertelde waarom.
+              : mapInstallPending ? t('controls.mapInstallPending')
               : frameUnvalidated ? t('controls.reanchorRequiredTitle', 'Her-ankeren nodig')
               : mowerBusy ? t('controls.busy')
               : (online || demoActive) ? t('controls.startMowing')
@@ -1647,7 +1652,7 @@ export function MowerControls({
       {/* Manual control (joystick + blade) — mirrors the app JoystickScreen. */}
       {showManualControl && createPortal(
         <div
-          className="fixed z-[99999] w-[300px] max-w-[92vw] bg-gray-900/95 backdrop-blur border border-gray-700/60 rounded-2xl shadow-2xl"
+          className="fixed z-[99999] w-max max-w-[92vw] bg-gray-900/95 backdrop-blur border border-gray-700/60 rounded-2xl shadow-2xl"
           style={{ left: mcPos.x, top: mcPos.y }}
         >
           {/* Drag handle header */}
