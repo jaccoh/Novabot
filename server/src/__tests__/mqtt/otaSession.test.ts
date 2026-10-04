@@ -71,6 +71,28 @@ describe('OTA session phases (issue #130)', () => {
     expect(getOtaSession(SN)?.phase).toBe('failed');
   });
 
+  it('marks done when the target version shows up although progress and the reboot were missed', () => {
+    otaSessionStarted(SN, 'v6.0.2-custom-45', 'v6.0.2-custom-38');
+    otaSessionState(SN, { status: 'upgrade', percentage: 20 });
+    otaSessionVersion(SN, '6.0.2-custom-38'); // still the old build: keep waiting
+    expect(getOtaSession(SN)?.phase).toBe('downloading');
+    otaSessionVersion(SN, '6.0.2-custom-45');
+    expect(getOtaSession(SN)?.phase).toBe('done');
+    expect(getOtaSession(SN)?.reported).toBe('6.0.2-custom-45');
+  });
+
+  it('stalls after 10 min without any progress message, and recovers when the target version appears', () => {
+    otaSessionStarted(SN, 'v2', 'v1');
+    vi.advanceTimersByTime(9 * 60_000);
+    otaSessionState(SN, { status: 'upgrade', percentage: 30 }); // a slow but live download
+    vi.advanceTimersByTime(9 * 60_000);
+    expect(getOtaSession(SN)?.phase).toBe('downloading');
+    vi.advanceTimersByTime(60_000);
+    expect(getOtaSession(SN)?.phase).toBe('stalled');
+    otaSessionVersion(SN, 'v2');
+    expect(getOtaSession(SN)?.phase).toBe('done');
+  });
+
   it('clears a finished session after 10 min and records since per phase', () => {
     otaSessionStarted(SN, 'v2', 'v1');
     vi.advanceTimersByTime(30_000);

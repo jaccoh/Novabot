@@ -29,13 +29,28 @@ export interface OtaSession {
 }
 
 const AWAITING_REBOOT_TIMEOUT_MS = 5 * 60_000;
+/** Silence while downloading/unpacking/installing; every progress message restarts it. */
+const PROGRESS_SILENCE_MS = 10 * 60_000;
 const FINISHED_TTL_MS = 10 * 60_000;
 const TERMINAL: ReadonlySet<OtaPhase> = new Set(['done', 'rolled-back', 'failed', 'stalled']);
+const IN_PROGRESS: ReadonlySet<OtaPhase> = new Set(['downloading', 'unpacking', 'installing']);
 
 const sessions = new Map<string, OtaSession>();
 const timers = new Map<string, NodeJS.Timeout>();
 
 const norm = (v: string | null | undefined) => String(v ?? '').replace(/^v+/i, '').trim();
+
+function armTimer(sn: string, phase: OtaPhase): void {
+  clearTimeout(timers.get(sn));
+  timers.delete(sn);
+  if (phase === 'awaiting-reboot') {
+    timers.set(sn, setTimeout(() => setPhase(sn, 'stalled'), AWAITING_REBOOT_TIMEOUT_MS));
+  } else if (IN_PROGRESS.has(phase)) {
+    timers.set(sn, setTimeout(() => setPhase(sn, 'stalled'), PROGRESS_SILENCE_MS));
+  } else if (TERMINAL.has(phase)) {
+    timers.set(sn, setTimeout(() => { sessions.delete(sn); timers.delete(sn); }, FINISHED_TTL_MS));
+  }
+}
 
 function setPhase(sn: string, phase: OtaPhase): void {
   const s = sessions.get(sn);
@@ -43,14 +58,7 @@ function setPhase(sn: string, phase: OtaPhase): void {
   s.phase = phase;
   s.since = Date.now();
   emitOtaEvent(sn, 'phase', { ...s });
-
-  clearTimeout(timers.get(sn));
-  timers.delete(sn);
-  if (phase === 'awaiting-reboot') {
-    timers.set(sn, setTimeout(() => setPhase(sn, 'stalled'), AWAITING_REBOOT_TIMEOUT_MS));
-  } else if (TERMINAL.has(phase)) {
-    timers.set(sn, setTimeout(() => { sessions.delete(sn); timers.delete(sn); }, FINISHED_TTL_MS));
-  }
+  armTimer(sn, phase);
 }
 
 export function otaSessionStarted(sn: string, target: string, from: string | null): void {
@@ -59,6 +67,7 @@ export function otaSessionStarted(sn: string, target: string, from: string | nul
   const now = Date.now();
   sessions.set(sn, { sn, phase: 'downloading', since: now, startedAt: now, target, from });
   emitOtaEvent(sn, 'phase', { ...sessions.get(sn)! });
+  armTimer(sn, 'downloading');
 }
 
 /** Raw ota_upgrade_state from the device (status + percentage). */
@@ -66,6 +75,7 @@ export function otaSessionState(sn: string, state: { status?: unknown; percentag
   const s = sessions.get(sn);
   if (!s || TERMINAL.has(s.phase)) return;
   s.lastState = state;
+  armTimer(sn, s.phase); // any message proves the update is alive
   const status = String(state.status ?? '');
   if (status === 'success') return setPhase(sn, 'awaiting-reboot');
   if (status === 'failed' || status === 'error') return setPhase(sn, 'failed');
@@ -85,12 +95,21 @@ export function otaSessionConnect(sn: string): void {
   if (sessions.get(sn)?.phase === 'rebooting') setPhase(sn, 'back');
 }
 
-/** sw_version seen in a report_state. Only meaningful once the device is back. */
+/** sw_version from every report_state. Decides done/rolled-back once the device is back. */
 export function otaSessionVersion(sn: string, version: string): void {
   const s = sessions.get(sn);
-  if (!s || s.phase !== 'back') return;
-  s.reported = version;
-  setPhase(sn, norm(version) === norm(s.target) ? 'done' : 'rolled-back');
+  if (!s || s.phase === 'done' || s.phase === 'rolled-back' || s.phase === 'failed') return;
+  if (s.phase === 'back') {
+    s.reported = version;
+    setPhase(sn, norm(version) === norm(s.target) ? 'done' : 'rolled-back');
+    return;
+  }
+  // The new build itself proves the install, also when progress or the
+  // reboot was missed (field report: modal stuck on "downloading").
+  if (norm(version) === norm(s.target) && norm(version) !== norm(s.from)) {
+    s.reported = version;
+    setPhase(sn, 'done');
+  }
 }
 
 export function getOtaSession(sn: string): OtaSession | undefined {
