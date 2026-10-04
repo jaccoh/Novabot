@@ -14,6 +14,7 @@ vi.mock('../../mqtt/broker.js', () => ({
 import { SENSORS, translateValue, updateDeviceData, deviceCache } from '../../mqtt/sensorData.js';
 import {
   markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, noteAutoRecharge,
+  markMapInstallPending, clearMapInstallPending,
 } from '../../services/frameValidation.js';
 
 describe('translateValue rtk_fix_quality', () => {
@@ -119,6 +120,19 @@ describe('frame_unvalidated lifecycle in updateDeviceData', () => {
     markFrameUnvalidated(SN);
     const changes = updateDeviceData(SN, Buffer.from(JSON.stringify({ report_state_robot: { battery_power: 80 } })));
     expect(changes?.get('frame_unvalidated')).toBe('1');
+  });
+
+  it('tells an unfinished map install apart from a frame that needs re-anchoring', () => {
+    const SN = 'LFIN_INSTALL_FLAG';
+    clearFrameUnvalidated(SN); clearMapInstallPending(SN);
+    markMapInstallPending(SN);
+    const during = updateDeviceData(SN, Buffer.from(JSON.stringify({ report_state_robot: { battery_power: 80 } })));
+    expect(during?.get('frame_unvalidated')).toBe('1');   // still blocks start
+    expect(during?.get('map_install_pending')).toBe('1');
+    clearMapInstallPending(SN);
+    const after = updateDeviceData(SN, Buffer.from(JSON.stringify({ report_state_robot: { battery_power: 81 } })));
+    expect(after?.get('frame_unvalidated')).toBe('0');
+    expect(after?.get('map_install_pending')).toBe('0');
   });
 });
 

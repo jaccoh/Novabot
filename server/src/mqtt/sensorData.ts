@@ -19,7 +19,7 @@ import { computeDockDrift, median, DOCK_DRIFT_WARN_M } from '../services/dockDri
 import { dispatchDockDriftEvent } from '../notifications/eventDetector.js';
 import { pointInPolygon } from '../maps/editGeometry.js';
 import { detectAndDispatch, resetEventState } from '../notifications/eventDetector.js';
-import { isFrameUnvalidated, clearFrameUnvalidated, noteDockState } from '../services/frameValidation.js';
+import { isFrameUnvalidated, clearFrameUnvalidated, noteDockState, isMapInstallPending } from '../services/frameValidation.js';
 import { resolveMowerIp } from '../services/mowerIpDiscovery.js';
 import { isSimulatedStock, SIMULATED_STOCK_VERSION, isOpenNovaMower } from '../services/mowerFileCapability.js';
 import { emitDebugPosJson } from '../dashboard/socketHandler.js';
@@ -1435,10 +1435,15 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
       console.log(`[sensor] frame_unvalidated cleared for ${sn} (re-docked after undock)`);
     }
   }
-  const fuNow = isFrameUnvalidated(sn) ? '1' : '0';
-  if (snValues.get('frame_unvalidated') !== fuNow) {
-    snValues.set('frame_unvalidated', fuNow);
-    changes.set('frame_unvalidated', fuNow);
+  // frame_unvalidated also covers a running or unfinished map install, which
+  // blocks starting just the same but needs no re-anchor; map_install_pending
+  // lets the UI say which of the two it is.
+  for (const [key, value] of [['frame_unvalidated', isFrameUnvalidated(sn)], ['map_install_pending', isMapInstallPending(sn)]] as const) {
+    const now = value ? '1' : '0';
+    if (snValues.get(key) !== now) {
+      snValues.set(key, now);
+      changes.set(key, now);
+    }
   }
 
   return changes.size > 0 ? changes : null;
