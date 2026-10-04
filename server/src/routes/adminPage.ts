@@ -559,6 +559,8 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         <button class="langbtn" data-lang="de" onclick="window.__setLang('de')">DE</button>
       </div>
       <a class="btn" id="dashboardLink" href="/" style="display:none">Dashboard</a>
+      <a class="btn" id="whatsNewLink" href="/#whats-new" style="display:none">What's new</a>
+      <button class="btn" id="releaseNotesBtn" onclick="openReleaseNotes()" style="display:none">Release notes</button>
       <button class="btn" onclick="openHelp()" title="Wat doet elke knop?">? Help</button>
       <button class="btn" onclick="logout()">Logout</button>
       <button class="btn icon-btn" onclick="loadAll()" title="Refresh" aria-label="Refresh">↻</button>
@@ -685,6 +687,17 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
           <div class="help-item"><b>Login</b> — inloggen met je OpenNova-account.</div>
         </div></details>
       </div>
+    </div>
+  </div>
+
+  <!-- Release notes: same data as the dashboard's popup (/api/dashboard/release-notes). -->
+  <div id="notesOverlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeReleaseNotes()">
+    <div class="help-box">
+      <div class="help-head">
+        <h3>Release notes</h3>
+        <button class="help-x" onclick="closeReleaseNotes()" aria-label="Close">×</button>
+      </div>
+      <div class="help-body" id="notesBody"></div>
     </div>
   </div>
 
@@ -1355,7 +1368,42 @@ function closeHelp() {
   o.classList.remove('show');
   setTimeout(function(){ o.style.display = 'none'; }, 200);
 }
-document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeHelp(); });
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') { closeHelp(); closeReleaseNotes(); } });
+
+// Release notes, newest first, grouped like the dashboard's popup. The section
+// names and the notes themselves are English everywhere, so no translation.
+var releaseNotes = [];
+var NOTE_SECTIONS = [['dashboard', 'Dashboard'], ['app', 'App'], ['admin', 'Admin'], ['firmware', 'Firmware'], ['server', 'Server']];
+async function loadReleaseNotes() {
+  try {
+    var d = await fetchJsonAuth('/api/dashboard/release-notes', { headers: { 'Authorization': token } });
+    releaseNotes = (d && d.releases) || [];
+  } catch (e) { releaseNotes = []; }
+  var b = document.getElementById('releaseNotesBtn');
+  if (b) b.style.display = releaseNotes.length ? '' : 'none';
+}
+function openReleaseNotes() {
+  var body = document.getElementById('notesBody');
+  var o = document.getElementById('notesOverlay');
+  if (!body || !o) return;
+  body.innerHTML = releaseNotes.length ? releaseNotes.map(function(rel, i) {
+    var sections = NOTE_SECTIONS.filter(function(s) { return rel.sections && rel.sections[s[0]] && rel.sections[s[0]].length; })
+      .map(function(s) {
+        return '<div class="help-note">' + s[1] + '</div>'
+          + rel.sections[s[0]].map(function(t) { return '<div class="help-item">' + escapeHtml(t) + '</div>'; }).join('');
+      }).join('');
+    return '<details' + (i === 0 ? ' open' : '') + ' data-no-i18n><summary>v' + escapeHtml(rel.version) + ' · ' + escapeHtml(rel.date || '') + '</summary>'
+      + '<div class="help-sec">' + sections + '</div></details>';
+  }).join('') : '<p class="help-note">' + __t('No release notes available.') + '</p>';
+  o.style.display = 'flex';
+  requestAnimationFrame(function(){ o.classList.add('show'); });
+}
+function closeReleaseNotes() {
+  var o = document.getElementById('notesOverlay');
+  if (!o || o.style.display === 'none') return;
+  o.classList.remove('show');
+  setTimeout(function(){ o.style.display = 'none'; }, 200);
+}
 
 function showModal(title, msg, buttons) {
   return new Promise(function(resolve) {
@@ -2179,6 +2227,7 @@ async function showApp() {
 var _refreshInterval = null;
 async function loadAll() {
   loadAccount();
+  loadReleaseNotes();
   loadMyDevices();
   loadRelayStatus();
   refreshRemoteDevices();
@@ -2360,6 +2409,9 @@ async function loadAccount() {
     // The dashboard is the other half of the UI; only offer it when it is served.
     var dl = document.getElementById('dashboardLink');
     if (dl && s.dashboardEnabled) dl.style.display = '';
+    // What's new lives in the dashboard (videos + translated texts); open it there.
+    var wn = document.getElementById('whatsNewLink');
+    if (wn && s.dashboardEnabled) wn.style.display = '';
     var resPill = document.getElementById('resVersionPill');
     if (resPill) resPill.textContent = 'v' + (s.version || '?');
     const u = d.currentUser || {};

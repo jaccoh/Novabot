@@ -58,7 +58,11 @@ function ShellInner() {
     if (!experimental && tab === 'terrain') setTab('map');
   }, [experimental, tab]);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [whatsNew, setWhatsNew] = useState(pendingWhatsNew);
+  // The admin page's "What's new" link lands here as /#whats-new: show all of it.
+  const [whatsNew, setWhatsNew] = useState(() => (window.location.hash === '#whats-new' ? WHATS_NEW : pendingWhatsNew()));
+  useEffect(() => {
+    if (window.location.hash === '#whats-new') history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, []);
   const closeWhatsNew = (action?: WhatsNewAction) => {
     markWhatsNewSeen(whatsNew.map(e => e.id));
     setWhatsNew([]);
