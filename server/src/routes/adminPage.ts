@@ -2731,8 +2731,16 @@ async function loadMyDevices() {
     }
 
     // Render paired sets
-    for (const key in paired) {
-      const group = paired[key];
+    // Fixed order. The server lists devices by last_seen, which moves on every
+    // MQTT reconnect, so sets used to swap places on each refresh. Sort by serial
+    // instead, mower above its charger.
+    var bySn = function(a, b) { return a.sn < b.sn ? -1 : a.sn > b.sn ? 1 : 0; };
+    solo.sort(bySn);
+    unbound.sort(bySn);
+    for (const key of Object.keys(paired).sort()) {
+      const group = paired[key].sort(function(a, b) {
+        return (a.device_type === 'mower' ? 0 : 1) - (b.device_type === 'mower' ? 0 : 1) || bySn(a, b);
+      });
       const charger = group.find(function(d) { return d.device_type === 'charger'; });
       const mower = group.find(function(d) { return d.device_type === 'mower'; });
       const anyOnline = group.some(function(d) { return d.is_online; });
