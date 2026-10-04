@@ -1,10 +1,12 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import fs from 'node:fs';
 import {
   classifyCrop,
   unloadClassifier,
   initClassifier,
   availableMemoryMb,
   _setPipelineForTest,
+  _setWorkerUrlForTest,
   IDLE_UNLOAD_MS,
   memoryAllowsLoad,
   MODEL_THREADS,
@@ -175,5 +177,49 @@ describe('drempels volgen de modelprecisie', () => {
 describe('de herkenning claimt de machine niet', () => {
   it('pakt standaard één core, niet alles wat er is', () => {
     expect(MODEL_THREADS).toBe(1);
+  });
+});
+
+describe('terrainClassifier runs the model in a worker thread', () => {
+  const fake = new URL('../fixtures/fakeClassifierWorker.mjs', import.meta.url);
+  beforeEach(() => {
+    // Plenty of memory, so the load gate does not depend on the test machine.
+    const real = fs.readFileSync;
+    vi.spyOn(fs, 'readFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) =>
+      file === '/proc/meminfo' ? 'MemAvailable: 8388608 kB\n' : (real as (...a: unknown[]) => unknown)(file, ...rest)) as typeof fs.readFileSync);
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await unloadClassifier();
+    _setWorkerUrlForTest(null);
+    _setPipelineForTest(null);
+  });
+
+  it('classifies through the worker while the main event loop stays free', async () => {
+    _setPipelineForTest(null);
+    _setWorkerUrlForTest(fake);
+    expect(await initClassifier()).toBe(true);
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 10);
+    const r = await classifyCrop(Buffer.from([0xff, 0xd8]));
+    clearInterval(timer);
+    expect(r).toEqual({ className: 'bush', nl: 'Struik', confidence: expect.closeTo(0.31, 5) });
+    expect(ticks).toBeGreaterThan(5); // 200 ms of model work did not block this thread
+  });
+
+  it('a worker that cannot load the model leaves no pipeline behind', async () => {
+    _setPipelineForTest(null);
+    _setWorkerUrlForTest(fake, { fail: true });
+    expect(await initClassifier()).toBe(false);
+    expect(await classifyCrop(Buffer.from([0xff, 0xd8]))).toBeNull();
+  });
+
+  it('a crashed worker fails the pending crop and the next init starts a fresh one', async () => {
+    _setPipelineForTest(null);
+    _setWorkerUrlForTest(fake);
+    expect(await initClassifier()).toBe(true);
+    expect(await classifyCrop(Buffer.from([0xde]))).toBeNull();
+    expect(await initClassifier()).toBe(true);
+    expect(await classifyCrop(Buffer.from([0xff, 0xd8]))).not.toBeNull();
   });
 });

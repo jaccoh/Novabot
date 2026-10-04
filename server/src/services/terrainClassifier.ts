@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 
 /** EN prompt → NL naam → GLB-bestand (null = geen model, blijft voxels). */
 export const LABELS: Array<{ prompt: string; nl: string; glb: string | null }> = [
@@ -182,6 +183,19 @@ export async function unloadClassifier(): Promise<void> {
   }
 }
 
+// The model runs in terrainClassifierWorker; under tsx (dev) that is the .ts
+// source, which the worker needs tsx to load.
+const OWN_SOURCE_IS_TS = import.meta.url.endsWith('.ts');
+const DEFAULT_WORKER = new URL(`./terrainClassifierWorker.${OWN_SOURCE_IS_TS ? 'ts' : 'js'}`, import.meta.url);
+let workerUrl: URL = DEFAULT_WORKER;
+let workerExtra: Record<string, unknown> = {};
+
+/** Test-only: a stand-in worker script (`null` restores the real one). */
+export function _setWorkerUrlForTest(url: URL | null, extra: Record<string, unknown> = {}): void {
+  workerUrl = url ?? DEFAULT_WORKER;
+  workerExtra = extra;
+}
+
 /** Test-only: injecteert (of verwijdert, met `null`) de pipeline. */
 export function _setPipelineForTest(
   fn: PipelineFn | null,
@@ -229,37 +243,76 @@ export async function initClassifier(): Promise<boolean> {
   return loading;
 }
 
+/**
+ * Starts the worker that loads and runs the model. The main thread only posts
+ * JPEGs and awaits scores, so inference never blocks HTTP or MQTT handling;
+ * with MODEL_THREADS = 1 it costs at most one core. Unloading terminates the
+ * worker, which frees the whole model.
+ */
 async function loadPipeline(): Promise<boolean> {
+  let worker: Worker;
   try {
-    const { pipeline, RawImage } = await import('@huggingface/transformers');
-    const cacheDir = path.resolve(process.env.STORAGE_PATH ?? './storage', 'models');
-    const classifier = await pipeline('zero-shot-image-classification', 'Xenova/siglip-base-patch16-224', {
-      cache_dir: cacheDir,
-      dtype: MODEL_DTYPE as 'q8' | 'fp32',
-      ...(MODEL_THREADS > 0
-        ? { session_options: { intraOpNumThreads: MODEL_THREADS, interOpNumThreads: MODEL_THREADS } }
-        : {}),
+    worker = new Worker(workerUrl, {
+      execArgv: workerUrl.pathname.endsWith('.ts') ? ['--import', 'tsx'] : undefined,
+      workerData: {
+        cacheDir: path.resolve(process.env.STORAGE_PATH ?? './storage', 'models'),
+        dtype: MODEL_DTYPE,
+        threads: MODEL_THREADS,
+        labels: [...LABELS.map((l) => l.prompt), ...SINK_PROMPTS],
+        template: PROMPT_TEMPLATE,
+        ...workerExtra,
+      },
     });
-    const candidateLabels = [...LABELS.map((l) => l.prompt), ...SINK_PROMPTS];
-    currentPipeline = async (jpeg: Buffer) => {
-      const blob = new Blob([jpeg], { type: 'image/jpeg' });
-      const image = await RawImage.fromBlob(blob);
-      return classifier(image, candidateLabels, {
-        hypothesis_template: PROMPT_TEMPLATE,
-      }) as Promise<Array<{ label: string; score: number }>>;
-    };
-    disposeCurrent = () => classifier.dispose();
-    touchIdleTimer();
-    return true;
   } catch (err) {
-    console.warn(
-      '[terrainClassifier] kon SigLIP-model niet laden/downloaden — batch wordt overgeslagen, volgende sessie opnieuw geprobeerd:',
-      err instanceof Error ? err.message : err,
-    );
-    currentPipeline = null;
-    disposeCurrent = null;
+    console.warn('[terrainClassifier] kon de herkenningsworker niet starten:', err instanceof Error ? err.message : err);
     return false;
   }
+  const loadError = await new Promise<string | null>((resolve) => {
+    // Only our own listeners come off again: Worker.removeAllListeners()
+    // also drops Node's internal message wiring.
+    const done = (result: string | null) => {
+      worker.off('message', onMessage); worker.off('error', onError); worker.off('exit', onExit);
+      resolve(result);
+    };
+    const onMessage = (m: { ready?: boolean; loadError?: string }) => done(m?.ready ? null : String(m?.loadError ?? 'onbekend'));
+    const onError = (err: Error) => done(err.message);
+    const onExit = (code: number) => done(`worker gestopt (${code})`);
+    worker.on('message', onMessage); worker.on('error', onError); worker.on('exit', onExit);
+  });
+  if (loadError) {
+    console.warn(
+      '[terrainClassifier] kon SigLIP-model niet laden/downloaden — batch wordt overgeslagen, volgende sessie opnieuw geprobeerd:',
+      loadError,
+    );
+    void worker.terminate();
+    return false;
+  }
+
+  const waiting = new Map<number, { resolve: (s: Array<{ label: string; score: number }>) => void; reject: (e: Error) => void }>();
+  let nextId = 0;
+  const pipe: PipelineFn = (jpeg) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    waiting.set(id, { resolve, reject });
+    worker.postMessage({ id, jpeg });
+  });
+  worker.on('message', (m: { id: number; scores?: Array<{ label: string; score: number }>; error?: string }) => {
+    const w = waiting.get(m.id);
+    if (!w) return;
+    waiting.delete(m.id);
+    if (m.error !== undefined) w.reject(new Error(m.error));
+    else w.resolve(m.scores ?? []);
+  });
+  worker.on('error', (err) => console.warn('[terrainClassifier] herkenningsworker faalde:', err.message));
+  worker.on('exit', () => {
+    for (const w of waiting.values()) w.reject(new Error('herkenningsworker gestopt'));
+    waiting.clear();
+    // A crash drops the pipeline; the next initClassifier() starts a new worker.
+    if (currentPipeline === pipe) { currentPipeline = null; disposeCurrent = null; }
+  });
+  currentPipeline = pipe;
+  disposeCurrent = () => worker.terminate();
+  touchIdleTimer();
+  return true;
 }
 
 /**
