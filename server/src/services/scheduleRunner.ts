@@ -14,6 +14,7 @@ import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
 import { M, renderMsg, type Lang, type Msg } from './serverText.js';
+import { serverTimeZone } from '../utils/serverTimeZone.js';
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
 const CHECK_INTERVAL_MS = 30_000;
@@ -574,7 +575,8 @@ export function startScheduleRunner(): void {
   if (intervalId) return;
   // Maak de effectieve tijdzone zichtbaar: schema's zonder eigen timezone
   // vuren in DEZE zone. Een ongeldige TZ env valt stil terug op UTC — dat
-  // zie je hier dan meteen aan de lokale tijd.
+  // zie je hier dan meteen aan de lokale tijd; serverTimeZone() waarschuwt bij boot.
+  serverTimeZone();
   console.log(
     `[ScheduleRunner] Server-TZ: ${process.env.TZ ?? '(niet gezet — UTC)'} — lokale tijd nu: ${new Date().toLocaleString('en-CA', { hour12: false })}. ` +
     `Schema's met eigen timezone (browser/app) vuren in hun eigen zone.`,

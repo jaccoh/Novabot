@@ -6,6 +6,7 @@ import { deviceSettingsRepo } from '../../db/repositories/deviceSettings.js';
 import { deviceCache, getMowingSession, clearMowingSession } from '../../mqtt/sensorData.js';
 import { ok } from '../../types/index.js';
 import { checkBladeReminder } from '../../services/bladeMaintenance.js';
+import { serverTimeZone } from '../../utils/serverTimeZone.js';
 
 export const equipmentStateRouter = Router();
 
@@ -133,7 +134,7 @@ equipmentStateRouter.post('/saveCutGrassRecord', upload.none(), (req: Request, r
   //   3. (current) Convert to TZ via Intl.DateTimeFormat → SQL form in
   //      local wall clock, both stock + dashboard render correctly. The
   //      OpenNova app uses toLocaleString itself and is timezone-agnostic.
-  const SERVER_TZ = process.env.TZ || 'Europe/Amsterdam';
+  const SERVER_TZ = serverTimeZone();
   // Issue #58: stock firmware (≤6.x) lets the on-board RTC fall back to
   // 2001-01-01 when WiFi NTP can't sync, and posts that date verbatim in
   // saveCutGrassRecord. Walter's records dropped to year 2001 the moment

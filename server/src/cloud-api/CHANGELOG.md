@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-10-04 - saveCutGrassRecord survives an invalid TZ
+
+- `saveCutGrassRecord`: the record time is formatted in `serverTimeZone()`,
+  which falls back to Europe/Amsterdam (with a warning at boot) when `TZ` is
+  not a valid IANA zone. A misspelt TZ made every call throw and no mow was
+  recorded. Response unchanged (`ok(null)`).
+
 ## 2026-09-27 - map uploads and aliases respect pending map validation
 
 - `uploadEquipmentMap`, `fragmentUploadEquipmentMap` and `updateEquipmentMapAlias`
