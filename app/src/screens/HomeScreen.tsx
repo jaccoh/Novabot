@@ -18,6 +18,7 @@ import {
 import { appAlertCompat } from '../context/AppAlertContext';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Path as SvgPath } from 'react-native-svg';
+import { BlurView, BlurTargetView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { useTheme, useStyles, type Colors } from '../theme';
@@ -605,6 +606,9 @@ export default function HomeScreen() {
   const { t } = useI18n();
   const { colorScheme, colors } = useTheme();
   const styles = useStyles(makeStyles);
+  // What the floating action pill blurs. Android needs an explicit target
+  // (expo-blur 55); iOS blurs whatever is behind the view regardless.
+  const blurTargetRef = useRef<View>(null);
   const hero = HERO_PALETTE[colorScheme];
   const mower = useMemo(() => deriveMower(activeMower), [activeMower]);
   // Post-restore safety: while the map frame is unvalidated, go_to_charge would
@@ -1897,10 +1901,26 @@ export default function HomeScreen() {
     (displayActivity === 'mowing' || displayActivity === 'edge_cutting'
       || displayActivity === 'mapping' || displayActivity === 'returning')
     && activeMapPolygon.length >= 3;
+  // Pauze-duur voor de UX-waarschuwing. Boven de drempel blokkeren we Resume
+  // NIET (firmware kan alsnog goed gaan), maar we tonen een opvallende
+  // waarschuwing (in de scroll) + een extra "Stop" in de actie-pill, omdat
+  // resume na een lange pauze risicovol is.
+  const pausedMs = pauseStartedAt != null ? pauseNowMs - pauseStartedAt : 0;
+  const pausedMin = Math.floor(pausedMs / 60000);
+  const isLongPause = pausedMs > LONG_PAUSE_THRESHOLD_MS;
+  const pausedLabel = pausedMin >= 60
+    ? `${Math.floor(pausedMin / 60)}h ${pausedMin % 60}m`
+    : `${pausedMin}m`;
+  // States with action buttons get the floating pill; mapping has none.
+  const hasActions = ['idle', 'charging', 'error', 'mowing', 'edge_cutting', 'paused', 'returning']
+    .includes(displayActivity);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <FirmwareUpdateBanner />
+      {/* A plain View everywhere but Android, where it is the blur source for
+          the action pill below. */}
+      <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={[
         styles.scroll,
         { paddingBottom: Math.max(insets.bottom + 120, 132) },
@@ -2444,10 +2464,51 @@ export default function HomeScreen() {
           );
         })()}
 
-        {/* Action buttons */}
-        <View style={styles.actionsCard}>
-          <Text style={styles.actionsTitle}>{t('actions')}</Text>
+        {/* The long-pause warning stays in the scroll; the buttons themselves
+            float in the action pill below (#145). */}
+        {displayActivity === 'paused' && isLongPause && !dismissedLongPauseWarning && (
+          <View style={[styles.errorCard, { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: '#f59e0b', marginHorizontal: 0, marginBottom: 12 }]}>
+            <Ionicons name="warning-outline" size={22} color="#f59e0b" />
+            <View style={styles.errorContent}>
+              <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
+                {t('pausedForTitle', { label: pausedLabel })}
+              </Text>
+              <Text style={styles.errorMessage}>
+                {t('hmLongPauseWarning')}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={{ backgroundColor: 'rgba(245,158,11,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
+              onPress={() => setDismissedLongPauseWarning(true)}
+            >
+              <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>{t('hmDismiss')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
+        {/* Command error */}
+        {commandError !== '' && (
+          <View style={styles.commandError}>
+            <Ionicons name="alert-circle" size={16} color={colors.red} />
+            <Text style={styles.commandErrorText}>{commandError}</Text>
+          </View>
+        )}
+
+        {/* Serial number */}
+        <Text style={styles.snText}>SN: {mower.sn}</Text>
+      </ScrollView>
+      </BlurTargetView>
+
+      {/* Action buttons: a floating pill above the tab bar, so they stay
+          reachable however long the page above gets (#145). */}
+      {hasActions && (
+        <BlurView
+          intensity={90}
+          tint={colorScheme === 'dark' ? 'systemUltraThinMaterialDark' : 'systemUltraThinMaterialLight'}
+          blurMethod="dimezisBlurView"
+          blurTarget={blurTargetRef}
+          style={styles.actionsPill}
+        >
           {(displayActivity === 'idle' || displayActivity === 'charging' || displayActivity === 'error') && (
             <View style={styles.actionRow}>
               {/* Split action: main "Start Mowing" + chevron voor extra modi */}
@@ -2796,111 +2857,78 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {displayActivity === 'paused' && (() => {
-            // Pauze-duur berekenen voor UX-waarschuwing. Boven de drempel
-            // blokkeren we de Resume-knop NIET (firmware kan alsnog goed
-            // gaan), maar we tonen een opvallende waarschuwing + een extra
-            // "Stop & return" optie omdat resume na lange pauze risicovol is.
-            const pausedMs = pauseStartedAt != null ? pauseNowMs - pauseStartedAt : 0;
-            const pausedMin = Math.floor(pausedMs / 60000);
-            const isLongPause = pausedMs > LONG_PAUSE_THRESHOLD_MS;
-            const pausedLabel = pausedMin >= 60
-              ? `${Math.floor(pausedMin / 60)}h ${pausedMin % 60}m`
-              : `${pausedMin}m`;
-            return (
-              <>
-                {isLongPause && !dismissedLongPauseWarning && (
-                  <View style={[styles.errorCard, { backgroundColor: 'rgba(245,158,11,0.12)', borderColor: '#f59e0b', marginHorizontal: 0, marginBottom: 10 }]}>
-                    <Ionicons name="warning-outline" size={22} color="#f59e0b" />
-                    <View style={styles.errorContent}>
-                      <Text style={[styles.errorTitle, { color: '#f59e0b' }]}>
-                        {t('pausedForTitle', { label: pausedLabel })}
-                      </Text>
-                      <Text style={styles.errorMessage}>
-                        {t('hmLongPauseWarning')}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={{ backgroundColor: 'rgba(245,158,11,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 }}
-                      onPress={() => setDismissedLongPauseWarning(true)}
-                    >
-                      <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>{t('hmDismiss')}</Text>
-                    </TouchableOpacity>
-                  </View>
+          {displayActivity === 'paused' && (
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  isLongPause ? styles.actionButtonAmber : styles.actionButtonGreen,
+                ]}
+                onPress={() => {
+                  if (isLongPause) {
+                    appAlertCompat.alert(
+                      t('pausedForTitle', { label: pausedLabel }),
+                      t('longPauseResumeBody'),
+                      [
+                        { text: t('cancel'), style: 'cancel' },
+                        {
+                          text: t('resumeAnyway'), style: 'destructive',
+                          onPress: () => {
+                            sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
+                            setOptimisticActivity('mowing');
+                          },
+                        },
+                      ],
+                    );
+                  } else {
+                    sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
+                    setOptimisticActivity('mowing');
+                  }
+                }}
+                disabled={commandLoading !== null}
+                activeOpacity={0.7}
+              >
+                {commandLoading === 'resume' ? (
+                  <ActivityIndicator size="small" color={colors.white} />
+                ) : (
+                  <Ionicons name="play" size={20} color={colors.white} />
                 )}
-                <View style={styles.actionRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.actionButton,
-                      isLongPause ? styles.actionButtonAmber : styles.actionButtonGreen,
-                    ]}
-                    onPress={() => {
-                      if (isLongPause) {
-                        appAlertCompat.alert(
-                          t('pausedForTitle', { label: pausedLabel }),
-                          t('longPauseResumeBody'),
-                          [
-                            { text: t('cancel'), style: 'cancel' },
-                            {
-                              text: t('resumeAnyway'), style: 'destructive',
-                              onPress: () => {
-                                sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
-                                setOptimisticActivity('mowing');
-                              },
-                            },
-                          ],
-                        );
-                      } else {
-                        sendCommand(mower.sn, { resume_navigation: { cmd_num: ++cmdNumRef.current } }, 'resume');
-                        setOptimisticActivity('mowing');
-                      }
-                    }}
-                    disabled={commandLoading !== null}
-                    activeOpacity={0.7}
-                  >
-                    {commandLoading === 'resume' ? (
-                      <ActivityIndicator size="small" color={colors.white} />
-                    ) : (
-                      <Ionicons name="play" size={20} color={colors.white} />
-                    )}
-                  </TouchableOpacity>
-                  {isLongPause && (
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.actionButtonRed]}
-                      onPress={async () => {
-                        try {
-                          const url = await getServerUrl();
-                          if (!url || !mower?.sn) return;
-                          const api = new ApiClient(url);
-                          await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
-                          await new Promise(r => setTimeout(r, 300));
-                          await api.clearError(mower.sn).catch(() => { /* nothing to clear is fine */ });
-                          await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
-                          setOptimisticActivity('idle');
-                        } catch {}
-                      }}
-                      disabled={commandLoading !== null}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="stop" size={20} color={colors.white} />
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.actionButtonBlue]}
-                    onPress={() => { sendGoHome(mower.sn); setOptimisticActivity('returning'); }}
-                    disabled={commandLoading !== null}
-                    activeOpacity={0.7}
-                  >
-                    {commandLoading === 'home' ? (
-                      <ActivityIndicator size="small" color={colors.white} />
-                    ) : (
-                      <Ionicons name="home" size={20} color={colors.white} />
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </>
-            );
-          })()}
+              </TouchableOpacity>
+              {isLongPause && (
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonRed]}
+                  onPress={async () => {
+                    try {
+                      const url = await getServerUrl();
+                      if (!url || !mower?.sn) return;
+                      const api = new ApiClient(url);
+                      await api.sendCommand(mower.sn, { stop_navigation: { cmd_num: Date.now() % 100000 } });
+                      await new Promise(r => setTimeout(r, 300));
+                      await api.clearError(mower.sn).catch(() => { /* nothing to clear is fine */ });
+                      await api.sendCommand(mower.sn, { quit_mapping_mode: { value: 1, cmd_num: Date.now() % 100000 } });
+                      setOptimisticActivity('idle');
+                    } catch {}
+                  }}
+                  disabled={commandLoading !== null}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="stop" size={20} color={colors.white} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonBlue]}
+                onPress={() => { sendGoHome(mower.sn); setOptimisticActivity('returning'); }}
+                disabled={commandLoading !== null}
+                activeOpacity={0.7}
+              >
+                {commandLoading === 'home' ? (
+                  <ActivityIndicator size="small" color={colors.white} />
+                ) : (
+                  <Ionicons name="home" size={20} color={colors.white} />
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
 
           {displayActivity === 'returning' && (
             <View style={styles.actionRow}>
@@ -2940,25 +2968,8 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
           )}
-
-          {!mower.online && (
-            <Text style={styles.offlineNote}>
-              {t('mowerOffline')}
-            </Text>
-          )}
-        </View>
-
-        {/* Command error */}
-        {commandError !== '' && (
-          <View style={styles.commandError}>
-            <Ionicons name="alert-circle" size={16} color={colors.red} />
-            <Text style={styles.commandErrorText}>{commandError}</Text>
-          </View>
-        )}
-
-        {/* Serial number */}
-        <Text style={styles.snText}>SN: {mower.sn}</Text>
-      </ScrollView>
+        </BlurView>
+      )}
 
       {/* Post-restore re-anchor wizard: opened on demand from the banner (not
           auto-blocking, so the app + other mowers stay usable). One button runs
@@ -3755,21 +3766,23 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     color: 'rgba(239,68,68,0.8)',
     lineHeight: 18,
   },
-  actionsCard: {
-    backgroundColor: c.card,
-    borderRadius: 16,
+  // Floats over the bottom of the scroll, just above the tab bar (#145). The
+  // scroll's paddingBottom (>= 132) keeps the last content clear of it.
+  // Frosted glass: the BlurView's own material tint, no backgroundColor. On
+  // iOS a style background sits UNDER the effect view and gets blurred along,
+  // which turned the glass into a solid card. The overflow clip keeps the
+  // blur inside the radius and would clip a shadow too, so there is none;
+  // the border does the lifting.
+  actionsPill: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 12,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: c.cardBorder,
-    padding: 16,
-    marginBottom: 12,
-  },
-  actionsTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: c.textDim,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 12,
+    padding: 8,
+    overflow: 'hidden',
   },
   actionRow: {
     flexDirection: 'row',
@@ -3837,12 +3850,6 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     width: 42,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  offlineNote: {
-    fontSize: 13,
-    color: c.textMuted,
-    textAlign: 'center',
-    marginTop: 8,
   },
   commandError: {
     flexDirection: 'row',
