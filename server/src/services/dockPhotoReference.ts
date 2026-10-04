@@ -7,6 +7,7 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 import { isFrameUnvalidated } from './frameValidation.js';
 import { DOCK_SEAT_TOLERANCE_M, stablePosition } from './positionTelemetry.js';
 import { withMowerMapOperation, readMowerMapSnapshot } from './mowerMapOperation.js';
+import { M, TextError } from './serverText.js';
 
 export const PHOTO_DOCK_KEY = 'photo_dock_pose';
 type Pose = { x: number; y: number; orientation: number };
@@ -39,7 +40,7 @@ export function snapshotDockPose(snapshot: Record<string, unknown> | null): Pose
 
 export async function alignDockPhoto(sn: string, lat: unknown, lng: unknown) {
   if (!finite(lat) || !finite(lng) || Math.abs(lat) > 85 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) {
-    throw new Error('Kies een geldig punt op de foto.');
+    throw new TextError(M`Kies een geldig punt op de foto.`);
   }
   return withMowerMapOperation(sn, async operation => {
     const cal = mapRepo.getCalibration(sn);
@@ -48,15 +49,15 @@ export async function alignDockPhoto(sn: string, lat: unknown, lng: unknown) {
     // rotation/scale/physical shift needs an explicit calibration workflow.
     if ((cal?.offset_lat ?? 0) !== 0 || (cal?.offset_lng ?? 0) !== 0
       || (cal?.rotation ?? 0) !== 0 || (cal?.scale ?? 1) !== 1 || offset.x !== 0 || offset.y !== 0) {
-      throw new Error('Deze kaart heeft al een verschuiving, rotatie of schaalcorrectie. Controleer die eerst.');
+      throw new TextError(M`Deze kaart heeft al een verschuiving, rotatie of schaalcorrectie. Controleer die eerst.`);
     }
     const ready = () => isDeviceOnline(sn) && !isFrameUnvalidated(sn) && stablePosition(sn, { docked: true });
-    if (!ready()) throw new Error('Zet de maaier op het dock en wacht op verse, stabiele RTK Fixed-posities.');
+    if (!ready()) throw new TextError(M`Zet de maaier op het dock en wacht op verse, stabiele RTK Fixed-posities.`);
     const snapshot = await readMowerMapSnapshot(sn, operation);
     const pose = snapshotDockPose(snapshot);
     const live = ready();
     if (!pose || !live || Math.hypot(live.x - pose.x, live.y - pose.y) > DOCK_SEAT_TOLERANCE_M) {
-      throw new Error('Dockmeting en opgeslagen dockpositie zijn niet bevestigd. Er is niets gewijzigd.');
+      throw new TextError(M`Dockmeting en opgeslagen dockpositie zijn niet bevestigd. Er is niets gewijzigd.`);
     }
     // Preserve the prior display reference before changing it. No map files,
     // polygons, origin or firmware settings are written to the mower.

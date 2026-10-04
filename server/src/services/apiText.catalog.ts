@@ -1225,4 +1225,300 @@ export const CATALOG: Catalog = {
     fr: "Tondeuse hors ligne : la carte ne peut être appliquée qu'une fois la tondeuse en ligne.",
     de: "Mäher offline: Die Karte kann erst übertragen werden, wenn der Mäher online ist.",
   },
+  // Zone copy, dock-channel repair, dock photo and re-anchor errors (2026-10-04).
+  "Rond eerst de kaart- of herankerprocedure af.": {
+    en: "Finish the map or re-anchor procedure first.",
+    fr: "Terminez d'abord la procédure de carte ou de ré-ancrage.",
+    de: "Schließen Sie zuerst den Karten- oder Neuverankerungsvorgang ab.",
+  },
+  "Een eenduidig dockanker is vereist voor GPS-coördinaten.": {
+    en: "A single, unambiguous dock anchor is required for GPS coordinates.",
+    fr: "Une ancre de station sans ambiguïté est requise pour les coordonnées GPS.",
+    de: "Für GPS-Koordinaten ist ein eindeutiger Dockanker erforderlich.",
+  },
+  "Vraag eerst een reparatievoorbeeld op.": {
+    en: "Request a repair preview first.",
+    fr: "Demandez d'abord un aperçu de la réparation.",
+    de: "Fordern Sie zuerst eine Reparaturvorschau an.",
+  },
+  "Meten vereist een gevalideerd frame en acht verse, stabiele RUNNING + RTK Fixed-posities.": {
+    en: "Measuring requires a validated frame and eight fresh, stable RUNNING + RTK Fixed positions.",
+    fr: "La mesure nécessite un repère validé et huit positions RUNNING + RTK Fixed récentes et stables.",
+    de: "Die Messung erfordert einen validierten Koordinatenrahmen und acht neue, stabile RUNNING- + RTK-Fixed-Positionen.",
+  },
+  "Bevestig dat je bij de bronmaaier staat en de rechte uitrit vrij is.": {
+    en: "Confirm that you are standing by the source mower and the straight exit is clear.",
+    fr: "Confirmez que vous êtes près de la tondeuse source et que la sortie en ligne droite est dégagée.",
+    de: "Bestätigen Sie, dass Sie beim Quellmäher stehen und die gerade Ausfahrt frei ist.",
+  },
+  "Bevestig toezicht en dat de maaier vlak voor zijn eigen dock staat.": {
+    en: "Confirm that you are supervising and that the mower stands just in front of its own dock.",
+    fr: "Confirmez que vous surveillez et que la tondeuse se trouve juste devant sa propre station.",
+    de: "Bestätigen Sie, dass Sie beaufsichtigen und der Mäher direkt vor seiner eigenen Ladestation steht.",
+  },
+  "Bevestig dat de te meten maaier stilstaat voor het gekozen bronlaadstation.": {
+    en: "Confirm that the mower to be measured is standing still in front of the chosen source charging station.",
+    fr: "Confirmez que la tondeuse à mesurer est immobile devant la station de charge source choisie.",
+    de: "Bestätigen Sie, dass der zu messende Mäher still vor der gewählten Quell-Ladestation steht.",
+  },
+  "Een kopieerverzoek moet een JSON-object zijn.": {
+    en: "A copy request must be a JSON object.",
+    fr: "Une demande de copie doit être un objet JSON.",
+    de: "Eine Kopieranfrage muss ein JSON-Objekt sein.",
+  },
+  "Ongeldige zone of kopieeropties.": {
+    en: "Invalid zone or copy options.",
+    fr: "Zone ou options de copie non valides.",
+    de: "Ungültige Zone oder Kopieroptionen.",
+  },
+  "Meet het bronlaadstation met beide maaiers of wijs het aan op de kaart van de doelmaaier. Een losse positiemeting kan deze stap niet vervangen.": {
+    en: "Measure the source charging station with both mowers, or point it out on the target mower's map. A single position measurement cannot replace this step.",
+    fr: "Mesurez la station de charge source avec les deux tondeuses, ou indiquez-la sur la carte de la tondeuse cible. Une simple mesure de position ne peut pas remplacer cette étape.",
+    de: "Messen Sie die Quell-Ladestation mit beiden Mähern oder zeigen Sie sie auf der Karte des Zielmähers an. Eine einzelne Positionsmessung kann diesen Schritt nicht ersetzen.",
+  },
+  "Kies óf de meting óf het aangewezen laadstation, niet beide.": {
+    en: "Choose either the measurement or the pointed charging station, not both.",
+    fr: "Choisissez soit la mesure, soit la station de charge indiquée, pas les deux.",
+    de: "Wählen Sie entweder die Messung oder die angezeigte Ladestation, nicht beides.",
+  },
+  "Geef de positie van het laadstation van de bronmaaier als eindige x/y in meters.": {
+    en: "Give the position of the source mower's charging station as finite x/y in meters.",
+    fr: "Indiquez la position de la station de charge de la tondeuse source sous forme de x/y finis en mètres.",
+    de: "Geben Sie die Position der Ladestation des Quellmähers als endliche x/y-Werte in Metern an.",
+  },
+  "Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.": {
+    en: "Frame changed, measurement expired or source mower busy; measure again.",
+    fr: "Repère modifié, mesure expirée ou tondeuse source occupée ; mesurez à nouveau.",
+    de: "Koordinatenrahmen geändert, Messung abgelaufen oder Quellmäher beschäftigt; messen Sie erneut.",
+  },
+  "Meet het bronlaadstation eerst tweemaal met iedere maaier.": {
+    en: "First measure the source charging station twice with each mower.",
+    fr: "Mesurez d'abord deux fois la station de charge source avec chaque tondeuse.",
+    de: "Messen Sie die Quell-Ladestation zuerst zweimal mit jedem Mäher.",
+  },
+  "Zet de doelmaaier op zijn eigen dock en wacht op stabiele RTK Fixed-lokalisatie binnen {0} cm van de opgeslagen dockpositie.": {
+    en: "Put the target mower on its own dock and wait for stable RTK Fixed localization within {0} cm of the saved dock position.",
+    fr: "Placez la tondeuse cible sur sa propre station et attendez une localisation RTK Fixed stable à moins de {0} cm de la position de station enregistrée.",
+    de: "Stellen Sie den Zielmäher auf seine eigene Ladestation und warten Sie auf eine stabile RTK-Fixed-Lokalisierung innerhalb von {0} cm der gespeicherten Dockposition.",
+  },
+  "Ongeldige kaartbestanden van de maaier.": {
+    en: "Invalid map files from the mower.",
+    fr: "Fichiers de carte de la tondeuse non valides.",
+    de: "Ungültige Kartendateien vom Mäher.",
+  },
+  "Server en maaier bevatten verschillende kaarten; synchroniseer die eerst.": {
+    en: "Server and mower hold different maps; sync them first.",
+    fr: "Le serveur et la tondeuse contiennent des cartes différentes ; synchronisez-les d'abord.",
+    de: "Server und Mäher enthalten unterschiedliche Karten; synchronisieren Sie diese zuerst.",
+  },
+  "Server en maaier verschillen voor {0}.": {
+    en: "Server and mower differ for {0}.",
+    fr: "Le serveur et la tondeuse diffèrent pour {0}.",
+    de: "Server und Mäher unterscheiden sich bei {0}.",
+  },
+  "Een online OpenNova-maaier met gevalideerd frame is vereist.": {
+    en: "An online OpenNova mower with a validated frame is required.",
+    fr: "Une tondeuse OpenNova en ligne avec un repère validé est requise.",
+    de: "Ein Online-OpenNova-Mäher mit validiertem Koordinatenrahmen ist erforderlich.",
+  },
+  "De dockbestanden van de maaier komen niet overeen.": {
+    en: "The mower's dock files do not match.",
+    fr: "Les fichiers de station de la tondeuse ne correspondent pas.",
+    de: "Die Dockdateien des Mähers stimmen nicht überein.",
+  },
+  "Kies een andere bronmaaier.": {
+    en: "Choose a different source mower.",
+    fr: "Choisissez une autre tondeuse source.",
+    de: "Wählen Sie einen anderen Quellmäher.",
+  },
+  "Het dockkanaal van de bronmaaier wijkt af van zijn opgeslagen dock.": {
+    en: "The source mower's dock channel differs from its saved dock.",
+    fr: "Le canal de station de la tondeuse source diffère de sa station enregistrée.",
+    de: "Der Dockkanal des Quellmähers weicht von seiner gespeicherten Ladestation ab.",
+  },
+  "Herstel eerst het bestaande dockkanaal van de doelmaaier.": {
+    en: "Repair the target mower's existing dock channel first.",
+    fr: "Réparez d'abord le canal de station existant de la tondeuse cible.",
+    de: "Reparieren Sie zuerst den vorhandenen Dockkanal des Zielmähers.",
+  },
+  "Geen eenduidige opgeslagen dockpositie.": {
+    en: "No unambiguous saved dock position.",
+    fr: "Aucune position de station enregistrée sans ambiguïté.",
+    de: "Keine eindeutige gespeicherte Dockposition.",
+  },
+  "De twee kaartkopieën op de maaier verschillen; geen automatische kanaalreparatie mogelijk.": {
+    en: "The two map copies on the mower differ; automatic channel repair is not possible.",
+    fr: "Les deux copies de carte sur la tondeuse diffèrent ; aucune réparation automatique du canal n'est possible.",
+    de: "Die beiden Kartenkopien auf dem Mäher unterscheiden sich; eine automatische Kanalreparatur ist nicht möglich.",
+  },
+  "Ongeldige tweede dockverwijzing.": {
+    en: "Invalid second dock reference.",
+    fr: "Seconde référence de station non valide.",
+    de: "Ungültige zweite Dockreferenz.",
+  },
+  "Onbekend kaartbestand: {0}": {
+    en: "Unknown map file: {0}",
+    fr: "Fichier de carte inconnu : {0}",
+    de: "Unbekannte Kartendatei: {0}",
+  },
+  "Ongeldig obstakel.": {
+    en: "Invalid obstacle.",
+    fr: "Obstacle non valide.",
+    de: "Ungültiges Hindernis.",
+  },
+  "Werkgebied ontbreekt voor {0}.": {
+    en: "Work area missing for {0}.",
+    fr: "Zone de travail manquante pour {0}.",
+    de: "Arbeitsbereich fehlt für {0}.",
+  },
+  "Ongeldig werkgebied: {0}": {
+    en: "Invalid work area: {0}",
+    fr: "Zone de travail non valide : {0}",
+    de: "Ungültiger Arbeitsbereich: {0}",
+  },
+  "Geen vrije dockaanloop binnen {0}; teken een gecontroleerde doorgang.": {
+    en: "No clear dock approach within {0}; draw a checked passage.",
+    fr: "Aucune approche de station dégagée dans {0} ; tracez un passage vérifié.",
+    de: "Keine freie Dockanfahrt innerhalb von {0}; zeichnen Sie einen geprüften Durchgang.",
+  },
+  "Geen bestaand dockkanaal om te herstellen.": {
+    en: "No existing dock channel to repair.",
+    fr: "Aucun canal de station existant à réparer.",
+    de: "Kein vorhandener Dockkanal zum Reparieren.",
+  },
+  "Kanaalreparatie vereist een kaart zonder fysieke verschuiving.": {
+    en: "Channel repair requires a map without a physical offset.",
+    fr: "La réparation du canal nécessite une carte sans décalage physique.",
+    de: "Die Kanalreparatur erfordert eine Karte ohne physische Verschiebung.",
+  },
+  "Kaart of kalibratie gewijzigd; vraag een nieuw voorbeeld op.": {
+    en: "Map or calibration changed; request a new preview.",
+    fr: "Carte ou calibrage modifié ; demandez un nouvel aperçu.",
+    de: "Karte oder Kalibrierung geändert; fordern Sie eine neue Vorschau an.",
+  },
+  "Kaart gewijzigd tijdens voorbereiding.": {
+    en: "Map changed during preparation.",
+    fr: "Carte modifiée pendant la préparation.",
+    de: "Karte während der Vorbereitung geändert.",
+  },
+  "Kanaaloverdracht niet bevestigd; frame blijft geblokkeerd.": {
+    en: "Channel transfer not confirmed; the frame stays blocked.",
+    fr: "Transfert du canal non confirmé ; le repère reste bloqué.",
+    de: "Kanalübertragung nicht bestätigt; der Koordinatenrahmen bleibt gesperrt.",
+  },
+  "Navigatiekaarten zijn niet geldig opgebouwd.": {
+    en: "Navigation maps were not built correctly.",
+    fr: "Les cartes de navigation n'ont pas été construites correctement.",
+    de: "Die Navigationskarten wurden nicht korrekt erstellt.",
+  },
+  "Dockkanaal verdwenen tijdens reparatie.": {
+    en: "Dock channel disappeared during repair.",
+    fr: "Le canal de station a disparu pendant la réparation.",
+    de: "Dockkanal während der Reparatur verschwunden.",
+  },
+  "Kies een geldig punt op de foto.": {
+    en: "Choose a valid point on the photo.",
+    fr: "Choisissez un point valide sur la photo.",
+    de: "Wählen Sie einen gültigen Punkt auf dem Foto.",
+  },
+  "Deze kaart heeft al een verschuiving, rotatie of schaalcorrectie. Controleer die eerst.": {
+    en: "This map already has an offset, rotation or scale correction. Check that first.",
+    fr: "Cette carte a déjà un décalage, une rotation ou une correction d'échelle. Vérifiez-la d'abord.",
+    de: "Diese Karte hat bereits eine Verschiebung, Drehung oder Skalierungskorrektur. Prüfen Sie diese zuerst.",
+  },
+  "Zet de maaier op het dock en wacht op verse, stabiele RTK Fixed-posities.": {
+    en: "Put the mower on the dock and wait for fresh, stable RTK Fixed positions.",
+    fr: "Placez la tondeuse sur la station et attendez des positions RTK Fixed récentes et stables.",
+    de: "Stellen Sie den Mäher auf die Ladestation und warten Sie auf neue, stabile RTK-Fixed-Positionen.",
+  },
+  "Dockmeting en opgeslagen dockpositie zijn niet bevestigd. Er is niets gewijzigd.": {
+    en: "Dock measurement and saved dock position were not confirmed. Nothing was changed.",
+    fr: "La mesure de la station et la position de station enregistrée n'ont pas été confirmées. Rien n'a été modifié.",
+    de: "Dockmessung und gespeicherte Dockposition wurden nicht bestätigt. Es wurde nichts geändert.",
+  },
+  "Zet de doelmaaier op zijn eigen dock met stabiele RTK Fixed-lokalisatie binnen {0} cm van de opgeslagen dockpositie.": {
+    en: "Put the target mower on its own dock with stable RTK Fixed localization within {0} cm of the saved dock position.",
+    fr: "Placez la tondeuse cible sur sa propre station avec une localisation RTK Fixed stable à moins de {0} cm de la position de station enregistrée.",
+    de: "Stellen Sie den Zielmäher mit stabiler RTK-Fixed-Lokalisierung innerhalb von {0} cm der gespeicherten Dockposition auf seine eigene Ladestation.",
+  },
+  "De kopie of het kaartframe is niet bevestigd.": {
+    en: "The copy or the map frame is not confirmed.",
+    fr: "La copie ou le repère de la carte n'est pas confirmé.",
+    de: "Die Kopie oder der Kartenrahmen ist nicht bestätigt.",
+  },
+  "De twee kaartkopieën op de doelmaaier verschillen; synchroniseer die eerst.": {
+    en: "The two map copies on the target mower differ; sync them first.",
+    fr: "Les deux copies de carte sur la tondeuse cible diffèrent ; synchronisez-les d'abord.",
+    de: "Die beiden Kartenkopien auf dem Zielmäher unterscheiden sich; synchronisieren Sie diese zuerst.",
+  },
+  "Het gekozen kaartslot is niet meer vrij.": {
+    en: "The chosen map slot is no longer free.",
+    fr: "L'emplacement de carte choisi n'est plus libre.",
+    de: "Der gewählte Kartenplatz ist nicht mehr frei.",
+  },
+  "De doelkaart is tijdens de voorbereiding gewijzigd.": {
+    en: "The target map changed during preparation.",
+    fr: "La carte cible a été modifiée pendant la préparation.",
+    de: "Die Zielkarte wurde während der Vorbereitung geändert.",
+  },
+  "Kaartoverdracht niet bevestigd; de kopie is niet opgeslagen.": {
+    en: "Map transfer not confirmed; the copy was not saved.",
+    fr: "Transfert de carte non confirmé ; la copie n'a pas été enregistrée.",
+    de: "Kartenübertragung nicht bestätigt; die Kopie wurde nicht gespeichert.",
+  },
+  "De navigatiekaarten zijn niet geldig opgebouwd.": {
+    en: "The navigation maps were not built correctly.",
+    fr: "Les cartes de navigation n'ont pas été construites correctement.",
+    de: "Die Navigationskarten wurden nicht korrekt erstellt.",
+  },
+  "De kaartreferentie is tijdens de eindcontrole gewijzigd.": {
+    en: "The map reference changed during the final check.",
+    fr: "La référence de carte a été modifiée pendant le contrôle final.",
+    de: "Die Kartenreferenz wurde während der Endkontrolle geändert.",
+  },
+  "De kaartbestanden zijn tijdens de eindcontrole gewijzigd.": {
+    en: "The map files changed during the final check.",
+    fr: "Les fichiers de carte ont été modifiés pendant le contrôle final.",
+    de: "Die Kartendateien wurden während der Endkontrolle geändert.",
+  },
+  "De navigatiekaarten zijn tijdens de eindcontrole gewijzigd.": {
+    en: "The navigation maps changed during the final check.",
+    fr: "Les cartes de navigation ont été modifiées pendant le contrôle final.",
+    de: "Die Navigationskarten wurden während der Endkontrolle geändert.",
+  },
+  "De doelkaart is tijdens de overdracht gewijzigd.": {
+    en: "The target map changed during the transfer.",
+    fr: "La carte cible a été modifiée pendant le transfert.",
+    de: "Die Zielkarte wurde während der Übertragung geändert.",
+  },
+  "Kaart- of dockbestanden zijn tijdens het herankeren gewijzigd of ontbreken.": {
+    en: "Map or dock files changed or went missing during re-anchoring.",
+    fr: "Des fichiers de carte ou de station ont été modifiés ou manquent pendant le ré-ancrage.",
+    de: "Karten- oder Dockdateien wurden während des Neuverankerns geändert oder fehlen.",
+  },
+  "Geen bevestigde voertuigmeting ontvangen. Controleer de versie van extended_commands.py en de meetkwaliteit.": {
+    en: "No confirmed vehicle measurement received. Check the extended_commands.py version and the measurement quality.",
+    fr: "Aucune mesure du véhicule confirmée reçue. Vérifiez la version d'extended_commands.py et la qualité de la mesure.",
+    de: "Keine bestätigte Fahrzeugmessung empfangen. Prüfen Sie die Version von extended_commands.py und die Messqualität.",
+  },
+  "Geen stabiele voertuigmeting met laadcontact en passende dockrichting.": {
+    en: "No stable vehicle measurement with charging contact and a matching dock heading.",
+    fr: "Aucune mesure stable du véhicule avec contact de charge et orientation de station correspondante.",
+    de: "Keine stabile Fahrzeugmessung mit Ladekontakt und passender Dockausrichtung.",
+  },
+  "Oorsprong gewijzigd tijdens de meting.": {
+    en: "Origin changed during the measurement.",
+    fr: "Origine modifiée pendant la mesure.",
+    de: "Ursprung während der Messung geändert.",
+  },
+  "Laadcontact, meetkwaliteit of voertuigpositie gewijzigd tijdens de meting.": {
+    en: "Charging contact, measurement quality or vehicle position changed during the measurement.",
+    fr: "Contact de charge, qualité de mesure ou position du véhicule modifiés pendant la mesure.",
+    de: "Ladekontakt, Messqualität oder Fahrzeugposition während der Messung geändert.",
+  },
+  "De gekozen doelzone bestaat niet meer.": {
+    en: "The chosen target zone no longer exists.",
+    fr: "La zone cible choisie n'existe plus.",
+    de: "Die gewählte Zielzone existiert nicht mehr.",
+  },
 };

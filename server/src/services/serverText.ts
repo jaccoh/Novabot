@@ -114,3 +114,18 @@ export function renderMsg(lang: Lang, msg: Msg | null | undefined): string | und
 export function renderMsg(lang: Lang, msg: Msg | null | undefined): string | undefined {
   return msg ? lookup(lang, msg.key, msg.values) : undefined;
 }
+
+/**
+ * An error a person will read. It carries the sentence, not a rendered string,
+ * so the handler that catches it answers in the reader's language. Services
+ * have no request to take a language from; this is how they say something.
+ */
+export class TextError extends Error {
+  constructor(readonly msg: Msg) { super(renderMsg(SOURCE_LANG, msg)); }
+}
+
+/** A caught error as this reader sees it: a TextError translated, anything else verbatim. */
+export function errorText(lang: Lang, error: unknown): string {
+  if (error instanceof TextError) return renderMsg(lang, error.msg);
+  return error instanceof Error ? error.message : String(error);
+}

@@ -11,7 +11,7 @@ import { db } from '../db/database.js';
 import { mapRepo } from '../db/repositories/index.js';
 import { pointInPolygon, polygonArea, polygonContains, segIntersects, MIN_WORK_AREA_M2, type XY } from '../maps/editGeometry.js';
 import { distanceToPolygon, dockPoint, nextFreeWorkSlot, workSlots } from './canonicalNaming.js';
-import { translator, type Translate } from './serverText.js';
+import { translator, M, TextError, type Translate } from './serverText.js';
 
 /** ponytail: knop. Max afstand dock→zone voor een gegenereerd dockkanaal. */
 export const DOCK_MAX_M = 3;
@@ -371,7 +371,7 @@ export function persistZoneCopy(
     if (opts.dockOrientation !== undefined) mapRepo.setPolygonChargingOrientation(targetSn, opts.dockOrientation);
     if (plan.replacesExisting) {
       const old = mapRepo.findBySnAndCanonical(targetSn, plan.canonical);
-      if (!old || old.map_type !== 'work') throw new Error('De gekozen doelzone bestaat niet meer.');
+      if (!old || old.map_type !== 'work') throw new TextError(M`De gekozen doelzone bestaat niet meer.`);
       mapRepo.deleteWithCascade(old.map_id, targetSn);
     }
     create(plan.canonical, 'work', plan.work, opts.alias);

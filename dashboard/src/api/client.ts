@@ -1032,7 +1032,7 @@ export async function bindDevice(sn: string, name?: string): Promise<{ ok: boole
     const res = await post(`${BASE}/bind-device`, { sn, name });
     return res.json();
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Onbekende fout' };
+    return { ok: false, error: e instanceof Error ? e.message : i18n.t('status.unknownError') };
   }
 }
 

@@ -304,7 +304,7 @@ async function loadPipeline(): Promise<boolean> {
   });
   worker.on('error', (err) => console.warn('[terrainClassifier] herkenningsworker faalde:', err.message));
   worker.on('exit', () => {
-    for (const w of waiting.values()) w.reject(new Error('herkenningsworker gestopt'));
+    for (const w of waiting.values()) w.reject(new Error('recognition worker stopped'));
     waiting.clear();
     // A crash drops the pipeline; the next initClassifier() starts a new worker.
     if (currentPipeline === pipe) { currentPipeline = null; disposeCurrent = null; }

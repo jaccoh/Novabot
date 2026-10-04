@@ -122,7 +122,7 @@ export function serializeEdgeDays(days: number[] | null | undefined): string | n
 }
 
 import { diagnoseConnection } from '../services/connectionDiagnosis.js';
-import { langOf, reqT, M, renderMsg, type Msg, type Translate, type Lang } from '../services/serverText.js';
+import { langOf, reqT, M, renderMsg, TextError, errorText, type Msg, type Translate, type Lang } from '../services/serverText.js';
 import { droneOverlayRouter } from './droneOverlay.js';
 import { posJsonRequested } from '../services/posJsonGate.js';
 import { connectionEventRepo, mowProgressRepo, dockSamplesRepo } from '../db/repositories/index.js';
@@ -142,7 +142,8 @@ dashboardRouter.use(['/maps/:sn', '/calibration/:sn'], (req, res, next) => {
   // install that brings its own dock channel), so those pass the frame gate.
   const retry = req.method === 'POST' && (req.path === '/apply' || /^\/copy-from\/[^/]+(?:\/preview)?$/.test(req.path)) && isMapInstallPending(sn);
   if (isMowerMapOperationBusy(sn) || (isFrameUnvalidated(sn) && !retry)) {
-    res.status(409).json({ ok: false, reason: isMowerMapOperationBusy(sn) ? 'map_operation_busy' : 'frame_unvalidated', error: 'Rond eerst de kaart- of herankerprocedure af.' }); return;
+    const T = reqT(req);
+    res.status(409).json({ ok: false, reason: isMowerMapOperationBusy(sn) ? 'map_operation_busy' : 'frame_unvalidated', error: T`Rond eerst de kaart- of herankerprocedure af.` }); return;
   }
   next();
 });
@@ -1865,7 +1866,7 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
       return;
     }
     const anchor = getPhotoDockPose(sn) ?? getPolygonAnchor(sn);
-    if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
+    if (!anchor) { res.status(409).json({ error: T`Een eenduidig dockanker is vereist voor GPS-coördinaten.` }); return; }
     localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); const offset = mapRepo.getPolygonOffset(sn); return { x: point.x + anchor.x - offset.x, y: point.y + anchor.y - offset.y }; });
   }
 
@@ -1937,17 +1938,18 @@ dashboardRouter.post('/maps/:sn', (req: Request, res: Response) => {
 // Preview is read-only; applying must name that exact, still-current plan.
 dashboardRouter.get('/maps/:sn/repair-dock-channel', async (req: Request, res: Response) => {
   try { res.json(await repairDockChannels(req.params.sn)); }
-  catch (error) { res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+  catch (error) { res.status(409).json({ ok: false, error: errorText(langOf(req), error) }); }
 });
 dashboardRouter.post('/maps/:sn/repair-dock-channel', async (req: Request, res: Response) => {
   if (typeof req.body?.planHash !== 'string' || !/^[a-f0-9]{64}$/.test(req.body.planHash)) {
-    res.status(400).json({ ok: false, error: 'Vraag eerst een reparatievoorbeeld op.' }); return;
+    const T = reqT(req);
+    res.status(400).json({ ok: false, error: T`Vraag eerst een reparatievoorbeeld op.` }); return;
   }
   try {
     const result = await repairDockChannels(req.params.sn, req.body.planHash);
     emitMapsChanged(req.params.sn);
     res.json(result);
-  } catch (error) { res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+  } catch (error) { res.status(409).json({ ok: false, error: errorText(langOf(req), error) }); }
 });
 
 // ── Zone kopiëren van een andere maaier ───────────────────────────────────
@@ -1989,7 +1991,8 @@ dashboardRouter.get('/maps/:sn/measurement', (req: Request, res: Response) => {
   // A local position measurement does not need an existing dock channel.
   // Copy preflight independently verifies the saved dock before using it.
   if (!isDeviceOnline(sn) || isFrameUnvalidated(sn) || isMowerMapOperationBusy(sn) || !sample) {
-    res.status(409).json({ ok: false, reason: 'measurement_unavailable', error: 'Meten vereist een gevalideerd frame en acht verse, stabiele RUNNING + RTK Fixed-posities.' }); return;
+    const T = reqT(req);
+    res.status(409).json({ ok: false, reason: 'measurement_unavailable', error: T`Meten vereist een gevalideerd frame en acht verse, stabiele RUNNING + RTK Fixed-posities.` }); return;
   }
   for (const [id, m] of mapMeasurements) if (Date.now() - m.at > 300_000) mapMeasurements.delete(id);
   const measurementId = crypto.randomUUID();
@@ -2002,10 +2005,11 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/alignment/auto-source', (req: 
   if (rejectUnlessOpenNova(source, req, res, M`Een zone kopiëren`)) return;
   const { canonical, cycleId, supervised } = req.body ?? {};
   if (typeof canonical !== 'string' || typeof cycleId !== 'string' || supervised !== true) {
-    res.status(400).json({ error: 'Bevestig dat je bij de bronmaaier staat en de rechte uitrit vrij is.' }); return;
+    const T = reqT(req);
+    res.status(400).json({ error: T`Bevestig dat je bij de bronmaaier staat en de rechte uitrit vrij is.` }); return;
   }
   try { res.json(startSourceDockCycle(cycleId, sn, source, canonical)); }
-  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+  catch (error) { res.status(409).json({ error: errorText(langOf(req), error) }); }
 });
 
 dashboardRouter.post('/maps/:sn/copy-from/:source/alignment/auto-source/:cycleId', (req: Request, res: Response) => {
@@ -2013,7 +2017,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/alignment/auto-source/:cycleId
   const action = req.body?.action;
   if (action !== 'pulse' && action !== 'stop') { res.status(400).json({ error: 'Invalid cycle action.' }); return; }
   try { res.json(sourceDockCycle(cycleId, sn, source, action)); }
-  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+  catch (error) { res.status(409).json({ error: errorText(langOf(req), error) }); }
 });
 
 dashboardRouter.post('/maps/:sn/dock-return', (req: Request, res: Response) => {
@@ -2021,10 +2025,11 @@ dashboardRouter.post('/maps/:sn/dock-return', (req: Request, res: Response) => {
   if (rejectUnlessOpenNova(sn, req, res, M`Terugkeren naar het dock`)) return;
   const { cycleId, supervised, ownDockNearby } = req.body ?? {};
   if (typeof cycleId !== 'string' || supervised !== true || ownDockNearby !== true) {
-    res.status(400).json({ error: 'Bevestig toezicht en dat de maaier vlak voor zijn eigen dock staat.' }); return;
+    const T = reqT(req);
+    res.status(400).json({ error: T`Bevestig toezicht en dat de maaier vlak voor zijn eigen dock staat.` }); return;
   }
   try { res.json(startDockReturn(cycleId, sn)); }
-  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+  catch (error) { res.status(409).json({ error: errorText(langOf(req), error) }); }
 });
 
 dashboardRouter.post('/maps/:sn/dock-return/:cycleId', (req: Request, res: Response) => {
@@ -2032,7 +2037,7 @@ dashboardRouter.post('/maps/:sn/dock-return/:cycleId', (req: Request, res: Respo
   const action = req.body?.action;
   if (action !== 'pulse' && action !== 'stop') { res.status(400).json({ error: 'Invalid cycle action.' }); return; }
   try { res.json(dockReturn(cycleId, sn, action)); }
-  catch (error) { res.status(409).json({ error: error instanceof Error ? error.message : String(error) }); }
+  catch (error) { res.status(409).json({ error: errorText(langOf(req), error) }); }
 });
 
 dashboardRouter.post('/maps/:sn/copy-from/:source/alignment', async (req: Request, res: Response) => {
@@ -2040,7 +2045,8 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/alignment', async (req: Reques
   if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
   const { canonical, alignmentId, atSourceDock } = req.body ?? {};
   if (typeof canonical !== 'string' || atSourceDock !== true || (alignmentId !== undefined && typeof alignmentId !== 'string')) {
-    res.status(400).json({ ok: false, reason: 'source_dock_confirmation_required', error: 'Bevestig dat de te meten maaier stilstaat voor het gekozen bronlaadstation.' }); return;
+    const T = reqT(req);
+    res.status(400).json({ ok: false, reason: 'source_dock_confirmation_required', error: T`Bevestig dat de te meten maaier stilstaat voor het gekozen bronlaadstation.` }); return;
   }
   try {
     const session = alignmentId === undefined ? await beginCopyAlignment(sn, source, canonical) : getCopyAlignment(alignmentId, sn, source, canonical);
@@ -2048,35 +2054,35 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/alignment', async (req: Reques
     const side = session.phase.startsWith('source') ? 'source' : 'target';
     res.json(await captureCopyAlignment(session.alignmentId, side));
   } catch (error) {
-    res.status(409).json({ ok: false, reason: 'alignment_unconfirmed', error: error instanceof Error ? error.message : String(error) });
+    res.status(409).json({ ok: false, reason: 'alignment_unconfirmed', error: errorText(langOf(req), error) });
   }
 });
 
 type CopyInput = ZoneCopyBody & ({ alignmentId: string; dockAtB?: undefined } | { alignmentId?: undefined; dockAtB: { x: number; y: number } });
 /** Exactly one correspondence: a marker measurement, or a pointed source dock. */
-function validCopyBody(body: unknown, res: Response): body is CopyInput {
+function validCopyBody(body: unknown, res: Response, T: Translate): body is CopyInput {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    res.status(400).json({ ok: false, reason: 'invalid_body', error: 'Een kopieerverzoek moet een JSON-object zijn.' }); return false;
+    res.status(400).json({ ok: false, reason: 'invalid_body', error: T`Een kopieerverzoek moet een JSON-object zijn.` }); return false;
   }
   const value = body as Record<string, unknown>;
   if (typeof value.canonical !== 'string' || !/^map[0-4]$/.test(value.canonical) ||
     (value.name !== undefined && typeof value.name !== 'string') ||
     (value.replaceCanonical !== undefined && (typeof value.replaceCanonical !== 'string' || !/^map[0-4]$/.test(value.replaceCanonical))) ||
     ['withObstacles', 'acceptChannel'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')) {
-    res.status(400).json({ ok: false, reason: 'invalid_body', error: 'Ongeldige zone of kopieeropties.' }); return false;
+    res.status(400).json({ ok: false, reason: 'invalid_body', error: T`Ongeldige zone of kopieeropties.` }); return false;
   }
   const dock = value.dockAtB as Record<string, unknown> | undefined;
   const hasAlignment = typeof value.alignmentId === 'string' && value.alignmentId.length > 0;
   const hasDock = !!dock && typeof dock === 'object' && Number.isFinite(dock.x) && Number.isFinite(dock.y);
   if ('measurementId' in body || (!('alignmentId' in body) && !('dockAtB' in body))) {
-    res.status(409).json({ ok: false, reason: 'alignment_required', error: 'Meet het bronlaadstation met beide maaiers of wijs het aan op de kaart van de doelmaaier. Een losse positiemeting kan deze stap niet vervangen.' });
+    res.status(409).json({ ok: false, reason: 'alignment_required', error: T`Meet het bronlaadstation met beide maaiers of wijs het aan op de kaart van de doelmaaier. Een losse positiemeting kan deze stap niet vervangen.` });
     return false;
   }
   if ('alignmentId' in body && 'dockAtB' in body) {
-    res.status(400).json({ ok: false, reason: 'ambiguous_dock', error: 'Kies óf de meting óf het aangewezen laadstation, niet beide.' }); return false;
+    res.status(400).json({ ok: false, reason: 'ambiguous_dock', error: T`Kies óf de meting óf het aangewezen laadstation, niet beide.` }); return false;
   }
   if (hasAlignment || hasDock) return true;
-  res.status(400).json({ ok: false, reason: 'bad_dock', error: 'Geef de positie van het laadstation van de bronmaaier als eindige x/y in meters.' });
+  res.status(400).json({ ok: false, reason: 'bad_dock', error: T`Geef de positie van het laadstation van de bronmaaier als eindige x/y in meters.` });
   return false;
 }
 
@@ -2085,9 +2091,9 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request,
   const { sn, source } = req.params;
   if (rejectUnlessOpenNova(sn, req, res, M`Een zone kopiëren`)) return;
   const body = (req.body ?? {}) as ZoneCopyBody;
-  if (!validCopyBody(body, res)) return;
+  if (!validCopyBody(body, res, T)) return;
   if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source)) {
-    res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
+    res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: T`Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.` }); return;
   }
   try {
     await withConfirmedCopyDocks(sn, source, async docks => {
@@ -2104,7 +2110,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source/preview', async (req: Request,
       });
     }, false); // Read-only preview remains usable while measuring away from the dock.
   } catch (error) {
-    if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: error instanceof Error ? error.message : String(error) });
+    if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: errorText(langOf(req), error) });
   }
 });
 
@@ -2117,15 +2123,15 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
     return;
   }
   const body = (req.body ?? {}) as ZoneCopyBody;
-  if (!validCopyBody(body, res)) return;
+  if (!validCopyBody(body, res, T)) return;
   if (isFrameUnvalidated(source) || isMowerMapOperationBusy(source)) {
-    res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: 'Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.' }); return;
+    res.status(409).json({ ok: false, reason: 'measurement_or_frame_changed', error: T`Frame gewijzigd, meting verlopen of bronmaaier bezig; meet opnieuw.` }); return;
   }
   // Altijd server-side herberekenen: de client stuurt alleen de correspondentie, nooit geometrie.
   try {
     await withConfirmedCopyDocks(sn, source, async docks => {
       const dockAtB = body.alignmentId ? getCopyAlignment(body.alignmentId, sn, source, String(body.canonical ?? '')).dockAtB : body.dockAtB;
-      if (!dockAtB) throw new Error('Meet het bronlaadstation eerst tweemaal met iedere maaier.');
+      if (!dockAtB) throw new TextError(M`Meet het bronlaadstation eerst tweemaal met iedere maaier.`);
       const r = previewZoneCopy(sn, source, String(body.canonical ?? ''), dockAtB, { withObstacles: body.withObstacles !== false, replaceCanonical: body.replaceCanonical, docks }, T);
       if (!r.ok) { res.status(r.status).json({ ok: false, reason: r.reason, error: r.error }); return; }
       if (!r.plan.ok) {
@@ -2163,7 +2169,7 @@ dashboardRouter.post('/maps/:sn/copy-from/:source', async (req: Request, res: Re
       });
     }, true, body.alignmentId ? undefined : QUICK_COPY_SEAT_TOLERANCE_M);
   } catch (error) {
-    if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: error instanceof Error ? error.message : String(error) });
+    if (!res.headersSent) res.status(409).json({ ok: false, reason: 'dock_unconfirmed', error: errorText(langOf(req), error) });
   }
 });
 
@@ -2213,7 +2219,7 @@ dashboardRouter.patch('/maps/:sn/:mapId', (req: Request, res: Response) => {
         return;
       }
       const anchor = getPhotoDockPose(sn) ?? getPolygonAnchor(sn);
-    if (!anchor) { res.status(409).json({ error: 'Een eenduidig dockanker is vereist voor GPS-coördinaten.' }); return; }
+    if (!anchor) { res.status(409).json({ error: T`Een eenduidig dockanker is vereist voor GPS-coördinaten.` }); return; }
     localPoints = mapArea.map(p => { const point = gridGpsToLocal({ lat: p.lat!, lng: p.lng! }, chargerGps); const offset = mapRepo.getPolygonOffset(sn); return { x: point.x + anchor.x - offset.x, y: point.y + anchor.y - offset.y }; });
     }
 
@@ -3107,7 +3113,7 @@ dashboardRouter.post('/calibration/:sn/dock-photo', async (req: Request, res: Re
     emitMapsChanged(req.params.sn);
     res.json({ ok: true, ...result });
   } catch (error) {
-    res.status(409).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(409).json({ ok: false, error: errorText(langOf(req), error) });
   }
 });
 
@@ -3180,9 +3186,7 @@ dashboardRouter.get('/demo/:sn', (req: Request, res: Response) => {
 // ── MQTT command publishing ─────────────────────────────────────
 
 // Own-dock recovery uses bounded body-relative motion before trusting the heading.
-class ReanchorError extends Error {
-  constructor(readonly msg: Msg) { super(msg.key); }
-}
+class ReanchorError extends TextError {}
 type ReanchorPhase = 'idle' | 'check' | 'relock' | 'dock' | 'anchor' | 'verify' | 'done' | 'error';
 interface ReanchorStat { phase: ReanchorPhase; message: Msg; ok?: boolean; error?: string; pose?: { x: number; y: number }; dist?: number; ts: number; revision: number; cycleId: string; }
 type ReanchorCycle = { id: string; revision: number; operatorAt: number; startedAt: number; cancelled: boolean; finished: boolean; motionId?: string };
@@ -3306,7 +3310,7 @@ async function runAutoReanchor(sn: string, cycle: ReanchorCycle): Promise<void> 
       setReanchor(sn, cycle, 'done', M`Frame gecontroleerd: ${measured.dist.toFixed(2)} m van het vaste dockanker.`, { ok: true, pose: measured.base, dist: measured.dist });
     }, true);
   } catch (error) {
-    setReanchor(sn, cycle, 'error', error instanceof ReanchorError ? error.msg : M`${error instanceof Error ? error.message : String(error)}`, { error: 'reanchor_failed', ok: false });
+    setReanchor(sn, cycle, 'error', error instanceof TextError ? error.msg : M`${error instanceof Error ? error.message : String(error)}`, { error: 'reanchor_failed', ok: false });
   } finally {
     stopReanchor(sn, cycle);
     cycle.finished = true;
