@@ -54,6 +54,7 @@ research/ros2_msg_definitions/novabot_msgs/
 
 # ── Project-internal files ────────────────────────────
 CLAUDE.md
+AGENTS.md
 .claude/
 .husky/_
 **/.agent/
