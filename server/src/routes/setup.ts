@@ -681,16 +681,21 @@ setupRouter.get('/devices', (_req, res) => {
   res.json({ equipment, registry });
 });
 
-// ── GET /profile — generate combined .mobileconfig (DNS + TLS cert) ───────────
+// ── GET /profile — generate .mobileconfig with the CA certificate ─────────────
+//
+// Only the CA. A com.apple.dnsSettings.managed payload used to sit here too,
+// with ServerAddresses = TARGET_IP: Apple reserves that payload for
+// DNS-over-HTTPS/TLS (DNSProtocol is mandatory) and without
+// SupplementalMatchDomains it takes over every lookup, so iOS lost DNS
+// altogether, on cellular as well. DNS belongs in the router or the built-in
+// DNS, which the mower needs anyway, and the phone then gets it via DHCP.
 
-setupRouter.get('/profile', async (_req, res) => {
+setupRouter.get('/profile', async (req, res) => {
   const fs = await import('fs');
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const path = await import('path');
   const crypto = await import('crypto');
 
   const serverIp = process.env.TARGET_IP ?? '127.0.0.1';
-  const certPath = '/data/certs/server.crt';
+  const certPath = process.env.CERT_PATH ?? '/data/certs/server.crt';
 
   // Read the TLS certificate
   let certDer: Buffer | null = null;
@@ -705,41 +710,16 @@ setupRouter.get('/profile', async (_req, res) => {
   } catch {
     // No cert available
   }
+  if (!certDer) {
+    const T = reqT(req);
+    res.status(404).json({ error: T`Geen certificaat gevonden. Start eerst de container.` });
+    return;
+  }
 
   const profileUuid = crypto.randomUUID().toUpperCase();
-  const dnsUuid = crypto.randomUUID().toUpperCase();
   const certUuid = crypto.randomUUID().toUpperCase();
 
-  // Build payloads array
-  const payloads: string[] = [];
-
-  // DNS payload
-  payloads.push(`
-    <dict>
-      <key>PayloadType</key>
-      <string>com.apple.dnsSettings.managed</string>
-      <key>PayloadVersion</key>
-      <integer>1</integer>
-      <key>PayloadIdentifier</key>
-      <string>com.opennova.profile.dns</string>
-      <key>PayloadUUID</key>
-      <string>${dnsUuid}</string>
-      <key>PayloadDisplayName</key>
-      <string>OpenNova DNS</string>
-      <key>PayloadDescription</key>
-      <string>Routes DNS queries through the OpenNova server so the Novabot app connects locally.</string>
-      <key>DNSSettings</key>
-      <dict>
-        <key>ServerAddresses</key>
-        <array>
-          <string>${serverIp}</string>
-        </array>
-      </dict>
-    </dict>`);
-
-  // TLS certificate payload (if cert exists)
-  if (certDer) {
-    payloads.push(`
+  const certPayload = `
     <dict>
       <key>PayloadType</key>
       <string>com.apple.security.root</string>
@@ -755,8 +735,7 @@ setupRouter.get('/profile', async (_req, res) => {
       <string>Trusts the OpenNova server's TLS certificate for secure HTTPS connections.</string>
       <key>PayloadContent</key>
       <data>${certDer.toString('base64')}</data>
-    </dict>`);
-  }
+    </dict>`;
 
   const profile = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -773,13 +752,13 @@ setupRouter.get('/profile', async (_req, res) => {
   <key>PayloadDisplayName</key>
   <string>OpenNova</string>
   <key>PayloadDescription</key>
-  <string>Configures DNS and TLS for the Novabot app to connect to your local OpenNova server (${serverIp}).</string>
+  <string>Trusts the certificate of your local OpenNova server (${serverIp}) so the Novabot app can connect over HTTPS. DNS is not changed.</string>
   <key>PayloadOrganization</key>
   <string>OpenNova</string>
   <key>PayloadRemovalDisallowed</key>
   <false/>
   <key>PayloadContent</key>
-  <array>${payloads.join('')}
+  <array>${certPayload}
   </array>
 </dict>
 </plist>`;
@@ -794,7 +773,7 @@ setupRouter.get('/profile', async (_req, res) => {
 setupRouter.get('/cert', async (req, res) => {
   const fs = await import('fs');
   try {
-    const cert = fs.readFileSync('/data/certs/server.crt');
+    const cert = fs.readFileSync(process.env.CERT_PATH ?? '/data/certs/server.crt');
     res.setHeader('Content-Type', 'application/x-x509-ca-cert');
     res.setHeader('Content-Disposition', 'attachment; filename="OpenNova-CA.crt"');
     res.send(cert);

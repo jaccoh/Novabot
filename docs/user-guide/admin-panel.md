@@ -100,9 +100,10 @@ mower.
   restarting the container. With the standard compose the advertising is done
   by the `opennova-mdns` helper instead; the card says so and the button is
   off, because there is nothing in this container to restart.
-- **Certificate setup**: **Download iOS profile** (`.mobileconfig`, with the
-  DNS settings) or the **Android certificate**. Required for the Novabot
-  app on iOS.
+- **Certificate setup**: **Download iOS profile** (`.mobileconfig` with the
+  CA certificate only, it leaves your phone's DNS alone) or the **Android
+  certificate**. Required for the Novabot app on iOS. DNS stays with your
+  router or the built-in DNS, see [DNS Setup](../guide/dns-setup.md).
 - **Cloud import**: pull your devices from your Novabot account. One-shot.
 - **Remote debug**: send your live MQTT log to someone helping you, or
   receive theirs.
