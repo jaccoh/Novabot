@@ -6,6 +6,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 
 WORKDIR /app
 
+# onnxruntime-node's install script fetches the CUDA binaries from NuGet on
+# linux/x64. The terrain model runs on the CPU build bundled in the package, so
+# that download is never used; skipping it keeps the amd64 image lean and the
+# build free of a network step that can time out.
+ENV ONNXRUNTIME_NODE_INSTALL=skip
+
 # Install server dependencies first (cache layer)
 COPY server/package.json server/package-lock.json* server/
 RUN cd server && npm ci
@@ -30,6 +36,9 @@ RUN cd dashboard && npm run build
 
 # ── Stage 2: Production dependencies (lean) ──────────────────────────────────
 FROM node:20-slim AS deps
+
+# Same as the build stage: no CUDA download for onnxruntime-node (CPU only).
+ENV ONNXRUNTIME_NODE_INSTALL=skip
 
 # Logs en de ldconfig-cache verschillen per run; alles verder is identiek.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/* /var/log/* /var/cache/ldconfig/aux-cache
