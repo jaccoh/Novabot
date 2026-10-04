@@ -2430,6 +2430,50 @@ open(path, "wb").write(patched)
 print("  robot_decision gepatcht: include_edge default OFF (1x e3bb0239 -> ffbb0239 @ 0x921a8, context geverifieerd)")
 PY
 
+# === Stap 7ter: robot_decision patchen — nooit weigeren vóór het achteruitrijden (error 139) ===
+# RobotDecision::quitPileDeal vergelijkt, als de maaier >600 s gedockt staat,
+# het opgeslagen dock (getChargingPose) met de gedockte lokalisatie en weigert
+# bij >1,0 m met error 139 ("Charging station position error"). Maar de maaier
+# krijgt zijn exacte positie juist door eerst achteruit van het dock te rijden;
+# gedockt kan het filter tot 1,3 m van zijn eigen RTK-fix liggen (.244,
+# 2026-10-04: GPS 0,11 m van het dock, lokalisatie 1,02 m). De controle
+# blokkeert dus precies wat het oplost. Gedecompileerd:
+# research/ghidra_output/robot_decision_error139_decompiled.c
+#
+#   0x880d4: 1e6e1001  fmov  d1,#1.0
+#   0x880d8: 1e612010  fcmpe d0,d1
+#   0x880dc: 54fff14d  b.le  0x87f04      <- patch: b 0x87f04 (17ffff8a)
+#   0x880e0: aa1303e0  mov   x0,x19
+#   0x880e4: 52800002  mov   w2,#0
+#   0x880e8: 52801161  mov   w1,#0x8b     (139) ; daarna bl updateErrorStatus
+#
+# Zelfde eisen als 7bis: de 24-byte reeks precies 1x, op exact 0x880d4,
+# anders breekt de build. Een nieuwe robot_decision-revisie vereist een
+# nieuwe disassembly van quitPileDeal, nooit blind patchen.
+echo "  robot_decision patchen (vertrek nooit weigeren op gedockte positie, error 139)..."
+python3 - "$RD" <<'PY'
+import sys
+
+path = sys.argv[1]
+SEQ_OFFSET = 0x880D4
+seq = bytes.fromhex("01106e1e" "1020611e" "4df1ff54" "e00313aa" "02008052" "61118052")
+patched_seq = seq[:8] + bytes.fromhex("8affff17") + seq[12:]   # b.le -> b, zelfde doel 0x87f04
+
+data = open(path, "rb").read()
+if data.count(patched_seq) == 1 and data.find(patched_seq) == SEQ_OFFSET:
+    print("ERROR: robot_decision is al gepatcht (error-139-tak); gebruik een STOCK .deb als --input.", file=sys.stderr)
+    sys.exit(1)
+hits = data.count(seq)
+if hits != 1 or data.find(seq) != SEQ_OFFSET:
+    print(f"ERROR: quitPileDeal-reeks {hits}x gevonden, verwacht 1x op 0x{SEQ_OFFSET:x} (gevonden op 0x{data.find(seq):x}).", file=sys.stderr)
+    print("  Firmware-layout gewijzigd: disassembleer RobotDecision::quitPileDeal opnieuw, niet blind patchen.", file=sys.stderr)
+    sys.exit(1)
+out = data[:SEQ_OFFSET] + patched_seq + data[SEQ_OFFSET + len(seq):]
+assert len(out) == len(data)
+open(path, "wb").write(out)
+print("  robot_decision gepatcht: error-139-tak in quitPileDeal overgeslagen (b.le -> b @ 0x880dc, context geverifieerd)")
+PY
+
 # === Stap 8: package_verify.json bijwerken ===
 echo "[8/9] package_verify.json bijwerken..."
 
