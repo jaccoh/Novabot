@@ -206,12 +206,17 @@ export function deriveMowerActivity(
 
   // RECOVER_ERROR_STOP: a slip or other recovery failed and the firmware waits
   // for the user to move the mower and continue (Error 123); resume_navigation
-  // continues it, like a pause.
+  // continues it, like a pause. ERROR_STOP: bad localization (Error 130) parked
+  // the task because the recover action was unavailable; same continue.
   const isCoveragePaused =
     (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP') ||
-      msg.includes('Work:RECOVER_ERROR_STOP')) &&
+      msg.includes('Work:RECOVER_ERROR_STOP') || msg.includes('Work:ERROR_STOP')) &&
     taskMode === 1 &&
     !isOnDock;
+  // Continue clears the error and re-runs every check itself
+  // (RobotDecision::coverContinueDeal), so a task parked by bad localization
+  // stays resumable while Error 130 still shows.
+  const parkedByLocalization = isCoveragePaused && /\b130\b/.test(s.error_status ?? '');
 
   const isDockFailed = msg.includes('Recharge: FAILED');
 
@@ -242,7 +247,7 @@ export function deriveMowerActivity(
 
   // Final priority — matches HomeScreen.tsx:276-287 exactly.
   let activity: MowerActivity = 'idle';
-  if (hasError && !isOnDock) activity = 'error';
+  if (hasError && !isOnDock && !parkedByLocalization) activity = 'error';
   else if (isDockFailed && !isOnDock) activity = 'error';
   else if (isEdgeCutting) activity = 'edge_cutting';
   else if (isCoverageRunning) activity = 'mowing';

@@ -226,10 +226,15 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
   // pause dat zelden in msg verschijnt. We dekken beide.
   // RECOVER_ERROR_STOP: a slip or other recovery failed and the firmware waits
   // for the user to move the mower and continue (Error 123); resume_navigation
-  // continues it, like a pause.
+  // continues it, like a pause. ERROR_STOP: bad localization (Error 130) parked
+  // the task because the recover action was unavailable; same continue.
   const isCoveragePaused = (msg.includes('Work:PAUSED') || msg.includes('Work:USER_STOP')
-    || msg.includes('Work:RECOVER_ERROR_STOP'))
+    || msg.includes('Work:RECOVER_ERROR_STOP') || msg.includes('Work:ERROR_STOP'))
     && taskMode === 1 && !isOnDock;
+  // Continue clears the error and re-runs every check itself
+  // (RobotDecision::coverContinueDeal), so a task parked by bad localization
+  // stays resumable while Error 130 still shows.
+  const parkedByLocalization = isCoveragePaused && errorStatusRaw === 130;
   // Recharge: FAILED — maaier reed naar dock maar kon niet dokken (miste de
   // charger, sensor glitch, of weg geblokt). Novabot toont hier meteen een
   // "Return to charge failed, please retry or manually move" popup.
@@ -315,7 +320,7 @@ function deriveMower(mower: DeviceState | null): MowerDerived | null {
 
   let activity: MowerActivity = 'idle';
   if (isOffline) activity = 'idle';
-  else if (hasError && !isOnDock) activity = 'error';
+  else if (hasError && !isOnDock && !parkedByLocalization) activity = 'error';
   else if (isDockFailed && !isOnDock) activity = 'error';
   else if (isEdgeCutting) activity = 'edge_cutting';
   else if (isFollowingUnicom) activity = 'following_unicom';

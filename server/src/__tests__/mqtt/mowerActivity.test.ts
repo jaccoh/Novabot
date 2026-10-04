@@ -145,3 +145,19 @@ describe('deriveMowerActivity: failed slip escape (Error 123)', () => {
     expect(deriveMowerActivity(s, { online: true })).toBe('paused');
   });
 });
+
+describe('deriveMowerActivity: task parked by bad localization (Error 130)', () => {
+  // robot_decision parks the task (coverStopDeal) and continue clears the
+  // error and re-checks the localization itself, so Resume must stay offered.
+  const parked = (work: string) => ({ task_mode: '1', battery_state: 'DISCHARGING', error_status: 'Error (130)',
+    msg: `Mode:COVERAGE Work:${work} Prev work:COVERING Recharge: WAIT` });
+  it('RECOVER_ERROR_STOP with error 130 is a resumable pause, not an error', () => {
+    expect(deriveMowerActivity(parked('RECOVER_ERROR_STOP'), { online: true })).toBe('paused');
+  });
+  it('ERROR_STOP (recover action unavailable) is a resumable pause too', () => {
+    expect(deriveMowerActivity(parked('ERROR_STOP'), { online: true })).toBe('paused');
+  });
+  it('other errors on a parked task still show as an error', () => {
+    expect(deriveMowerActivity({ ...parked('RECOVER_ERROR_STOP'), error_status: 'Error (151)' }, { online: true })).toBe('error');
+  });
+});
