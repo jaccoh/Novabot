@@ -43,105 +43,149 @@ export function adminPageHtml(): string {
     font-weight:normal;font-style:normal;font-display:swap;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  /* Departure Mono throughout, in honcho.dev style. The pixel monospace
-     feel matches the OpenNova terminal aesthetic. Fallback chain ends in
-     system monospace so the page stays readable if the font fails to
-     load. Letter-spacing slightly relaxed since Departure Mono is wider
-     than Posterama; the old 0.08em looked stretched. */
-  body{font-family:'Departure Mono',ui-monospace,SFMono-Regular,Monaco,Consolas,Liberation Mono,Menlo,monospace;background:#030712;color:#e0e0e0;min-height:100vh}
-  h1,h2,h3,.tab,.chip,.badge,.btn,button{font-family:'Departure Mono',ui-monospace,SFMono-Regular,monospace;letter-spacing:0.04em}
-  h1{letter-spacing:0.12em;text-transform:uppercase}
-  h2{letter-spacing:0.10em}
-  .tab{letter-spacing:0.08em;text-transform:uppercase}
-  .badge{letter-spacing:0.06em;text-transform:uppercase}
-  .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s}
+  /* Control-room glass (2026-10-04): translucent panels over a dark ground with
+     a few soft glows, mono throughout. Two small glows sit mid-page on purpose:
+     a blur over a flat gradient shows nothing, so the panels need some shape
+     behind them. Departure Mono is kept for the wordmark only. */
+  :root{
+    --bg:#0a0f17;
+    --panel:rgba(18,26,38,.6);
+    --panel-hi:rgba(18,26,38,.94);
+    --line:rgba(255,255,255,.09);
+    --row:rgba(8,12,20,.5);
+    --row-line:rgba(255,255,255,.06);
+    --ctl:rgba(20,28,40,.6);
+    --ctl-hover:rgba(30,41,59,.85);
+    --ctl-line:rgba(255,255,255,.12);
+    --tint:rgba(255,255,255,.05);
+    --text:#e2e8f0;--text-hi:#f1f5f9;--muted:#94a3b8;
+    --accent:#5eead4;--on-accent:#04201d;
+    --ok:#6ee7b7;--ok-dot:#34d399;--warn:#fbbf24;--bad:#fca5a5;--bad-dot:#f87171;--bad-line:rgba(248,113,113,.4);
+    --serial:#c4b5fd;
+    --blur:blur(28px) saturate(130%);
+    --shadow:inset 0 1px 0 rgba(255,255,255,.05),0 16px 40px rgba(2,6,23,.35);
+    --mono:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+    --pixel:'Departure Mono',ui-monospace,SFMono-Regular,monospace;
+  }
+  body{font-family:var(--mono);color:var(--text);min-height:100vh;background:
+    radial-gradient(420px 320px at 32% 38%,rgba(45,212,191,.16),transparent 70%),
+    radial-gradient(380px 300px at 72% 58%,rgba(96,165,250,.18),transparent 70%),
+    radial-gradient(1000px 520px at 10% -12%,rgba(94,234,212,.2),transparent 70%),
+    radial-gradient(1000px 600px at 95% -8%,rgba(96,165,250,.22),transparent 70%),
+    radial-gradient(1100px 600px at 85% 112%,rgba(251,146,60,.2),transparent 70%),
+    radial-gradient(900px 520px at 4% 106%,rgba(52,211,153,.15),transparent 70%),
+    var(--bg);background-attachment:fixed}
+  button,input,select,textarea{font-family:inherit}
+  h1{font-family:var(--pixel);font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:#cbd5e1;font-size:24px;margin-bottom:4px}
+  h2{color:var(--text);font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.16em;margin-bottom:14px}
+  .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(2,6,12,.6);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);z-index:1000;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s}
   .modal-overlay.show{opacity:1}
-  .modal-box{background:#1a1a2e;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:24px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-  .modal-title{font-size:16px;font-weight:700;color:#fff;margin-bottom:8px}
-  .modal-msg{font-size:13px;color:#aaa;margin-bottom:20px;line-height:1.5;word-break:break-word}
+  .modal-box{background:var(--panel-hi);border:1px solid var(--line);border-radius:16px;padding:24px;max-width:400px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+  .modal-title{font-size:15px;font-weight:700;color:#fff;margin-bottom:8px}
+  .modal-msg{font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6;word-break:break-word}
   .modal-btns{display:flex;gap:8px;justify-content:flex-end}
-  .modal-btn{padding:8px 20px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s}
-  .modal-btn:hover{opacity:.85}
-  .modal-btn-cancel{background:rgba(255,255,255,.08);color:#aaa}
-  .modal-btn-ok{background:#7c3aed;color:#fff}
-  .modal-btn-danger{background:#ef4444;color:#fff}
-  .modal-btn-success{background:#22c55e;color:#fff}
+  .modal-btn{padding:8px 16px;border-radius:8px;border:1px solid transparent;font-size:12px;font-weight:700;letter-spacing:.06em;cursor:pointer;transition:filter .15s}
+  .modal-btn:hover{filter:brightness(1.1)}
+  .modal-btn-cancel{background:var(--ctl);border-color:var(--ctl-line);color:var(--text)}
+  .modal-btn-ok{background:var(--accent);color:var(--on-accent)}
+  .modal-btn-danger{background:#b91c1c;color:#fff}
+  .modal-btn-success{background:var(--ok-dot);color:var(--on-accent)}
   /* Help popup: wider, scrollable reference of every button */
-  .help-box{background:#1a1a2e;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:0;max-width:780px;width:92%;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-  .help-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid rgba(255,255,255,.08)}
-  .help-head h3{margin:0;font-size:16px;font-weight:700;color:#fff}
-  .help-x{background:rgba(255,255,255,.08);color:#cbd5e1;border:0;border-radius:8px;width:32px;height:32px;font-size:16px;cursor:pointer}
+  .help-box{background:var(--panel-hi);border:1px solid var(--line);border-radius:16px;padding:0;max-width:780px;width:92%;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+  .help-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line)}
+  .help-head h3{margin:0;font-size:15px;font-weight:700;color:#fff}
+  .help-x{background:var(--ctl);color:var(--text);border:1px solid var(--ctl-line);border-radius:8px;width:32px;height:32px;font-size:16px;cursor:pointer}
   .help-body{padding:8px 22px 20px;overflow-y:auto}
-  .help-body details{border:1px solid rgba(255,255,255,.07);border-radius:10px;margin-top:10px;background:rgba(15,23,42,.4)}
-  .help-body summary{cursor:pointer;padding:11px 14px;font-weight:700;color:#a78bfa;font-size:13px;list-style:none}
+  .help-body details{border:1px solid var(--row-line);border-radius:12px;margin-top:10px;background:var(--row)}
+  .help-body summary{cursor:pointer;padding:11px 14px;font-weight:700;color:var(--text);font-size:13px;list-style:none}
   .help-body summary::-webkit-details-marker{display:none}
-  .help-body summary::before{content:'▸ ';color:#7c3aed}
+  .help-body summary::before{content:'▸ ';color:var(--accent)}
   .help-body details[open] summary::before{content:'▾ '}
   .help-body .help-sec{padding:2px 14px 12px}
-  .help-item{font-size:12.5px;color:#cbd5e1;line-height:1.5;padding:5px 0;border-top:1px solid rgba(255,255,255,.05)}
+  .help-item{font-size:12.5px;color:#cbd5e1;line-height:1.5;padding:5px 0;border-top:1px solid var(--row-line)}
   .help-item b{color:#fff;font-weight:600}
-  .help-item.warn b{color:#fbbf24}
-  .help-note{font-size:11.5px;color:#94a3b8;padding:8px 0 2px;line-height:1.5}
+  .help-item.warn b{color:var(--warn)}
+  .help-note{font-size:11.5px;color:var(--muted);padding:8px 0 2px;line-height:1.5}
+  /* Header: wordmark, live socket state, language switch, actions */
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;flex-wrap:wrap;gap:12px}
+  .wordmark{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0}
+  .wordmark img{height:36px;width:auto;flex-shrink:0}
+  .wordmark h1{margin:0;white-space:nowrap}
+  .wm-accent{color:var(--accent)}
+  .live{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);letter-spacing:.04em;white-space:nowrap}
+  .live-dot{width:8px;height:8px;border-radius:999px;background:var(--bad-dot)}
+  .live.is-on .live-dot{background:var(--ok-dot)}
+  .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .seg{display:flex;gap:2px;padding:3px;border-radius:8px;background:var(--panel);border:1px solid var(--line);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
   /* Language switch buttons (header) */
-  .langbtn{background:transparent;color:#888;border:1px solid #333;border-radius:6px;padding:5px 9px;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
-  .langbtn:hover{color:#ccc;background:#222}
-  .langbtn.active{background:#2563eb;color:#fff;border-color:#2563eb}
-  .container{max-width:1200px;margin:0 auto;padding:20px}
-  h1{color:#00d4aa;font-size:24px;margin-bottom:4px}
-  h2{color:#7c3aed;font-size:14px;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
-  .version{color:#666;font-size:12px;margin-bottom:24px}
-  .card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:16px;border:1px solid rgba(255,255,255,.08)}
-  .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);flex-wrap:wrap;gap:4px}
+  .langbtn{background:transparent;color:var(--muted);border:0;border-radius:6px;padding:6px 9px;font-size:12px;font-weight:600;letter-spacing:.08em;cursor:pointer;transition:color .15s,background .15s}
+  .langbtn:hover{color:var(--text)}
+  .langbtn.active{background:rgba(255,255,255,.1);color:#fff}
+  .container{max-width:1360px;margin:0 auto;padding:24px 20px 48px}
+  .version{color:var(--muted);font-size:12px;margin-bottom:24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin-bottom:16px;box-shadow:var(--shadow);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--row-line);flex-wrap:wrap;gap:4px}
   .row:last-child{border-bottom:none}
-  .label{color:#aaa;font-size:13px}
-  .value{font-size:13px;font-weight:600;text-align:right;word-break:break-all}
-  .on{color:#00d4aa}
-  .off{color:#ef4444}
-  .warn{color:#f59e0b}
-  .sn{color:#a78bfa;font-family:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;word-break:break-all}
+  .label{color:var(--muted);font-size:13px}
+  .value{font-size:13px;font-weight:600;color:var(--text-hi);text-align:right;word-break:break-all}
+  .on{color:var(--ok)}
+  .off{color:var(--bad)}
+  .warn{color:var(--warn)}
+  .sn{color:var(--serial);font-family:var(--mono);font-size:12px;word-break:break-all}
   .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
   table{width:100%;border-collapse:collapse;font-size:13px;min-width:400px}
-  th{text-align:left;color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.1);white-space:nowrap}
-  td{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.04)}
+  th{text-align:left;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.16em;padding:8px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px 6px;border-bottom:1px solid var(--row-line)}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
-  .dot-on{background:#00d4aa}
-  .dot-off{background:#ef4444}
-  .pulse-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:pulse 1.5s infinite}
+  .dot-on{background:var(--ok-dot)}
+  .dot-off{background:var(--bad-dot)}
+  .pulse-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--warn);animation:pulse 1.5s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
-  .badge-admin{background:rgba(124,58,237,.2);color:#a78bfa}
-  .badge-dash{background:rgba(0,212,170,.15);color:#00d4aa}
-  .badge-user{background:rgba(255,255,255,.05);color:#666}
-  .btn{padding:4px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:600;transition:all .2s}
-  .btn-sm{padding:3px 8px;font-size:11px}
-  .btn-green{background:#047857;color:#fff}
-  .btn-green:hover{background:#059669}
-  .btn-red{background:#991b1b;color:#fff}
-  .btn-red:hover{background:#b91c1c}
-  .btn-purple{background:#6d28d9;color:#fff}
-  .btn-purple:hover{background:#7c3aed}
-  input{padding:10px 14px;background:#0d0d20;border:1px solid #333;border-radius:8px;color:#fff;font-size:14px;width:100%}
-  input:focus{border-color:#7c3aed;outline:none}
+  .badge{display:inline-block;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;border:1px solid #334155;color:#cbd5e1}
+  .badge-admin{border-color:rgba(94,234,212,.35);color:var(--accent)}
+  .badge-dash{border-color:rgba(110,231,183,.35);color:var(--ok)}
+  .badge-user{color:var(--muted)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 12px;border-radius:8px;border:1px solid var(--ctl-line);background:var(--ctl);color:var(--text);cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.06em;text-decoration:none;transition:background .15s,filter .15s}
+  .btn:hover{background:var(--ctl-hover)}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-sm{padding:4px 9px;font-size:11px}
+  .btn-green,.btn-purple{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:700}
+  .btn-green:hover,.btn-purple:hover{background:var(--accent);filter:brightness(1.08)}
+  .btn-red{background:rgba(239,68,68,.08);border-color:var(--bad-line);color:var(--bad)}
+  .btn-red:hover{background:rgba(239,68,68,.16)}
+  .icon-btn{width:36px;padding:6px 0;font-size:15px}
+  input{padding:10px 14px;background:var(--row);border:1px solid var(--ctl-line);border-radius:8px;color:var(--text-hi);font-size:14px;width:100%}
+  input:focus,select:focus,textarea:focus{border-color:var(--accent);outline:none}
+  input[type=checkbox],input[type=radio]{accent-color:var(--accent);width:auto;padding:0}
   .login-box{max-width:360px;margin:80px auto;padding:0 16px}
-  /* Tabs — bottom-border style, active gets accent underline */
-  .tabs{display:flex;gap:0;margin-bottom:18px;border-bottom:1px solid rgba(255,255,255,.08);padding:0 4px;align-items:flex-end}
-  .tab{padding:10px 18px;border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;font-weight:600;background:transparent;color:#777;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s,background .15s;position:relative}
-  .tab:hover{color:#cbd5e1;background:rgba(255,255,255,.02)}
-  .tab.active{background:transparent;color:#a78bfa;border-bottom:2px solid #a78bfa}
+  /* Tabs: segmented bar, the active one carries an accent underline */
+  .tabs{display:flex;gap:2px;margin-bottom:18px;padding:4px;border-radius:12px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur);width:fit-content;max-width:100%;overflow-x:auto}
+  .tab{padding:0 14px;height:36px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;background:transparent;color:var(--muted);border:0;white-space:nowrap;transition:color .15s,background .15s}
+  .tab:hover{color:var(--text)}
+  .tab.active{background:rgba(255,255,255,.1);color:#fff;box-shadow:inset 0 -2px 0 var(--accent)}
   /* Version / system info chips */
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
-  .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:500;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.4;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#aaa;white-space:nowrap}
-  .chip-version{background:rgba(0,212,170,.1);border-color:rgba(0,212,170,.3);color:#00d4aa}
-  .chip-uptime{background:rgba(124,58,237,.08);border-color:rgba(124,58,237,.25);color:#a78bfa}
-  .chip-ram{background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.25);color:#fbbf24}
+  .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:500;font-family:var(--mono);line-height:1.4;border:1px solid var(--line);background:var(--tint);color:#cbd5e1;white-space:nowrap}
+  .chip-version,.chip-uptime,.chip-ram{color:#cbd5e1}
   .chip-dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
+  /* Stat strip (Devices tab): small caps label over a big value */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:12px;margin-bottom:16px}
+  .stat{display:flex;flex-direction:column;gap:8px;min-width:0;padding:14px 16px;border-radius:14px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+  .stat-label{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .stat-value{font-size:26px;font-weight:600;color:var(--text-hi);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat-ok{color:var(--ok)}
+  .stat-warn{color:var(--warn)}
+  /* Notice bar (server update) */
+  .notice{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;padding:12px 16px;border-radius:14px;background:var(--panel);border:1px solid rgba(251,191,36,.24);box-shadow:var(--shadow);backdrop-filter:var(--blur);-webkit-backdrop-filter:var(--blur)}
+  .notice-title{font-weight:700;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--warn)}
+  .notice-text{font-size:12px;color:#cbd5e1;margin-top:2px}
   .hide-mobile{}
   /* Responsive */
   @media(max-width:600px){
-    .container{padding:10px}
-    h1{font-size:20px}
+    .container{padding:12px 10px 32px}
+    h1{font-size:18px}
     h2{font-size:12px}
-    .card{padding:12px;border-radius:10px}
+    .card{padding:14px;border-radius:14px}
     table{font-size:12px;min-width:0}
     th,td{padding:6px 4px}
     th{font-size:9px}
@@ -151,7 +195,8 @@ export function adminPageHtml(): string {
     .btn{font-size:11px;padding:6px 10px}
     .login-box{margin:40px auto}
     .hide-mobile{display:none!important}
-    .tab{padding:8px 12px;font-size:12px}
+    .tab{padding:0 12px;font-size:11px}
+    .stat-value{font-size:22px}
     /* Inline form elements: drop hard min-widths so they collapse cleanly */
     select,input[type="text"],input[type="email"],input[type="password"],input[type="search"],input[type="number"]{min-width:0!important;width:100%}
     /* Cards often use inline display:flex with min-width:200/250 children — let them stack */
@@ -177,32 +222,58 @@ export function adminPageHtml(): string {
     .value,.sn{word-break:break-all}
   }
   @media(max-width:380px){
-    h1{font-size:18px}
+    h1{font-size:16px}
     .container{padding:8px}
     .card{padding:10px}
-    .tab{padding:5px 10px;font-size:11px}
+    .tab{padding:0 10px;font-size:11px}
     button{font-size:11px;padding:5px 10px}
   }
   #app{display:none}
-  .dev-row{display:grid;grid-template-columns:90px 180px 150px 90px 140px 80px minmax(180px,1fr);align-items:center;gap:8px;padding:10px 6px;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px}
+  /* Device list: groups of inset rows */
+  .dev-group{margin-bottom:16px}
+  .dev-group-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:0 2px 2px}
+  .dev-group-title{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .dev-group-title.is-ok{color:var(--accent)}
+  .dev-group-title.is-warn{color:var(--warn)}
+  .dev-group-title.is-bad{color:var(--bad)}
+  .dev-group-note{font-size:11px;color:var(--muted)}
+  .dev-sub{display:flex;align-items:center;gap:10px;padding:10px 12px;margin-top:6px;border-radius:12px;background:var(--row);border:1px solid var(--row-line)}
+  .dev-row{display:grid;grid-template-columns:90px 180px 150px 90px 140px 80px minmax(180px,1fr);align-items:center;gap:8px;padding:10px 12px;margin-top:6px;border-radius:12px;background:var(--row);border:1px solid var(--row-line);font-size:12px}
   .dev-row > *:last-child{justify-self:end;display:flex;align-items:center;gap:6px}
-  @media(max-width:800px){.dev-row{grid-template-columns:80px 1fr;gap:4px}}
-  .lora-chip{font-size:10px;color:#a78bfa;background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.2);padding:2px 6px;border-radius:4px;white-space:nowrap}
-  .lora-missing{font-size:10px;color:#666;background:rgba(255,255,255,.04);border:1px dashed rgba(255,255,255,.1);padding:2px 6px;border-radius:4px;cursor:pointer}
-  .lora-missing:hover{color:#a78bfa;border-color:rgba(124,58,237,.3)}
-  .refresh-btn{float:right;cursor:pointer;color:#666;font-size:12px}
-  .refresh-btn:hover{color:#00d4aa}
-  .menu-item{padding:8px 12px;font-size:12px;color:#ccc;cursor:pointer;border-radius:6px;white-space:nowrap}
-  .menu-item:hover{background:rgba(255,255,255,.08)}
-  .ota-progress-bar{width:100%;height:8px;background:rgba(255,255,255,.06);border-radius:4px;overflow:hidden}
-  .ota-progress-fill{height:100%;background:#00d4aa;border-radius:4px;transition:width .5s ease}
-  .exp-map-shell{position:relative;height:620px;min-height:420px;background:#050816;border:1px solid rgba(255,255,255,.08);border-radius:8px;overflow:hidden}
+  @media(max-width:800px){.dev-row{grid-template-columns:auto 1fr;gap:6px 10px}.dev-row > *:last-child{grid-column:1/-1;justify-self:start;flex-wrap:wrap}}
+  .dev-type{font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-hi)}
+  .tag{display:inline-flex;align-items:center;padding:1px 7px;border-radius:5px;border:1px solid #334155;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#cbd5e1;white-space:nowrap}
+  .tag + .tag{margin-left:4px}
+  .tag-on{border-color:rgba(94,234,212,.35);color:var(--accent)}
+  .tag-stock{color:var(--muted)}
+  .tag-active{border-color:rgba(196,181,253,.4);color:var(--serial)}
+  .tag-bad{border-color:var(--bad-line);color:var(--bad);cursor:help}
+  .lora-chip{font-size:11px;color:#cbd5e1;background:var(--tint);border:1px solid var(--line);padding:2px 8px;border-radius:6px;white-space:nowrap}
+  .lora-missing{font-size:11px;color:var(--muted);background:transparent;border:1px dashed var(--ctl-line);padding:2px 8px;border-radius:6px;cursor:pointer}
+  .lora-missing:hover{color:var(--accent);border-color:rgba(94,234,212,.4)}
+  .refresh-btn{float:right;cursor:pointer;color:var(--muted);font-size:13px}
+  .refresh-btn:hover{color:var(--accent)}
+  .menu-item{padding:8px 12px;font-size:12px;color:var(--text);cursor:pointer;border-radius:6px;white-space:nowrap}
+  .menu-item:hover{background:var(--tint)}
+  .ota-progress-bar{width:100%;height:8px;background:var(--tint);border-radius:4px;overflow:hidden}
+  .ota-progress-fill{height:100%;background:var(--accent);border-radius:4px;transition:width .5s ease}
+  .exp-map-shell{position:relative;height:620px;min-height:420px;background:#080b0f;border:1px solid var(--line);border-radius:12px;overflow:hidden}
   .exp-map-shell canvas{outline:none}
   .exp-wifi-heat-raster{display:none}
-  .exp-map-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#64748b;font-size:13px;pointer-events:none;text-align:center;padding:20px}
-  .exp-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid rgba(255,255,255,.1);border-radius:6px;background:rgba(255,255,255,.04);color:#cbd5e1;font-size:11px;white-space:nowrap}
+  .exp-map-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none;text-align:center;padding:20px}
+  .exp-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--line);border-radius:6px;background:var(--tint);color:#cbd5e1;font-size:11px;white-space:nowrap}
   .exp-chip input{width:auto;margin:0}
   .exp-heat-legend{display:inline-block;width:72px;height:10px;border-radius:999px;background:linear-gradient(90deg,#ef4444 0%,#f59e0b 34%,#eab308 54%,#22c55e 76%,#14b8a6 100%);vertical-align:middle;margin-right:4px;box-shadow:0 0 12px rgba(34,197,94,.18)}
+  /* ponytail: ~600 inline style="" attributes predate the restyle. Rather than
+     rewrite each, the commonest legacy colours are mapped onto the tokens here.
+     Ceiling: a colour not listed keeps its old look; when a section is next
+     touched, move its inline styles to classes and drop its line here. */
+  [style*="background:#0d0d20"]{background:var(--row)!important;border-color:var(--ctl-line)!important}
+  [style*="background:#0a0a1a"]{background:#080b0f!important}
+  [style*="background:#1a1a2e"],[style*="background:#16213e"],[style*="background:#161628"],[style*="background:#252535"]{background:var(--panel-hi)!important}
+  [style*="background:#374151"],[style*="background:#333;"],[style*="background:#222;"]{background:var(--ctl)!important;border:1px solid var(--ctl-line)!important}
+  [style*="border:1px solid #333"],[style*="border:1px solid #2a2a3a"]{border-color:var(--ctl-line)!important}
+  [style*="color:#666"],[style*="color:#555"],[style*="color:#444"],[style*="color:#333"]{color:var(--muted)!important}
 </style>
 </head>
 <body>
@@ -474,25 +545,23 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
 <!-- Admin Panel -->
 <div id="app" class="container" style="display:none">
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-    <div style="min-width:0">
-      <div style="display:flex;align-items:center;gap:12px">
-        <img src="/assets/OpenNova.png" alt="OpenNova" style="height:40px;width:auto;flex-shrink:0">
-        <h1 style="font-family:'Posterama 1919',sans-serif;letter-spacing:0.18em;text-transform:uppercase;font-weight:normal;color:#cbd5e1;font-size:22px;margin:0;white-space:nowrap">Admin</h1>
-      </div>
-      <div class="chips" id="serverInfo"><span class="chip">Loading...</span></div>
+  <div class="topbar">
+    <div class="wordmark">
+      <img src="/assets/OpenNova.png" alt="OpenNova">
+      <h1 data-no-i18n>OpenNova <span class="wm-accent">// Admin</span></h1>
+      <span class="live" id="liveState" title="Live connection to this server"><span id="serverInfo" data-no-i18n>…</span><span class="live-dot"></span><span id="liveText">offline</span></span>
     </div>
-    <div style="display:flex;gap:6px">
-      <div id="langSwitch" data-no-i18n title="Language / Taal / Langue / Sprache" style="display:flex;gap:2px;margin-right:4px">
+    <div class="actions">
+      <div id="langSwitch" class="seg" data-no-i18n title="Language / Taal / Langue / Sprache">
         <button class="langbtn" data-lang="en" onclick="window.__setLang('en')">EN</button>
         <button class="langbtn" data-lang="nl" onclick="window.__setLang('nl')">NL</button>
         <button class="langbtn" data-lang="fr" onclick="window.__setLang('fr')">FR</button>
         <button class="langbtn" data-lang="de" onclick="window.__setLang('de')">DE</button>
       </div>
-      <a class="btn" id="dashboardLink" href="/" style="background:#065f46;display:none;text-decoration:none">Dashboard</a>
-      <button class="btn" style="background:#2563eb" onclick="openHelp()" title="Wat doet elke knop?">? Help</button>
-      <button class="btn" style="background:#333" onclick="logout()">Logout</button>
-      <button class="btn btn-purple" onclick="loadAll()">↻</button>
+      <a class="btn" id="dashboardLink" href="/" style="display:none">Dashboard</a>
+      <button class="btn" onclick="openHelp()" title="Wat doet elke knop?">? Help</button>
+      <button class="btn" onclick="logout()">Logout</button>
+      <button class="btn icon-btn" onclick="loadAll()" title="Refresh" aria-label="Refresh">↻</button>
     </div>
   </div>
 
@@ -621,19 +690,17 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
   <!-- Server update banner (mirrors the in-app updater). Hidden until
        /api/admin-status/check-server-update reports a newer Hub tag. -->
-  <div id="serverUpdateBanner" style="display:none;margin-bottom:16px;padding:12px 16px;background:linear-gradient(90deg,rgba(124,58,237,.15),rgba(124,58,237,.05));border:1px solid rgba(124,58,237,.4);border-radius:10px">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-      <div style="display:flex;gap:10px;align-items:center;flex:1;min-width:0">
-        <span style="font-size:18px">⬆</span>
-        <div style="min-width:0">
-          <div style="font-weight:600;color:#a78bfa">Server update available</div>
-          <div id="serverUpdateText" style="font-size:12px;color:#cbd5e1;margin-top:2px"></div>
-        </div>
+  <div id="serverUpdateBanner" class="notice" style="display:none">
+    <div style="display:flex;gap:12px;align-items:center;flex:1;min-width:0">
+      <span style="font-size:18px;color:var(--warn)">⬆</span>
+      <div style="min-width:0">
+        <div class="notice-title">Server update available</div>
+        <div id="serverUpdateText" class="notice-text"></div>
       </div>
-      <div style="display:flex;gap:6px">
-        <button onclick="dismissServerUpdate()" style="background:rgba(255,255,255,.06);color:#cbd5e1;border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer">Dismiss</button>
-        <button onclick="showServerUpdateHint()" style="background:rgba(124,58,237,.4);color:#fff;border:0;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer">How to update</button>
-      </div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn" onclick="dismissServerUpdate()">Dismiss</button>
+      <button class="btn" onclick="showServerUpdateHint()">How to update</button>
     </div>
   </div>
 
@@ -650,6 +717,14 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
 
   <!-- Tab: Devices -->
   <div id="tab_devices">
+    <div class="stats">
+      <div class="stat"><span class="stat-label">Online</span><span class="stat-value" id="statOnline">–</span></div>
+      <div class="stat"><span class="stat-label">Unbound</span><span class="stat-value" id="statUnbound">–</span></div>
+      <div class="stat"><span class="stat-label">Server</span><span class="stat-value" id="statServer" data-no-i18n>–</span></div>
+      <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value" id="statUptime" data-no-i18n>–</span></div>
+      <div class="stat"><span class="stat-label">Memory</span><span class="stat-value" id="statMemory" data-no-i18n>–</span></div>
+      <div class="stat"><span class="stat-label">Maps</span><span class="stat-value" id="statMaps">–</span></div>
+    </div>
     <div class="card">
       <h2>My Devices <span class="refresh-btn" onclick="loadMyDevices()">↻</span> <span id="deviceActivity" style="display:none;font-size:12px;font-weight:400;color:#f59e0b;margin-left:8px"><span class="pulse-dot"></span> <span id="deviceActivityText">discovering...</span></span></h2>
       <div id="myDevices">Loading...</div>
@@ -1115,7 +1190,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
         </ol>
       </div>
       <a href="/api/setup/profile" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none;margin-bottom:8px">Download iOS Profile (.mobileconfig)</a>
-      <a href="/api/setup/cert" class="btn btn-purple" style="display:block;text-align:center;text-decoration:none;background:rgba(34,197,94,.15);border-color:rgba(34,197,94,.3)">Download Android Certificate (.crt)</a>
+      <a href="/api/setup/cert" class="btn" style="display:block;text-align:center;text-decoration:none">Download Android Certificate (.crt)</a>
       <p style="font-size:11px;color:#666;margin-top:8px;text-align:center">
         Android: Settings → Security → Install certificate → CA certificate
       </p>
@@ -1253,7 +1328,7 @@ window.__ADMIN_I18N__ = ${JSON.stringify(ADMIN_I18N).replace(/</g, '\\u003c')};
     <div class="card" style="border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.04)">
       <h2 style="color:#ef4444">Danger Zone</h2>
       <p style="font-size:12px;color:#aaa;margin-bottom:12px">Permanently delete all data and start fresh. This removes your account, all devices, maps, and settings. This action cannot be undone.</p>
-      <button class="btn btn-red" style="background:#dc2626" onclick="factoryReset()">Factory Reset</button>
+      <button class="btn btn-red" style="background:#dc2626;border-color:#dc2626;color:#fff" onclick="factoryReset()">Factory Reset</button>
     </div>
   </div>
 </div>
@@ -1834,7 +1909,18 @@ function mdCopyOutput() {
 // All event listeners are registered in setupSocketListeners so they work
 // regardless of whether socket.io loaded from same origin or fallback port.
 var mqttSocket = null;
+// Header "live" marker: green while the console socket is connected.
+function setLiveState(on) {
+  var el = document.getElementById('liveState');
+  var txt = document.getElementById('liveText');
+  if (el) el.classList.toggle('is-on', on);
+  if (txt) txt.textContent = __t(on ? 'live' : 'offline');
+}
+
 function setupSocketListeners(sock) {
+  sock.on('connect', function() { setLiveState(true); });
+  sock.on('disconnect', function() { setLiveState(false); });
+  if (sock.connected) setLiveState(true);
   sock.on('mqtt:log', function(entry) { addLog(entry); });
   var _lastOnline = {};
   sock.on('device:online', function(d) {
@@ -2121,7 +2207,7 @@ async function checkServerUpdate() {
       : __t('Running v{current}, Docker Hub has v{latest}', { current: d.current, latest: d.latest }));
     _serverUpdateLatest = d.latest;
     document.getElementById('serverUpdateText').textContent = txt;
-    document.getElementById('serverUpdateBanner').style.display = 'block';
+    document.getElementById('serverUpdateBanner').style.display = 'flex';
   } catch (e) {
     // Silent — Hub fetch may fail offline; don't show error to operator.
     document.getElementById('serverUpdateBanner').style.display = 'none';
@@ -2248,17 +2334,29 @@ function appConfirm(message, opts) {
   }).then(function(v) { return v === true; });
 }
 
-function renderServerChips(s) {
-  return '<span class="chip chip-version" title="Server version"><span class="chip-dot"></span>v' + (s.version || '?') + '</span>'
-    + '<span class="chip chip-uptime" title="Uptime">⏱ ' + s.uptimeFormatted + '</span>'
-    + '<span class="chip chip-ram" title="Memory">⚡ ' + s.memoryMB + ' MB</span>';
+// Header version + the server tiles of the Devices stat strip.
+function renderServerInfo(d) {
+  var s = d.server || {};
+  var version = s.version || '?';
+  function set(id, text, title) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    if (title) el.title = title;
+  }
+  set('serverInfo', 'v' + version + ' ·');
+  // The full version (YYYY.MMDD.HHMM) overflows a tile; the date part is enough there.
+  set('statServer', version.split('.').slice(0, 2).join('.'), 'v' + version);
+  set('statUptime', s.uptimeFormatted || '–');
+  set('statMemory', s.memoryMB != null ? s.memoryMB + ' MB' : '–');
+  if (d.counts) set('statMaps', String(d.counts.maps));
 }
 
 async function loadAccount() {
   try {
     const d = await api('/overview');
     const s = d.server;
-    document.getElementById('serverInfo').innerHTML = renderServerChips(s);
+    renderServerInfo(d);
     // The dashboard is the other half of the UI; only offer it when it is served.
     var dl = document.getElementById('dashboardLink');
     if (dl && s.dashboardEnabled) dl.style.display = '';
@@ -2276,7 +2374,7 @@ async function loadAccount() {
 setInterval(async function() {
   try {
     var d = await api('/overview');
-    document.getElementById('serverInfo').innerHTML = renderServerChips(d.server);
+    renderServerInfo(d);
   } catch {}
 }, 30000);
 
@@ -2284,7 +2382,6 @@ function devRow(dev) {
   const online = dev.is_online;
   const isCharger = dev.device_type === 'charger';
   const icon = isCharger ? '⚡' : '🤖';
-  const typeColor = isCharger ? '#f59e0b' : '#00d4aa';
   const typeName = isCharger ? 'Charger' : 'Mower';
   const bound = dev.is_bound;
   const fw = dev.firmware_version || '';
@@ -2298,14 +2395,14 @@ function devRow(dev) {
   var fwBadge = '';
   if (fw) {
     if (isON) {
-      fwBadge = '<span style="font-size:9px;background:rgba(0,212,170,.15);color:#00d4aa;padding:1px 6px;border-radius:3px;font-weight:600">OpenNova</span>';
+      fwBadge = '<span class="tag tag-on">OpenNova</span>';
     } else {
-      fwBadge = '<span style="font-size:9px;background:rgba(245,158,11,.15);color:#f59e0b;padding:1px 6px;border-radius:3px;font-weight:600">Stock</span>';
+      fwBadge = '<span class="tag tag-stock">Stock</span>';
     }
   }
   var activeBadge = '';
   if (!isCharger && dev.is_active) {
-    activeBadge = '<span style="font-size:9px;background:rgba(124,58,237,.2);color:#a78bfa;padding:1px 6px;border-radius:3px;font-weight:600;margin-left:4px">Active</span>';
+    activeBadge = '<span class="tag tag-active">Active</span>';
   }
 
   // Health badges — LoRa pair mismatch + mower_error gateway state.
@@ -2320,30 +2417,30 @@ function devRow(dev) {
       var pairTitle = __t('LoRa pair mismatch ({fields}): charger {caddr}/ch{cch} vs mower {maddr}/ch{mch}', {
         fields: fields.join(" + "), caddr: h.loraPair.charger.addr, cch: h.loraPair.charger.channel,
         maddr: h.loraPair.mower.addr, mch: h.loraPair.mower.channel });
-      healthBadges += '<span title="' + pairTitle + '" style="font-size:9px;background:rgba(239,68,68,.18);color:#fca5a5;padding:1px 6px;border-radius:3px;font-weight:600;margin-left:4px;cursor:help">⚠ LoRa ' + fields.join('+') + '</span>';
+      healthBadges += '<span title="' + pairTitle + '" class="tag tag-bad">⚠ LoRa ' + fields.join('+') + '</span>';
     }
   }
   if (h && h.mowerError) {
-    healthBadges += '<span title="mower_error ' + h.mowerError.code + ': ' + h.mowerError.label + '" style="font-size:9px;background:rgba(239,68,68,.18);color:#fca5a5;padding:1px 6px;border-radius:3px;font-weight:600;margin-left:4px;cursor:help">⚠ Err ' + h.mowerError.code + '</span>';
+    healthBadges += '<span title="mower_error ' + h.mowerError.code + ': ' + h.mowerError.label + '" class="tag tag-bad">⚠ Err ' + h.mowerError.code + '</span>';
   }
   activeBadge += healthBadges;
   // Layout: één primaire actieknop (Activate/Deactivate voor mowers, niets
   // voor chargers) + kebab-menu (⋯) met destructieve / minder-gebruikte
   // opties (Unbind, Delete + Banish). Houdt rijen compact en visueel rustig.
-  const btnBase = 'font-size:11px;padding:4px 12px;border-radius:6px;font-weight:600;margin-left:6px';
+  const btnBase = 'margin-left:6px';
   let actions = '';
   if (bound) {
     if (!isCharger) {
       actions += dev.is_active
-        ? '<button class="btn btn-sm" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.4);min-width:90px;' + btnBase + '" title="Click to deactivate this mower" onclick="deactivateDevice(\\'' + dev.sn + '\\')">Deactivate</button>'
-        : '<button class="btn btn-sm" style="background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.4);min-width:90px;' + btnBase + '" title="Set this mower as the active one" onclick="setActiveDevice(\\'' + dev.sn + '\\')">Activate</button>';
+        ? '<button class="btn btn-sm btn-red" style="min-width:90px;' + btnBase + '" title="Click to deactivate this mower" onclick="deactivateDevice(\\'' + dev.sn + '\\')">Deactivate</button>'
+        : '<button class="btn btn-sm btn-green" style="min-width:90px;' + btnBase + '" title="Set this mower as the active one" onclick="setActiveDevice(\\'' + dev.sn + '\\')">Activate</button>';
     }
     // Kebab menu — popover met Unbind + Delete + Banish. Inline HTML zonder
     // extra deps, JS toggle in onclick. Click-outside-to-close zit in
     // closeAllDeviceMenus(), aangeroepen door document-level listener
     // (hieronder, eenmalig).
     actions += '<span class="dev-menu" style="position:relative;display:inline-block;margin-left:6px;vertical-align:middle">'
-      + '<button class="btn btn-sm dev-menu-btn" style="background:rgba(255,255,255,.04);color:#aaa;border:1px solid rgba(255,255,255,.1);min-width:32px;font-size:14px;padding:3px 10px;border-radius:6px;font-weight:700" onclick="event.stopPropagation();toggleDeviceMenu(this)" title="More actions">⋯</button>'
+      + '<button class="btn btn-sm dev-menu-btn" style="min-width:32px;font-size:14px;font-weight:700" onclick="event.stopPropagation();toggleDeviceMenu(this)" title="More actions">⋯</button>'
       + '<div class="dev-menu-pop" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#161628;border:1px solid rgba(255,255,255,.12);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);z-index:50;min-width:180px;overflow:hidden">'
       +   '<button class="dev-menu-item" style="display:block;width:100%;text-align:left;padding:10px 14px;background:transparent;border:0;color:#ddd;font-size:12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05)" onclick="closeAllDeviceMenus();unbindDevice(\\'' + dev.sn + '\\')" onmouseover="this.style.background=\\'rgba(255,255,255,.05)\\'" onmouseout="this.style.background=\\'transparent\\'">Unbind</button>'
       +   '<button class="dev-menu-item" style="display:block;width:100%;text-align:left;padding:10px 14px;background:transparent;border:0;color:#ef4444;font-size:12px;cursor:pointer" onclick="closeAllDeviceMenus();banishDevice(\\'' + dev.sn + '\\')" onmouseover="this.style.background=\\'rgba(239,68,68,.08)\\'" onmouseout="this.style.background=\\'transparent\\'" title="Delete + block MQTT reconnect for 30min (for re-provisioning via Novabot app)">Delete + Banish</button>'
@@ -2356,7 +2453,7 @@ function devRow(dev) {
   // Diagnose: waar hangt dit apparaat vast in het opkomen. Staat bij elk
   // apparaat, want juist bij een offline apparaat wil je hem hebben.
   actions += '<button class="btn btn-sm" style="min-width:64px;' + btnBase
-    + 'background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.35)" '
+    + '" '
     + 'title="Why is it not coming online?" onclick="diagnoseDevice(\\'' + dev.sn + '\\')">Diagnose</button>';
 
   var loraCell = '';
@@ -2389,9 +2486,9 @@ function devRow(dev) {
     loraCell = '<span style="font-size:10px;color:#555">—</span>';
   }
   return '<div class="dev-row">' +
-    '<span style="color:' + typeColor + '">' + icon + ' ' + typeName + '</span>' +
+    '<span class="dev-type">' + icon + ' ' + typeName + '</span>' +
     '<span class="sn">' + (dev.sn || '-') + '</span>' +
-    '<span style="color:#888">' + (fw || '') + '</span>' +
+    '<span style="color:#cbd5e1">' + (fw || '') + '</span>' +
     '<span>' + fwBadge + '</span>' +
     '<span>' + loraCell + '</span>' +
     '<span style="white-space:nowrap">' + dot(online) + (online ? '<span class="on">Online</span>' : '<span class="off">Offline</span>') + '</span>' +
@@ -2523,6 +2620,13 @@ async function diagnoseDevice(sn) {
   }
 }
 
+function setStat(id, text, cls) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'stat-value' + (cls ? ' ' + cls : '');
+}
+
 async function loadMyDevices() {
   try {
     const [d, pendingResp, bannedResp] = await Promise.all([
@@ -2543,6 +2647,10 @@ async function loadMyDevices() {
     populateDeviceFilter(devs); // keep the Console device dropdown in sync
     const pending = (pendingResp && pendingResp.pending) || [];
     const banned = (bannedResp && bannedResp.banned) || [];
+    var onlineCount = devs.filter(function(x) { return x.is_online; }).length;
+    var unboundCount = devs.filter(function(x) { return !x.is_bound; }).length;
+    setStat('statOnline', onlineCount + ' / ' + devs.length, devs.length && onlineCount === devs.length ? 'stat-ok' : 'stat-warn');
+    setStat('statUnbound', String(unboundCount), unboundCount ? 'stat-warn' : '');
     if (!devs.length && !pending.length && !banned.length) { document.getElementById('myDevices').textContent = 'No devices found. Import from cloud or wait for devices to connect via MQTT.'; return; }
 
     let html = '';
@@ -2551,15 +2659,15 @@ async function loadMyDevices() {
     // Toont SN's die via "Delete + Banish" geblokkeerd zijn. Broker weigert
     // hun CONNECT tot de ban expireert of de user handmatig unbanned.
     if (banned.length > 0) {
-      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);border-radius:10px">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-      html += '<span style="font-size:12px;font-weight:600;color:#ef4444">\u26D4 Banned (MQTT reconnect blocked)</span>';
-      html += '<span style="font-size:11px;color:#888">Use this window to re-provision via the Novabot app</span>';
+      html += '<div class="dev-group">';
+      html += '<div class="dev-group-head">';
+      html += '<span class="dev-group-title is-bad">\u26D4 Banned (MQTT reconnect blocked)</span>';
+      html += '<span class="dev-group-note">Use this window to re-provision via the Novabot app</span>';
       html += '</div>';
       for (var bi = 0; bi < banned.length; bi++) {
         var b = banned[bi];
         var minsLeft = Math.ceil(b.msRemaining / 60000);
-        html += '<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;margin-bottom:4px">';
+        html += '<div class="dev-sub">';
         html += '<span style="font-size:18px">\uD83D\uDEAB</span>';
         html += '<div style="flex:1">';
         html += '<div style="color:#fecaca;font-weight:600;font-size:14px">' + b.sn + '</div>';
@@ -2576,10 +2684,10 @@ async function loadMyDevices() {
     // geclaimd zijn door een online MQTT device. Wordt automatisch
     // verborgen als de mower boot en broker de pending row promoteert.
     if (pending.length > 0) {
-      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(139,92,246,.06);border:1px solid rgba(139,92,246,.3);border-radius:10px">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-      html += '<span style="font-size:12px;font-weight:600;color:#a78bfa">\u23F3 Provisioning pending</span>';
-      html += '<span style="font-size:11px;color:#888">Waiting for first MQTT connect…</span>';
+      html += '<div class="dev-group">';
+      html += '<div class="dev-group-head">';
+      html += '<span class="dev-group-title is-warn">\u23F3 Provisioning pending</span>';
+      html += '<span class="dev-group-note">Waiting for first MQTT connect…</span>';
       html += '</div>';
       for (var i = 0; i < pending.length; i++) {
         var p = pending[i];
@@ -2588,7 +2696,7 @@ async function loadMyDevices() {
           : '';
         var icon = p.type === 'charger' ? '\u26A1' : '\uD83D\uDD27';
         var typeLabel = p.type === 'charger' ? 'Charger' : 'Mower';
-        html += '<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(255,255,255,.03);border-radius:8px;margin-bottom:4px">';
+        html += '<div class="dev-sub">';
         html += '<span style="font-size:18px">' + icon + '</span>';
         html += '<div style="flex:1">';
         html += '<div style="color:#e2d1ff;font-weight:600;font-size:14px">' + typeLabel + '</div>';
@@ -2644,10 +2752,10 @@ async function loadMyDevices() {
         loraSummary = 'LoRa pending...';
       }
 
-      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid ' + (anyOnline ? 'rgba(0,212,170,.2)' : 'rgba(255,255,255,.06)') + ';border-radius:10px">';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-      html += '<span style="font-size:12px;font-weight:600;color:#00d4aa">\uD83D\uDD17 Paired Set</span>';
-      html += '<span style="font-size:11px;color:#888">' + loraSummary + '</span>';
+      html += '<div class="dev-group">';
+      html += '<div class="dev-group-head">';
+      html += '<span class="dev-group-title' + (anyOnline ? ' is-ok' : '') + '">\uD83D\uDD17 Paired Set</span>';
+      html += '<span class="dev-group-note">' + loraSummary + '</span>';
       html += '</div>';
       for (const dev of group) { html += devRow(dev); }
       html += '</div>';
@@ -2655,9 +2763,9 @@ async function loadMyDevices() {
 
     // Render solo bound devices (charger or mower without partner)
     if (solo.length > 0) {
-      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid rgba(245,158,11,.15);border-radius:10px">';
-      html += '<div style="margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:#f59e0b">Waiting for partner</span></div>';
-      html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#aaa;font-size:11px">' +
+      html += '<div class="dev-group">';
+      html += '<div class="dev-group-head"><span class="dev-group-title is-warn">Waiting for partner</span></div>';
+      html += '<div class="dev-group-head"><span class="dev-group-note">' +
         'Bound to your account. The partner device (charger or mower) will be paired automatically when it connects.</span></div>';
       for (const dev of solo) { html += devRow(dev); }
       html += '</div>';
@@ -2665,9 +2773,9 @@ async function loadMyDevices() {
 
     // Render unbound devices
     if (unbound.length > 0) {
-      html += '<div style="margin-bottom:12px;padding:12px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.06);border-radius:10px">';
-      html += '<div style="margin-bottom:4px"><span style="font-size:12px;font-weight:600;color:#aaa">New Devices</span></div>';
-      html += '<div style="padding:4px 8px;margin-bottom:6px"><span style="color:#aaa;font-size:11px">' +
+      html += '<div class="dev-group">';
+      html += '<div class="dev-group-head"><span class="dev-group-title is-warn">New Devices</span></div>';
+      html += '<div class="dev-group-head"><span class="dev-group-note">' +
         'Connected via MQTT but not yet bound to your account. They will be auto-bound shortly, or click Bind.</span></div>';
       for (const dev of unbound) { html += devRow(dev); }
       html += '</div>';
