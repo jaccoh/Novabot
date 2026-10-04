@@ -11,12 +11,11 @@ import {
   StyleSheet,
   Dimensions,
   ActivityIndicator,
-  Alert,
   Modal,
   ScrollView,
   Image as RNImage,
 } from 'react-native';
-import { appAlertCompat } from '../context/AppAlertContext';
+import { appAlert, appAlertCompat } from '../context/AppAlertContext';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -848,27 +847,31 @@ export default function MapScreen() {
         {
           label: renameLabel,
           icon: 'create-outline',
-          onPress: () => {
-            Alert.prompt(
-              renameLabel,
-              t('enterNewName'),
-              async (newName) => {
-                if (!newName?.trim()) return;
-                try {
-                  const url = await getServerUrl();
-                  if (!url || !mower) return;
-                  await fetch(`${url}/api/dashboard/maps/${encodeURIComponent(mower.sn)}/${encodeURIComponent(map.mapId)}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mapName: newName.trim() }),
-                  });
-                  fetchData();
-                } catch { appAlertCompat.alert(t('error'), t('hmRenameFailed')); }
+          // In-app field: Alert.prompt does nothing on Android and was
+          // dropped on iOS while this sheet was still closing.
+          onPress: () => appAlert({
+            title: renameLabel,
+            message: t('enterNewName'),
+            input: { defaultValue: map.mapName || '' },
+            buttons: [
+              { text: t('cancel'), style: 'cancel' },
+              {
+                text: t('save'),
+                onPress: async (newName) => {
+                  const name = newName?.trim();
+                  if (!name || name === map.mapName) return;
+                  try {
+                    const url = await getServerUrl();
+                    if (!url || !mower) return;
+                    await new ApiClient(url).renameMap(mower.sn, map.mapId, name);
+                    fetchData();
+                  } catch (e) {
+                    appAlertCompat.alert(t('error'), e instanceof Error ? e.message : t('hmRenameFailed'));
+                  }
+                },
               },
-              'plain-text',
-              map.mapName || '',
-            );
-          },
+            ],
+          }),
         },
         {
           label: t('delete'),
@@ -1050,11 +1053,9 @@ export default function MapScreen() {
 
       const json = await res.json();
       if (json.ok) {
-        // Ask user for map name after successful import
-        Alert.prompt(
-          t('nameThisMap'),
-          `${json.imported} ${t('areasImported')}`,
-          async (name) => {
+        // Ask user for map name after successful import (in-app field;
+        // Alert.prompt is iOS-only).
+        const nameImported = async (name?: string) => {
             const mapName = name?.trim() || 'Garden';
             try {
               const api = new ApiClient(serverUrl);
@@ -1081,10 +1082,13 @@ export default function MapScreen() {
             } catch { console.log('[Map] Push to mower failed (mower may be offline)'); }
 
             fetchData();
-          },
-          'plain-text',
-          'Garden',
-        );
+        };
+        appAlert({
+          title: t('nameThisMap'),
+          message: `${json.imported} ${t('areasImported')}`,
+          input: { defaultValue: 'Garden' },
+          buttons: [{ text: t('save'), onPress: (name) => { void nameImported(name); } }],
+        });
         fetchData(); // refresh map
       } else {
         appAlertCompat.alert(t('importFailed'), json.error ?? t('hmUnknownError'));

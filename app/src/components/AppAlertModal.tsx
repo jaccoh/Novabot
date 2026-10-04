@@ -4,8 +4,8 @@
  * StartMowSheet). Rendered once at the top of the tree by AppAlertProvider;
  * call sites use the `appAlert()` helper from `context/AppAlertContext`.
  */
-import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, KeyboardAvoidingView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useStyles, type Colors } from '../theme';
 import { useI18n } from '../i18n';
@@ -15,7 +15,8 @@ export type AppAlertButtonStyle = 'default' | 'cancel' | 'destructive';
 export interface AppAlertButton {
   text: string;
   style?: AppAlertButtonStyle;
-  onPress?: () => void;
+  /** Receives the typed text when the alert has an `input`. */
+  onPress?: (text?: string) => void;
 }
 
 export interface AppAlertOptions {
@@ -26,6 +27,8 @@ export interface AppAlertOptions {
   icon?: React.ComponentProps<typeof Ionicons>['name'];
   /** Optional accent color for the icon + accent border. */
   accent?: 'info' | 'warning' | 'destructive' | 'success';
+  /** A text field, e.g. for renaming. RN's Alert.prompt is iOS-only. */
+  input?: { defaultValue?: string; placeholder?: string };
 }
 
 interface Props {
@@ -52,6 +55,8 @@ export function AppAlertModal({ visible, options, onDismiss }: Props) {
   const { colors } = useTheme();
   const styles = useStyles(makeStyles);
   const { t } = useI18n();
+  const [text, setText] = useState('');
+  useEffect(() => { setText(options?.input?.defaultValue ?? ''); }, [options]);
   if (!options) return null;
 
   const accent = options.accent ?? 'info';
@@ -68,7 +73,7 @@ export function AppAlertModal({ visible, options, onDismiss }: Props) {
       animationType="fade"
       onRequestClose={onDismiss}
     >
-      <View style={styles.backdrop}>
+      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[styles.card, { borderColor: accentColor + '55' }]}>
           <View style={styles.headerRow}>
             <View style={[styles.iconCircle, { backgroundColor: accentColor + '22' }]}>
@@ -78,6 +83,18 @@ export function AppAlertModal({ visible, options, onDismiss }: Props) {
           </View>
           {options.message ? (
             <Text style={styles.body}>{options.message}</Text>
+          ) : null}
+          {options.input ? (
+            <TextInput
+              style={styles.input}
+              value={text}
+              onChangeText={setText}
+              placeholder={options.input.placeholder}
+              placeholderTextColor={colors.textDim}
+              autoFocus
+              selectTextOnFocus
+              returnKeyType="done"
+            />
           ) : null}
           {(() => {
             // When the dialog ships 3+ buttons (e.g. Cancel / Discard /
@@ -117,7 +134,7 @@ export function AppAlertModal({ visible, options, onDismiss }: Props) {
                   ]}
                   onPress={() => {
                     onDismiss();
-                    btn.onPress?.();
+                    btn.onPress?.(options.input ? text : undefined);
                   }}
                   activeOpacity={0.85}
                 >
@@ -149,7 +166,7 @@ export function AppAlertModal({ visible, options, onDismiss }: Props) {
             );
           })()}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -197,6 +214,16 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: c.textDim,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: c.inputBorder,
+    backgroundColor: c.inputBg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: c.text,
   },
   buttonRow: {
     flexDirection: 'row',

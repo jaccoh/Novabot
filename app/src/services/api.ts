@@ -705,9 +705,8 @@ export class ApiClient {
     return res.paths ?? [];
   }
 
-  /** Rename a map (work zone, obstacle, unicom…) — server updates the DB row
-   *  and (if the mower is online) also sends `rename_map` MQTT so the mower
-   *  persists the new name in its own CSV metadata. */
+  /** Rename a map (work zone, obstacle, unicom…). The name lives in the
+   *  server's database only; the mower does not store map names. */
   async renameMap(sn: string, mapId: string, mapName: string): Promise<void> {
     await this.request('PATCH', `/api/dashboard/maps/${enc(sn)}/${enc(mapId)}`, {
       body: { mapName },
