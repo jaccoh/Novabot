@@ -359,6 +359,9 @@ export function initDb(): void {
     'map_y REAL',
     'latitude REAL',
     'longitude REAL',
+    // After an obstacle contact the speed and state at the time were unknown.
+    'mow_speed REAL',
+    'work_status TEXT',
   ]) {
     try { db.exec(`ALTER TABLE signal_history ADD COLUMN ${col}`); }
     catch { /* kolom bestaat al */ }

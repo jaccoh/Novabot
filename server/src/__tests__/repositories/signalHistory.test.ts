@@ -12,7 +12,17 @@ vi.mock('../../mqtt/broker.js', () => ({
 }));
 
 import { signalHistoryRepo } from '../../db/repositories/signalHistory.js';
-import { updateDeviceData, consumeWifiRssiRefreshRequest } from '../../mqtt/sensorData.js';
+import { updateDeviceData, consumeWifiRssiRefreshRequest, deviceCache } from '../../mqtt/sensorData.js';
+
+describe('signal_history speed and work status', () => {
+  it('keeps the mowing speed and work status of each sample, and the history API returns them', () => {
+    const sn = 'LFIN_SPEED_SAMPLE';
+    deviceCache.set(sn, new Map([['mow_speed', '0.42'], ['work_status', 'Avoiding obstacle']]));
+    updateDeviceData(sn, Buffer.from(JSON.stringify({ report_state_robot: { battery_power: 77 } })));
+    const [row] = signalHistoryRepo.findBySnWithinHours(sn, 1);
+    expect(row).toMatchObject({ battery: 77, mow_speed: 0.42, work_status: 'Avoiding obstacle' });
+  });
+});
 
 describe('signal_history positioned samples', () => {
   it('has local and GPS position columns for map overlays', () => {

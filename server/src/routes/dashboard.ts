@@ -3790,10 +3790,7 @@ dashboardRouter.get('/signal-history/:sn', (req: Request, res: Response) => {
   const { sn } = req.params;
   const hours = Math.min(parseInt(req.query.hours as string) || 24, 168); // max 7 dagen
 
-  const rows = signalHistoryRepo.findBySnWithinHours(sn, hours) as Array<{
-    ts: string; battery: number | null; wifi_rssi: number | null;
-    rtk_sat: number | null; loc_quality: number | null; cpu_temp: number | null;
-  }>;
+  const rows = signalHistoryRepo.findBySnWithinHours(sn, hours);
 
   res.json({
     history: rows.map(r => ({
@@ -3803,6 +3800,8 @@ dashboardRouter.get('/signal-history/:sn', (req: Request, res: Response) => {
       rtkSat: r.rtk_sat,
       locQuality: r.loc_quality,
       cpuTemp: r.cpu_temp,
+      mowSpeed: r.mow_speed,
+      workStatus: r.work_status,
     })),
   });
 });

@@ -10,6 +10,8 @@ export interface SignalHistoryRow {
   rtk_sat: number | null;
   loc_quality: number | null;
   cpu_temp: number | null;
+  mow_speed: number | null;
+  work_status: string | null;
 }
 
 export interface WifiHeatmapRow {
@@ -25,7 +27,7 @@ export interface WifiHeatmapRow {
 
 export class SignalHistoryRepository {
   private _findBySnWithinHours = db.prepare(`
-    SELECT ts, battery, wifi_rssi, rtk_sat, loc_quality, cpu_temp
+    SELECT ts, battery, wifi_rssi, rtk_sat, loc_quality, cpu_temp, mow_speed, work_status
     FROM signal_history
     WHERE sn = ? AND ts >= datetime('now', ? || ' hours')
     ORDER BY ts ASC

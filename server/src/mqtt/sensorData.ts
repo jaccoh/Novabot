@@ -662,8 +662,8 @@ export function consumeWifiRssiRefreshRequest(sn: string): boolean {
 
 const signalHistoryInsert = db.prepare(`
   INSERT INTO signal_history
-    (sn, battery, wifi_rssi, rtk_sat, loc_quality, cpu_temp, map_x, map_y, latitude, longitude)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (sn, battery, wifi_rssi, rtk_sat, loc_quality, cpu_temp, map_x, map_y, latitude, longitude, mow_speed, work_status)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 function sampleSignalHistory(sn: string, snValues: Map<string, string>, meta: SignalSampleMeta): void {
@@ -681,6 +681,7 @@ function sampleSignalHistory(sn: string, snValues: Map<string, string>, meta: Si
   const mapY = parseFloat(snValues.get('map_position_y') ?? '');
   const latitude = parseFloat(snValues.get('latitude') ?? '');
   const longitude = parseFloat(snValues.get('longitude') ?? '');
+  const mowSpeed = parseFloat(snValues.get('mow_speed') ?? '');
 
   if (isNaN(battery) && isNaN(wifiRssi) && isNaN(rtkSat) && isNaN(locQuality) && isNaN(cpuTemp)) return;
 
@@ -710,6 +711,8 @@ function sampleSignalHistory(sn: string, snValues: Map<string, string>, meta: Si
       hasFreshPositionedWifi ? mapY : null,
       isNaN(latitude) || latitude === 0 ? null : latitude,
       isNaN(longitude) || longitude === 0 ? null : longitude,
+      isNaN(mowSpeed) ? null : mowSpeed,
+      snValues.get('work_status') ?? null,
     );
     if (shouldSampleSignal) lastSignalSampleTime.set(sn, now);
     if (shouldSampleHeatmap) lastWifiHeatmapSampleTime.set(sn, now);
