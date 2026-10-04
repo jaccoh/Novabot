@@ -75,6 +75,7 @@
       ],
       "expo-secure-store",
       "expo-localization",
+      "./plugins/withPodsMinDeploymentTarget",
       [
         "expo-notifications",
         {
