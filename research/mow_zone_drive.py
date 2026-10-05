@@ -74,6 +74,13 @@ WORK_STATUS_USER_STOP = 10
 def task_executing(task_mode, work_status):
     """True while robot_decision would refuse a new coverage start."""
     return task_mode == TASK_MODE_COVERAGE and work_status > 9
+
+
+def task_parked(task_mode, work_status):
+    """A coverage task stopped part-way (USER_STOP .. 49, the stop states
+    robot_decision's coverContinueDeal resumes). It still blocks a new start;
+    anything from 50 up is a live task."""
+    return task_mode == TASK_MODE_COVERAGE and 10 <= work_status < 50
 DOCK_RADIUS = 1.2   # within this of the map origin counts as "on the dock"
 
 # (name, relaxed, default) controller params applied only for the transit and
@@ -999,7 +1006,7 @@ def clear_parked_task(drv):
     executing, so the next start_cov is refused. Clear it first, the way the
     delete flow does. No-op when nothing is parked."""
     st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
-    if st is None or not task_executing(*st):
+    if st is None or not task_parked(*st):
         return
     log(f"parked task found (status={st}): clearing it first")
     drv.quit_mapping_mode()
@@ -1008,6 +1015,15 @@ def clear_parked_task(drv):
 
 def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     """Outbound: undock -> follow the unicom to the target zone -> coverage."""
+    # A live task already owns the wheels (e.g. the app's start_navigation
+    # fallback won the race while this process was still starting). Reloading
+    # the map and quitting that task left the coverage running without
+    # robot_decision supervision (Novabot-7xu, David 2026-10-04): leave it be.
+    st = drv.wait_status(lambda tm, ws: True, timeout=5.0)
+    if st is not None and task_executing(*st) and not task_parked(*st):
+        log(f"live task found (status={st}): not touching it")
+        phase("error", "busy_mowing")
+        return 1
     # Eerst de kaart die nav2 gebruikt gelijktrekken met de kaart op schijf.
     # Elke navigatie hierna (aanloop, terugweg, het dock) plant op wat
     # map_server nu vasthoudt, en dat was tot nu toe de kaart van het opstarten.

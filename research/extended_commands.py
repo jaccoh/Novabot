@@ -1887,6 +1887,10 @@ def handle_mow_zone(params, respond):
     _stale = kill_stale_mow_drives()
     if _stale:
         log(f"mow_zone: {len(_stale)} vastgelopen run(s) opgeruimd voor de start: {_stale}")
+    # The drive process needs 11-15 s to come up on a loaded mower; the app
+    # falls back to its own start_navigation after 5 s without a phase, and
+    # the two then fought over one task (Novabot-7xu). Say we are on it now.
+    respond("mow_zone_status", {"phase": "starting", "map": to_slot})
 
     d_arg = str(int(direction)) if direction is not None else "-"
     # to_slot is already allowlisted (re.fullmatch map\d+ above) and the rest
