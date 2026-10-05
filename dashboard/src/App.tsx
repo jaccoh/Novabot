@@ -99,7 +99,7 @@ export default function App() {
       {isMobile ? (
         <MobileApp />
       ) : (
-        <div className="dark min-h-screen bg-gray-950 text-white overflow-x-hidden">
+        <div className="dark min-h-screen app-ground text-white overflow-x-hidden">
           <DashboardShell />
         </div>
       )}

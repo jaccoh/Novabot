@@ -7,6 +7,20 @@ body {
   margin: 0;
 }
 
+/* Same ground as the admin page (server/src/routes/adminPage.ts, body): soft
+   glows over a dark base, fixed to the viewport. Keep the two in step. */
+.app-ground {
+  background:
+    radial-gradient(420px 320px at 32% 38%, rgba(45,212,191,.16), transparent 70%),
+    radial-gradient(380px 300px at 72% 58%, rgba(96,165,250,.18), transparent 70%),
+    radial-gradient(1000px 520px at 10% -12%, rgba(94,234,212,.2), transparent 70%),
+    radial-gradient(1000px 600px at 95% -8%, rgba(96,165,250,.22), transparent 70%),
+    radial-gradient(1100px 600px at 85% 112%, rgba(251,146,60,.2), transparent 70%),
+    radial-gradient(900px 520px at 4% 106%, rgba(52,211,153,.15), transparent 70%),
+    #0a0f17;
+  background-attachment: fixed;
+}
+
 /* Disable Leaflet's default blue/white selection outline on SVG paths */
 .leaflet-interactive:focus {
   outline: none;
