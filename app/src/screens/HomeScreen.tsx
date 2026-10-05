@@ -614,6 +614,8 @@ export default function HomeScreen() {
   // What the floating action pill blurs. Android needs an explicit target
   // (expo-blur 55); iOS blurs whatever is behind the view regardless.
   const blurTargetRef = useRef<View>(null);
+  // Measured, so the scroll reserves exactly the pill's footprint (#145).
+  const [pillHeight, setPillHeight] = useState(66);
   const hero = HERO_PALETTE[colorScheme];
   const mower = useMemo(() => deriveMower(activeMower), [activeMower]);
   // Post-restore safety: while the map frame is unvalidated, go_to_charge would
@@ -1926,9 +1928,11 @@ export default function HomeScreen() {
       {/* A plain View everywhere but Android, where it is the blur source for
           the action pill below. */}
       <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>
+      {/* flexGrow lets the status card, and with it the map, fill whatever
+          height is left, so the page fits without scrolling (#145). */}
       <ScrollView contentContainerStyle={[
         styles.scroll,
-        { paddingBottom: Math.max(insets.bottom + 120, 132) },
+        { flexGrow: 1, paddingBottom: hasActions ? pillHeight + 24 : 16 },
       ]} refreshControl={
         <RefreshControl refreshing={refreshing} tintColor={colors.purple} onRefresh={handleRefresh} />
       }>
@@ -1996,7 +2000,7 @@ export default function HomeScreen() {
         />
 
         {/* Status card */}
-        <View style={styles.statusCard}>
+        <View style={[styles.statusCard, mapShown && { flexGrow: 1 }]}>
           {/* Activity header — saw-blade spins when blades are physically
               turning (chassis-published RPM > 0), MowerIcon during mowing
               when blades are paused, Ionicons for everything else. */}
@@ -2513,6 +2517,7 @@ export default function HomeScreen() {
           blurMethod="dimezisBlurView"
           blurTarget={blurTargetRef}
           style={styles.actionsPill}
+          onLayout={(e) => setPillHeight(e.nativeEvent.layout.height)}
         >
           {(displayActivity === 'idle' || displayActivity === 'charging' || displayActivity === 'error') && (
             <View style={styles.actionRow}>
@@ -3590,12 +3595,13 @@ const makeStyles = (c: Colors) => StyleSheet.create({
   },
   mowingMapPanel: {
     // Cancel statusCard's horizontal padding (18) so the map spans the full
-    // card width edge-to-edge — matches Novabot's large square preview inside
-    // the status panel. aspectRatio keeps it a square so pan/zoom feels right.
+    // card width edge-to-edge. flex fills the height left between the header
+    // and the chips (#145); minHeight is where the page starts to scroll.
     alignSelf: 'stretch',
     marginHorizontal: -18,
     width: undefined,
-    aspectRatio: 1,
+    flex: 1,
+    minHeight: 180,
     marginTop: 4,
     marginBottom: 12,
     backgroundColor: 'rgba(15,23,42,0.35)',
@@ -3772,7 +3778,8 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     lineHeight: 18,
   },
   // Floats over the bottom of the scroll, just above the tab bar (#145). The
-  // scroll's paddingBottom (>= 132) keeps the last content clear of it.
+  // scroll's paddingBottom (measured pill height + 24) keeps the last content
+  // clear of it.
   // Frosted glass: the BlurView's own material tint, no backgroundColor. On
   // iOS a style background sits UNDER the effect view and gets blurred along,
   // which turned the glass into a solid card. The overflow clip keeps the

@@ -142,7 +142,7 @@ interface Props {
 function toSvg(
   point: LocalPoint,
   bounds: { minX: number; maxX: number; minY: number; maxY: number },
-  size: number,
+  size: { w: number; h: number },
   padding: number,
 ) {
   // North-up rendering — must match MapScreen.localToSvg + LiveMapView.
@@ -151,13 +151,14 @@ function toSvg(
   // Iterations 2026-05-08 confirmed: 0° matches real world.
   const rx = point.x;
   const ry = point.y;
-  const drawSize = size - padding * 2;
+  const drawW = size.w - padding * 2;
+  const drawH = size.h - padding * 2;
   const xRange = bounds.maxX - bounds.minX || 0.1;
   const yRange = bounds.maxY - bounds.minY || 0.1;
-  const scale = Math.min(drawSize / xRange, drawSize / yRange);
+  const scale = Math.min(drawW / xRange, drawH / yRange);
   return {
-    x: padding + (rx - bounds.minX) * scale + (drawSize - xRange * scale) / 2,
-    y: padding + (bounds.maxY - ry) * scale + (drawSize - yRange * scale) / 2,
+    x: padding + (rx - bounds.minX) * scale + (drawW - xRange * scale) / 2,
+    y: padding + (bounds.maxY - ry) * scale + (drawH - yRange * scale) / 2,
   };
 }
 
@@ -293,8 +294,13 @@ export function MowingProgressMap({
     [finishedAreas],
   );
   const useFill = fill || size == null;
-  const [measured, setMeasured] = useState<number>(0);
-  const renderSize = useFill ? (measured || 200) : (size ?? 200);
+  // Fill mode draws into the parent's whole rectangle, not a square inside it,
+  // so a wide panel shows map edge to edge (#145).
+  const [measured, setMeasured] = useState<{ w: number; h: number } | null>(null);
+  const renderSize = useMemo(
+    () => (useFill ? measured : null) ?? { w: size ?? 200, h: size ?? 200 },
+    [useFill, measured, size],
+  );
 
   // ── Gesture state (only used when `interactive` is true) ─────────
   const scale = useSharedValue(1);
@@ -350,18 +356,14 @@ export function MowingProgressMap({
     ? { x: chargerPose.x, y: chargerPose.y }
     : { x: 0, y: 0 };
 
-  const bounds = useMemo(() => {
-    const extra = [charger];
-    if (mowerPos) extra.push(mowerPos);
-    if (trail && trail.length > 0) extra.push(...trail);
-    if (inactivePolygons) {
-      for (const ip of inactivePolygons) extra.push(...ip.points);
-    }
-    if (channels) {
-      for (const ch of channels) extra.push(...ch.points);
-    }
-    return computeBounds(polygon, extra);
-  }, [polygon, mowerPos, trail, inactivePolygons, channels]);
+  // Zoomed in on the zone being mowed (#145): only the active polygon and the
+  // mower set the view, so the mower never leaves it. The dock, the other zones
+  // and the channels draw around it and fill the rest of the panel; pinch out
+  // to see the whole yard.
+  const bounds = useMemo(
+    () => computeBounds(polygon, mowerPos ? [mowerPos] : []),
+    [polygon, mowerPos],
+  );
 
   const svgPoints = useMemo(
     () => polygon.map(p => toSvg(p, bounds, renderSize, padding)),
@@ -373,7 +375,7 @@ export function MowingProgressMap({
   // gone. pathDirection (0° = north) maps directly into stripe rotation.
   const stripes = useMemo(
     () => generateStripes(
-      { minX: padding, maxX: renderSize - padding, minY: padding, maxY: renderSize - padding },
+      { minX: padding, maxX: renderSize.w - padding, minY: padding, maxY: renderSize.h - padding },
       pathDirection,
       progress,
       5,
@@ -392,8 +394,10 @@ export function MowingProgressMap({
   const onLayout = useFill
     ? (e: LayoutChangeEvent) => {
         const { width, height } = e.nativeEvent.layout;
-        const s = Math.min(width, height);
-        if (s > 0 && Math.abs(s - measured) > 1) setMeasured(s);
+        if (width > 0 && height > 0 && (!measured
+          || Math.abs(width - measured.w) > 1 || Math.abs(height - measured.h) > 1)) {
+          setMeasured({ w: width, h: height });
+        }
       }
     : undefined;
 
@@ -403,7 +407,7 @@ export function MowingProgressMap({
   }
 
   const svgContent = (
-    <Svg width={renderSize} height={renderSize} viewBox={`0 0 ${renderSize} ${renderSize}`}>
+    <Svg width={renderSize.w} height={renderSize.h} viewBox={`0 0 ${renderSize.w} ${renderSize.h}`}>
       <Defs>
         <ClipPath id="polyClipHome">
           <SvgPolygon points={pointsStr} />
@@ -629,13 +633,13 @@ export function MowingProgressMap({
     </Svg>
   );
 
-  const outerStyle = useFill ? styles.flex : { width: renderSize, height: renderSize };
+  const outerStyle = useFill ? styles.flex : { width: renderSize.w, height: renderSize.h };
 
   if (interactive) {
     return (
       <View style={[styles.container, outerStyle]} onLayout={onLayout}>
         <GestureDetector gesture={composedGesture}>
-          <Animated.View style={[{ width: renderSize, height: renderSize }, animatedStyle]}>
+          <Animated.View style={[{ width: renderSize.w, height: renderSize.h }, animatedStyle]}>
             {svgContent}
           </Animated.View>
         </GestureDetector>
