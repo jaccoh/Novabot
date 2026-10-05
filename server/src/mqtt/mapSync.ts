@@ -177,6 +177,11 @@ export function publishRawToDevice(sn: string, payload: Buffer, qos: 0 | 1 = 1):
  * (plain JSON) so commands at least reach the device.
  */
 function isAesCapable(sn: string): boolean {
+  if (sn.startsWith('LFIC') && chargerAesBySn.has(sn)) return chargerAesBySn.get(sn)!;
+  return versionSaysAes(sn);
+}
+
+function versionSaysAes(sn: string): boolean {
   try {
     const eq = equipmentRepo.findBySn(sn);
     if (!eq) return false;
@@ -195,6 +200,34 @@ function isAesCapable(sn: string): boolean {
     }
   } catch { /* fall through */ }
   return false;
+}
+
+// How a charger actually talks, plain or AES (v0.4.0 encrypts both ways and
+// drops plain commands). It beats equipment.charger_version, which nothing
+// refreshes after a charger OTA: the server asks no version on connect. With a
+// stale v0.3.x every command went out plain and a v0.4.0 charger ignored it.
+const chargerAesBySn = new Map<string, boolean>();
+const chargerVersionAskedAt = new Map<string, number>();
+const CHARGER_VERSION_ASK_GAP_MS = 10 * 60_000;
+
+/** Every parsed charger → server message. A mismatch with the stored version
+ *  means the firmware changed: ask for the real one, which the
+ *  ota_version_info_respond handler stores in equipment. */
+export function noteChargerTransport(sn: string, aes: boolean): void {
+  chargerAesBySn.set(sn, aes);
+  // Unbound: no row the answer could land in, so asking would never end.
+  if (aes === versionSaysAes(sn) || !equipmentRepo.findBySn(sn)) return;
+  const now = Date.now();
+  if (now - (chargerVersionAskedAt.get(sn) ?? 0) < CHARGER_VERSION_ASK_GAP_MS) return;
+  chargerVersionAskedAt.set(sn, now);
+  console.log(`${TAG} ${sn} sends ${aes ? 'AES' : 'plain'} but equipment says otherwise: asking its firmware version`);
+  publishToDevice(sn, { ota_version_info: null });
+}
+
+/** Tests only. */
+export function _resetChargerTransport(): void {
+  chargerAesBySn.clear();
+  chargerVersionAskedAt.clear();
 }
 
 export function publishToDevice(

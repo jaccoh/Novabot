@@ -13,7 +13,7 @@ import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, 
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
 import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
-import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice } from './mapSync.js';
+import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice, noteChargerTransport } from './mapSync.js';
 import { allowBetaFlashOrSnapshot } from '../services/firmwareSafety.js';
 import { getMowerFileCapability } from '../services/mowerFileCapability.js';
 import { otaSessionStarted, otaSessionState, otaSessionDisconnect, otaSessionConnect } from './otaSession.js';
@@ -1064,6 +1064,11 @@ export async function startMqttBroker(): Promise<void> {
       // Check of dit een kaart-gerelateerde of OTA response is
       try {
         const parsed = JSON.parse(effectiveJson);
+        // Only what parses counts: a plain message that happens to "decrypt"
+        // yields garbage, not JSON.
+        if (direction === '←DEV' && forwardSn.startsWith('LFIC')) {
+          noteChargerTransport(forwardSn, decryptedJson != null);
+        }
         handleMapMessage(forwardSn, parsed);
         handleDeviceResponse(forwardSn, parsed);
         // OTA voortgang → push naar dashboard via socket
