@@ -12,6 +12,7 @@ import { AuthRequest, ok, fail, MapRow } from '../../types/index.js';
 import { parseMapZip, type LocalPoint, type GpsPoint, polygonArea, gpsToLocal } from '../../mqtt/mapConverter.js';
 import { isMowerMapOperationBusy } from '../../services/mowerMapOperation.js';
 import { isFrameUnvalidated } from '../../services/frameValidation.js';
+import { notifyMapUpload } from '../../services/mapPull.js';
 
 export const mapRouter = Router();
 
@@ -820,9 +821,11 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
     } catch { /* niet-JSON jsonBody, negeren */ }
   }
 
+  let uploadedAreas = 0;
   try {
     const parsed = parseMapZip(finalPath);
     if (parsed && parsed.areas.length > 0) {
+      uploadedAreas = parsed.areas.length;
       // Merge mower-uploaded areas by logical area name instead of dropping them when maps already exist.
       // This keeps map0 intact while allowing additional work areas like map1/map2 to be added later.
       const existingRows = mapRepo.findByMowerSn(sn);
@@ -910,6 +913,8 @@ mapRouter.post('/uploadEquipmentMap', upload.any(), (req: Request, res: Response
     console.error(`[MAP] ZIP parsing mislukt voor ${sn}:`, err);
   }
 
+  // Wakes a waiting "pull maps from mower"; dashboard.ts refreshes open maps.
+  notifyMapUpload(sn, uploadedAreas);
   res.json(ok(null));
 });
 

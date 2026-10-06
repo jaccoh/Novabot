@@ -12,8 +12,11 @@ import { isMapMqttPacketBlocked } from './mapCommandGuard.js';
 import { startHomeAssistantBridge, forwardToHomeAssistant, publishDeviceOnline, publishDeviceOffline } from './homeassistant.js';
 import { updateDeviceData, clearDeviceData, deviceCache, consumeWifiRssiRefreshRequest, getDeviceSnapshot, ingestSensorStream } from './sensorData.js';
 import { isDemoMode } from '../services/demoSimulator.js';
-import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond } from '../dashboard/socketHandler.js';
-import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice, noteChargerTransport } from './mapSync.js';
+import { forwardToDashboard, emitDeviceOnline, emitDeviceOffline, pushMqttLog, emitOtaEvent, emitPinEvent, emitExtendedEvent, emitCommandRespond, emitMapsChanged } from '../dashboard/socketHandler.js';
+import { initMapSync, handleMapMessage, handleExtendedResponse, handleDeviceResponse, publishToExtended, onExtendedResponse, offExtendedResponse, publishEncryptedOnTopic, notifyRespond, publishToDevice, noteChargerTransport, getNextCmdNum } from './mapSync.js';
+import { scheduleAutoMapPull, type AutoPullDeps } from '../services/mapPull.js';
+import { isMowerMapOperationBusy } from '../services/mowerMapOperation.js';
+import { isFrameUnvalidated } from '../services/frameValidation.js';
 import { allowBetaFlashOrSnapshot } from '../services/firmwareSafety.js';
 import { getMowerFileCapability } from '../services/mowerFileCapability.js';
 import { otaSessionStarted, otaSessionState, otaSessionDisconnect, otaSessionConnect } from './otaSession.js';
@@ -277,6 +280,16 @@ const pendingAppCommands = new Map<string, number>();
 let statusLogCounter = 0;
 
 // Bijhouden welke SN's momenteel verbonden zijn (SN -> Set van clientId's)
+// Wiring for the automatic map pull (services/mapPull.ts).
+const autoPullDeps: AutoPullDeps = {
+  online: sn => isDeviceOnline(sn),
+  hasMaps: sn => mapRepo.findByMowerSn(sn).length > 0,
+  blocked: sn => isMowerMapOperationBusy(sn) || isFrameUnvalidated(sn)
+    || /MAPPING/.test(getDeviceSnapshot(sn)?.msg ?? ''),
+  send: sn => publishToDevice(sn, { get_map_outline: { map_name: 'all', cmd_num: getNextCmdNum(sn) } }),
+  changed: sn => emitMapsChanged(sn),
+};
+
 const onlineBySn = new Map<string, Set<string>>();
 
 // Laatste PUBLISH tijdstip per SN, voor stale-detection. Zonder deze check
@@ -840,6 +853,9 @@ export async function startMqttBroker(): Promise<void> {
       publishDeviceOnline(sn);
       emitDeviceOnline(sn);
       otaSessionConnect(sn);
+      // Empty map database: ask the mower for its own map, once and well after
+      // this connect (services/mapPull.ts). The only command we send unasked.
+      if (sn.startsWith('LFIN')) scheduleAutoMapPull(sn, autoPullDeps);
 
       // Pending-provisioning claim: als er een PENDING_* entry in de LoRa
       // cache staat voor dit device-type, vervang die entry door de echte
@@ -883,6 +899,8 @@ export async function startMqttBroker(): Promise<void> {
       // Dit veroorzaakte crash loops bij David's maaier (mqtt_node crasht
       // als commando's te snel na connect binnenkomen).
       // De cloud stuurt nooit proactief commando's naar apparaten.
+      // Eén uitzondering: heeft de database geen kaart van deze maaier, dan
+      // vraagt services/mapPull.ts hem 90 s ná deze connect eenmalig op.
     }
 
     callback(null, true);

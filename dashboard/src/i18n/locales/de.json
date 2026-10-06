@@ -1767,5 +1767,12 @@
       "body": "Verwandeln Sie Ihren Garten in einen 3D-Render, von oben oder schräg, bei Tag oder am Abend. Ihre Zonen, Hindernisse und der Mäher erscheinen live darauf. Wählen Sie ihn unter Hintergrund in der Kartenleiste. Hinweis: Der Render wird von einer KI anhand des Luftbilds gezeichnet. Er ähnelt Ihrem Garten, stimmt aber nicht in jedem Detail mit der Wirklichkeit überein."
     },
     "button": "Neu"
+  },
+  "mapPull": {
+    "waitingTitle": "Karte wird vom Mäher geholt",
+    "waitingBody": "OpenNova hat noch keine Karte für diesen Mäher und fragt sie beim Mäher an. Das dauert einige Minuten, nachdem der Mäher online gekommen ist.",
+    "emptyTitle": "Keine Karte gefunden",
+    "emptyBody": "OpenNova konnte keine Karte vom Mäher holen. Haben Sie ein Backup? Stellen Sie es im Admin-Bereich unter Karten wieder her. Kein Backup? Erstellen Sie eine neue Karte mit Kartierung.",
+    "openAdmin": "Admin-Bereich öffnen"
   }
 }

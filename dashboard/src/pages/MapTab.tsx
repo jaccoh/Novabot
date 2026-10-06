@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { DeviceState } from '../types';
 import { MowerMap } from '../components/map/MowerMap';
 import { AutoMapPanel } from '../components/map/AutoMapPanel';
+import { MapPullBanner } from '../components/map/MapPullBanner';
 import type { PatternPlacement } from '../components/patterns/PatternOverlay';
 
 type OtaProgressEntry = { status: string; percentage: number | null; timestamp: number; session?: unknown };
@@ -46,6 +47,7 @@ export function MapTab({ mower, connected, liveOutlines, coveredLanes, previewRe
 
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-3">
+      <MapPullBanner sn={mower.sn} />
       <MowerMap
         sn={mower.sn}
         mowingActive={isMowing}

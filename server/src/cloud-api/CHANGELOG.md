@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-10-06 - uploadEquipmentMap reports each processed ZIP
+
+- `uploadEquipmentMap`: after a mower ZIP is processed the route reports the
+  upload (serial number and number of areas) to `services/mapPull.ts`. That
+  wakes the automatic map pull for an empty map database and makes open
+  dashboards reload their maps. Response unchanged (`ok(null)`).
+
 ## 2026-10-04 - saveCutGrassRecord survives an invalid TZ
 
 - `saveCutGrassRecord`: the record time is formatted in `serverTimeZone()`,

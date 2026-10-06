@@ -1767,5 +1767,12 @@
       "body": "Maak van je tuin een 3D-render, van bovenaf of schuin, bij dag of bij avond. Je zones, obstakels en de maaier staan er live op. Kies hem onder Ondergrond in de kaartbalk. Let op: de render wordt door AI getekend op basis van de luchtfoto, dus hij lijkt op je tuin maar klopt niet tot in elk detail met de werkelijkheid."
     },
     "button": "Nieuw"
+  },
+  "mapPull": {
+    "waitingTitle": "Kaart wordt uit de maaier gehaald",
+    "waitingBody": "OpenNova heeft nog geen kaart van deze maaier en vraagt hem op bij de maaier. Dat duurt een paar minuten nadat de maaier online is gekomen.",
+    "emptyTitle": "Geen kaart gevonden",
+    "emptyBody": "OpenNova kon geen kaart uit de maaier halen. Heb je een backup? Zet die terug in het beheerpaneel onder Kaarten. Geen backup? Maak een nieuwe kaart met Karteren.",
+    "openAdmin": "Beheerpaneel openen"
   }
 }

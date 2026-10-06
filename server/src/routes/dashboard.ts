@@ -21,6 +21,7 @@ import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/b
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
 import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
+import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
 import { isFrameUnvalidated, getFrameRevision, markFrameUnvalidated, clearFrameUnvalidated, isMapInstallPending, getPendingReanchor, setPendingReanchor } from '../services/frameValidation.js';
@@ -130,6 +131,9 @@ import { computeDockDrift } from '../services/dockDrift.js';
 import { firmwareAdvisory, getManifest, ensureTargetDownloaded } from '../services/firmwareAdvisory.js';
 
 export const dashboardRouter = Router();
+
+// A mower map ZIP came in (pulled or not): refresh open maps.
+onMapUpload(sn => emitMapsChanged(sn));
 // Guard before database mutations, so an in-flight device operation sees one map set.
 dashboardRouter.use(['/maps/:sn', '/calibration/:sn'], (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) { next(); return; }
@@ -1806,6 +1810,12 @@ dashboardRouter.post('/maps/:sn/request-outline', (req: Request, res: Response) 
   }
   requestMapOutline(sn, mapId);
   res.json({ ok: true, message: T`get_map_outline gestuurd naar ${sn} voor kaart ${mapId}` });
+});
+
+// GET /api/dashboard/maps/:sn/auto-pull — stand van het automatisch ophalen van
+// de kaart uit de maaier (services/mapPull.ts): waiting | pulling | done | empty.
+dashboardRouter.get('/maps/:sn/auto-pull', (req: Request, res: Response) => {
+  res.json({ state: autoPullState(req.params.sn) });
 });
 
 // POST /api/dashboard/maps/:sn — nieuwe kaart aanmaken (getekend op dashboard)

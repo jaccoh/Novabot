@@ -1767,5 +1767,12 @@
       "body": "Turn your garden into a 3D render, top-down or angled, by day or in the evening. Your zones, obstacles and the mower appear on it live. Pick it under Base layer in the map toolbar. Note: the render is drawn by AI from the aerial photo, so it looks like your garden but does not match reality in every detail."
     },
     "button": "What's new"
+  },
+  "mapPull": {
+    "waitingTitle": "Getting the map from the mower",
+    "waitingBody": "OpenNova has no map for this mower yet and asks the mower for it. This takes a few minutes after the mower comes online.",
+    "emptyTitle": "No map found",
+    "emptyBody": "OpenNova could not get a map from the mower. Have a backup? Restore it in the admin panel under Maps. No backup? Create a new map with Mapping.",
+    "openAdmin": "Open admin panel"
   }
 }

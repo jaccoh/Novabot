@@ -390,6 +390,15 @@ export async function applyMapsToMower(sn: string): Promise<void> {
   await post(`${BASE}/maps/${encodeURIComponent(sn)}/apply`, {});
 }
 
+export type AutoPullState = 'waiting' | 'pulling' | 'done' | 'empty' | null;
+
+/** Stand van het automatisch ophalen van de kaart uit de maaier (lege database). */
+export async function fetchAutoPullState(sn: string): Promise<AutoPullState> {
+  const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/auto-pull`);
+  if (!res.ok) return null;
+  return ((await res.json()) as { state: AutoPullState }).state;
+}
+
 export async function deleteMap(sn: string, mapId: string, force = false): Promise<void> {
   const qs = force ? '?force=1' : '';
   const res = await apiFetch(`${BASE}/maps/${encodeURIComponent(sn)}/${encodeURIComponent(mapId)}${qs}`, {

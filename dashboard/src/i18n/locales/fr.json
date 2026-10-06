@@ -1767,5 +1767,12 @@
       "body": "Transformez votre jardin en rendu 3D, vu de dessus ou en perspective, de jour comme en soirée. Vos zones, obstacles et la tondeuse y apparaissent en direct. Choisissez-le sous Fond de carte dans la barre de la carte. Remarque : le rendu est dessiné par une IA à partir de la photo aérienne. Il ressemble à votre jardin, mais ne correspond pas à la réalité dans chaque détail."
     },
     "button": "Nouveautés"
+  },
+  "mapPull": {
+    "waitingTitle": "Récupération de la carte depuis la tondeuse",
+    "waitingBody": "OpenNova n’a pas encore de carte pour cette tondeuse et la demande à la tondeuse. Cela prend quelques minutes après la mise en ligne de la tondeuse.",
+    "emptyTitle": "Aucune carte trouvée",
+    "emptyBody": "OpenNova n’a pas pu récupérer de carte depuis la tondeuse. Vous avez une sauvegarde ? Restaurez-la dans le panneau d'administration, sous Cartes. Pas de sauvegarde ? Créez une nouvelle carte avec Cartographie.",
+    "openAdmin": "Ouvrir le panneau d'administration"
   }
 }
