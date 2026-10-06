@@ -75,9 +75,11 @@ Over-the-air updates for mowers.
   from manifest** fetches the list of released custom builds from the
   OpenNova download server; **Check for updates** compares with what your
   mowers run.
-- **Update device**: pick a mower and a version, **Start update**. Progress
-  comes from the mower over MQTT: 0 to 62% is the download, 62 to 68%
-  unpacking, 68 to 100% installing. Custom builds show a warning first, in
+- **Update device**: pick a mower and a version, **Start update**. The mower
+  must be on its charging station and charging: its updater only downloads
+  while it charges, and off the dock the progress stays at 0% forever (the
+  server refuses to start in that case). Progress comes from the mower over
+  MQTT: 0 to 62% is the download, 62 to 68% unpacking, 68 to 100% installing. Custom builds show a warning first, in
   the panel's language: they can brick the mower or lose maps, and a fresh
   backup is taken before flashing.
 - **Revert to stock firmware**: flash the factory image back. You lose SSH

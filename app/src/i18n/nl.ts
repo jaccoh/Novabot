@@ -13,6 +13,7 @@ export default {
   betaFwBrick: 'De installatie kan de maaier onbruikbaar maken (bricken).',
   betaFwMaps: 'Je kunt AL je kaarten verliezen.',
   betaFwAutoBackup: 'Er wordt automatisch een verse backup gemaakt voordat we flashen.',
+  betaFwDock: "De maaier moet op het laadstation staan en laden; anders start de download niet.",
   betaFwConfirm: 'Ik begrijp het, flash toch',
   // Toegevoegd 2026-06-06 (zie en.ts): keys die in code gebruikt werden maar
   // ontbraken, waardoor t() de ruwe key teruggaf i.p.v. tekst.

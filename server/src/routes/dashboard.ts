@@ -5434,6 +5434,18 @@ dashboardRouter.post('/ota/trigger/:sn', async (req: Request, res: Response) => 
       console.log(`\x1b[38;5;208m[OTA] Encrypted ota_upgrade_cmd naar charger ${sn}\x1b[0m`);
     }
   } else {
+    // The mower's updater only downloads while the mower charges: ota_client
+    // waits on /pipe_charge_status before it starts, and off the dock the
+    // command sits at "upgrade 0%" for hours (Walter, 2026-10-06). Refuse what
+    // cannot work. An unknown state passes: a mower without a report yet may
+    // well be on its dock.
+    const batteryState = String(deviceSensors.battery_state ?? '').toUpperCase();
+    if (batteryState === 'DISCHARGING' || batteryState === 'DISCHARGED') {
+      console.warn(`\x1b[33m[OTA] Geweigerd voor ${sn}: niet op het dock (battery_state=${batteryState})\x1b[0m`);
+      res.status(409).json({ error: 'NOT_DOCKED', detail: T`Zet de maaier eerst op het laadstation. De update wordt alleen gedownload terwijl de maaier laadt; daarbuiten blijft hij op 0% staan.` });
+      return;
+    }
+
     // ── BETA gate: custom/opennova firmware must have a fresh backup first ──
     try {
       gate = await ensureBetaFlashSafe(sn, otaVersion.version, { force: forceOta }, T);

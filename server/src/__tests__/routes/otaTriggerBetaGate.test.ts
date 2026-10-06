@@ -101,7 +101,8 @@ vi.mock('../../mqtt/sensorData.js', () => ({
 }));
 
 import { ensureBetaFlashSafe } from '../../services/firmwareSafety.js';
-import { publishToDevice } from '../../mqtt/mapSync.js';
+import { publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
+import { getAllDeviceSnapshots } from '../../mqtt/sensorData.js';
 import { dashboardRouter } from '../../routes/dashboard.js';
 import { otaVersionRepo } from '../../db/repositories/index.js';
 
@@ -131,6 +132,19 @@ describe('POST /ota/trigger/:sn beta gate', () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('BACKUP_FAILED');
     expect(res.body.detail).toBe('no backup');
+  });
+
+  it('returns 409 NOT_DOCKED when the mower is off its dock, whatever its firmware', async () => {
+    vi.mocked(publishToDevice).mockClear(); vi.mocked(publishToTopic).mockClear();
+    vi.mocked(getAllDeviceSnapshots).mockReturnValue({ LFIN2230700238: { battery_state: 'DISCHARGING', sw_version: 'v5.7.1' } } as any);
+    (ensureBetaFlashSafe as any).mockResolvedValue({ allowed: true, reason: 'backup-created', backup: { filename: 'b.novabotmap', bytes: 1, createdAt: 1, reason: 'pre-beta-flash' } });
+    const res = await request(server).post('/api/dashboard/ota/trigger/LFIN2230700238').send({ version_id: 1 });
+    vi.mocked(getAllDeviceSnapshots).mockReturnValue({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('NOT_DOCKED');
+    expect(res.body.detail).toMatch(/charging station|laadstation/);
+    expect(vi.mocked(publishToDevice)).not.toHaveBeenCalled();
+    expect(vi.mocked(publishToTopic)).not.toHaveBeenCalled();
   });
 
   it('dispatches and returns backup info when allowed', async () => {

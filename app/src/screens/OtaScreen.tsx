@@ -468,7 +468,7 @@ export default function OtaScreen() {
             <View style={styles.betaModalBackdrop}>
               <View style={styles.betaModalCard}>
                 <Text style={styles.betaModalTitle}>⚠️ {t('betaFwTitle')}</Text>
-                {[t('betaFwExperimental'), t('betaFwBrick'), t('betaFwMaps')].map((line, i) => (
+                {[t('betaFwExperimental'), t('betaFwBrick'), t('betaFwMaps'), t('betaFwDock')].map((line, i) => (
                   <Text key={i} style={styles.betaModalWarningLine}>{'• '}{line}</Text>
                 ))}
                 <Text style={styles.betaModalNote}>

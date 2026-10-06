@@ -13,6 +13,7 @@ export default {
   betaFwBrick: 'L\'installation peut rendre la tondeuse inutilisable (brick).',
   betaFwMaps: 'Vous pouvez perdre TOUTES vos cartes.',
   betaFwAutoBackup: 'Une sauvegarde récente est créée automatiquement avant le flash.',
+  betaFwDock: "La tondeuse doit être sur sa station de charge et en charge ; sinon le téléchargement ne démarre pas.",
   betaFwConfirm: 'Je comprends, flasher quand même',
   // 2026-06-06: keys used in code but missing (t() returned the raw key).
   close: 'Fermer',

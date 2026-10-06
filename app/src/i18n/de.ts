@@ -13,6 +13,7 @@ export default {
   betaFwBrick: 'Die Installation kann den Mäher unbrauchbar machen (bricken).',
   betaFwMaps: 'Du kannst ALLE deine Karten verlieren.',
   betaFwAutoBackup: 'Vor dem Flashen wird automatisch ein frisches Backup erstellt.',
+  betaFwDock: "Der Mäher muss auf der Ladestation stehen und laden; sonst startet der Download nicht.",
   betaFwConfirm: 'Ich verstehe, trotzdem flashen',
   // 2026-06-06: keys used in code but missing (t() returned the raw key).
   close: 'Schließen',

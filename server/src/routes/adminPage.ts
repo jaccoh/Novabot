@@ -6781,12 +6781,15 @@ async function startOtaUpdate() {
     ok = await modalConfirm('⚠️ BETA CUSTOM FIRMWARE',
       '&bull; This is BETA / experimental custom firmware.<br>'
       + '&bull; Installing it can render the mower unusable (brick it).<br>'
-      + '&bull; You may lose ALL your maps.<br><br>'
+      + '&bull; You may lose ALL your maps.<br>'
+      + '&bull; ' + __t('The mower must be on its charging station and charging; otherwise the download never starts.') + '<br><br>'
       + 'A fresh backup is made automatically before we flash.<br><br>'
       + __t('Update <b>{sn}</b> to <b>{version}</b>?', { sn: sn, version: (vName || __t('selected version')) }) + '<br>'
       + 'The device will reboot during the update.');
   } else {
-    ok = await modalConfirm('Start OTA Update', __t('Update <b>{sn}</b> to <b>{version}</b>?', { sn: sn, version: (vName || __t('selected version')) }) + '<br><br>The device will reboot during the update.');
+    ok = await modalConfirm('Start OTA Update', __t('Update <b>{sn}</b> to <b>{version}</b>?', { sn: sn, version: (vName || __t('selected version')) }) + '<br><br>'
+      + __t('The mower must be on its charging station and charging; otherwise the download never starts.') + '<br>'
+      + 'The device will reboot during the update.');
   }
   if (!ok) return;
 
@@ -6811,7 +6814,7 @@ async function startOtaUpdate() {
     });
     if (!r.ok) {
       var errData = await r.json().catch(function() { return {}; });
-      throw new Error(errData.error || errData.message || 'HTTP ' + r.status);
+      throw new Error(errData.detail || errData.error || errData.message || 'HTTP ' + r.status);
     }
     statusText.textContent = 'Update command sent. Waiting for device...';
   } catch(e) {

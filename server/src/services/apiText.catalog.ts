@@ -10,6 +10,11 @@
 import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
+  "Zet de maaier eerst op het laadstation. De update wordt alleen gedownload terwijl de maaier laadt; daarbuiten blijft hij op 0% staan.": {
+    en: "Put the mower on its charging station first. The update is only downloaded while the mower charges; anywhere else it stays at 0%.",
+    fr: "Placez d'abord la tondeuse sur sa station de charge. La mise à jour n'est téléchargée que pendant la charge ; ailleurs elle reste à 0 %.",
+    de: "Stellen Sie den Mäher zuerst auf die Ladestation. Das Update wird nur geladen, während der Mäher lädt; sonst bleibt es bei 0 %.",
+  },
   "Herankeren vereist een gelokaliseerde maaier (RUNNING) met acht verse, stabiele RTK Fixed-metingen op het dock. Rij zo nodig eerst een stukje met de joystick en dock opnieuw.": {
     en: "Re-anchoring requires a localized mower (RUNNING) with eight fresh, stable RTK Fixed readings on the dock. If needed, drive a short distance with the joystick first and dock again.",
     fr: "Le ré-ancrage nécessite une tondeuse localisée (RUNNING) avec huit mesures RTK Fixed fraîches et stables sur la station. Si nécessaire, roulez d’abord un peu avec le joystick puis revenez sur la station.",

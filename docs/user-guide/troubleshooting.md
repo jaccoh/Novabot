@@ -91,14 +91,15 @@ If the button is there and you click it but the mower stays put:
 
 Things to check:
 
-1. The firmware download URL must be **http://** (not https://). The mower's downloader does not do TLS.
-2. The download URL must be reachable from the mower:
+1. The mower must be on its charging station and charging. Off the dock the mower accepts the command but never downloads: the progress stays at 0% ("upgrade 0%" in the MQTT log) for hours. Dock it, let it charge, then start the update again (power-cycle the mower first if it still reports 0%).
+2. The firmware download URL must be **http://** (not https://). The mower's downloader does not do TLS.
+3. The download URL must be reachable from the mower:
    ```
    ssh root@<mower-ip>
    curl -I http://<server-ip>:<port>/api/dashboard/firmware/<file>.deb
    ```
    You should see `HTTP/1.1 200 OK` or `206 Partial Content`. A 404 means the file isn't where the server says it is.
-3. The OTA payload **must not** contain a `tz` field. If you see `"type":"increment"` in your MQTT log instead of `"type":"full"`, something is injecting `tz` and breaking the parse. The server's MQTT broker has a guard for this; if you bypassed it, payloads will fail.
+4. The OTA payload **must not** contain a `tz` field. If you see `"type":"increment"` in your MQTT log instead of `"type":"full"`, something is injecting `tz` and breaking the parse. The server's MQTT broker has a guard for this; if you bypassed it, payloads will fail.
 
 Percentage meaning so you know which phase failed:
 
