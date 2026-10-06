@@ -41,6 +41,9 @@ only pick up the new DNS server when they reconnect.
 
 ## Step 2: Import your devices (if you skipped the wizard)
 
+No Novabot account to import from? Follow
+[Without the Novabot Cloud](../user-guide/without-the-cloud.md) instead.
+
 If you skipped the setup wizard, you can import from the admin **Settings** tab > **Cloud Import**:
 
 1. Enter your Novabot app email and password

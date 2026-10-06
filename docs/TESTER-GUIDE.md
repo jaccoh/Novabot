@@ -115,7 +115,7 @@ On first visit, the admin panel shows a **Welcome to OpenNova** setup wizard:
 
 After import, you're automatically logged in to the admin panel.
 
-> **Skip cloud import?** Click "Skip" to create a local-only account (admin@local / admin). You can import from cloud later via Settings > Cloud Import.
+> **Skip cloud import?** Click "Skip" to create a local-only account (admin@local / admin). You can import from cloud later via Settings > Cloud Import. No cloud at all? See [Without the Novabot Cloud](user-guide/without-the-cloud.md).
 
 ---
 

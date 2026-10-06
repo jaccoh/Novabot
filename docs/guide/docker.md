@@ -131,6 +131,8 @@ With an empty database you get the setup page:
 
 - Enter your Novabot cloud credentials to import your account and devices, or
 - **Skip cloud import — create local account** (`admin@local`, password `admin`).
+  No Novabot account to import from? [Without the Novabot Cloud](../user-guide/without-the-cloud.md)
+  is the path from here.
 
 ### 4. Point the mower at your server
 
