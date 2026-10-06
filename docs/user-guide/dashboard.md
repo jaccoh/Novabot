@@ -118,7 +118,14 @@ Edit menu → **Draw a new work area**, or click an existing area, obstacle or
 channel to select it. Then:
 
 - **Paint / erase** with an adjustable brush, **expand** and **shrink** by a
-  margin, **copy / paste**, **move** the whole shape, **undo / redo**.
+  margin, **copy / paste** an obstacle, **undo / redo**.
+- **Nudge** a work area or obstacle that sits a little off: drive the mower
+  onto a corner of it, press Pick a point and click that corner of the shape.
+  The mower's measured position is the truth, so there is no dragging on the
+  photo; two corners also show the residual. A zone and its obstacles shift
+  together as a draft; Apply to mower sends it. A pasted obstacle opens Nudge
+  right away, and a copied zone re-runs its copy from the corrected source
+  dock.
 - **New obstacle**: draw a no-go zone inside an area. **Delete** an obstacle,
   a channel, or a whole area (the mower confirms it actually removed the
   files; the dashboard only forgets it after that).

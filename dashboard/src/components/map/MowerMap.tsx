@@ -131,6 +131,27 @@ interface CopyPanelState {
    *  same imagery bridge the two GPS worlds). Null when the source is uncalibrated. */
   sourceFrame: { maps: MapData[]; chargerGps: GpsPoint; chargingPose: LocalPoint; cal: MapCalibration; polygonOffset: LocalPoint } | null;
 }
+/** Nudging one of this mower's own zones or obstacles: the mower stands on a
+ *  corner the user then clicks, the same measurement as for a copy. Shift only;
+ *  the shape (a zone with its obstacles) becomes drafts for the apply bar,
+ *  nothing goes to the mower here. */
+interface ZoneNudgeTarget {
+  canonical: string;
+  name: string;
+  mapId?: string;
+  kind: 'work' | 'obstacle';
+}
+interface ZoneNudgeState {
+  canonical: string;
+  name: string;
+  kind: 'work' | 'obstacle';
+  work: LocalPoint[];
+  obstacles: { canonical: string; points: LocalPoint[] }[];
+  pairs: { live: LocalPoint; clicked: LocalPoint }[];
+  picking: boolean;
+  busy: boolean;
+  error: string | null;
+}
 /** The server anchors a copy on the source's dock channel start (getPolygonAnchor); fall back to its charging pose. */
 function sourceAnchorLocal(maps: MapData[], chargingPose: LocalPoint): LocalPoint {
   const channel = maps.find(m => m.canonicalName === 'map0tocharge_unicom') ?? maps.find(m => /^map\d+tocharge_unicom$/.test(m.canonicalName ?? ''));
@@ -608,54 +629,6 @@ function PaintPointerHandler({
   return null;
 }
 
-/** Move (translate) pointer handler. Mirrors PaintPointerHandler/BrushPointerHandler:
- *  bound ONCE (listeners read the latest callbacks via a ref so they never re-bind
- *  mid-drag). The drag begins only when the down point is INSIDE the target polygon
- *  — otherwise the map pans normally. onDown returns true to begin a drag (which
- *  disables map dragging); onMove gets the live local point; onUp commits. */
-function MovePointerHandler({
-  toLocal, onDown, onMove, onUp,
-}: {
-  toLocal: (latlng: L.LatLng) => XY;
-  onDown: (m: XY) => boolean;
-  onMove: (m: XY) => void;
-  onUp: () => void;
-}) {
-  const map = useMap();
-  const active = useRef(false);
-  const cb = useRef({ toLocal, onDown, onMove, onUp });
-  useEffect(() => { cb.current = { toLocal, onDown, onMove, onUp }; });
-  useEffect(() => {
-    const down = (e: L.LeafletMouseEvent) => {
-      if (cb.current.onDown(cb.current.toLocal(e.latlng))) {
-        active.current = true;
-        map.dragging.disable();
-      }
-    };
-    const move = (e: L.LeafletMouseEvent) => {
-      if (active.current) cb.current.onMove(cb.current.toLocal(e.latlng));
-    };
-    const up = () => {
-      if (active.current) {
-        active.current = false;
-        map.dragging.enable();
-        cb.current.onUp();
-      }
-    };
-    map.on('mousedown', down);
-    map.on('mousemove', move);
-    map.on('mouseup', up);
-    map.getContainer().style.cursor = 'move';
-    return () => {
-      map.off('mousedown', down);
-      map.off('mousemove', move);
-      map.off('mouseup', up);
-      if (active.current) { map.dragging.enable(); active.current = false; }
-      map.getContainer().style.cursor = '';
-    };
-  }, [map]);
-  return null;
-}
 
 /** Deselect polygons when clicking on empty map area */
 function MapClickDeselect({ onDeselect }: { onDeselect: () => void }) {
@@ -1288,6 +1261,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   // Paneel "zone kopiëren van andere maaier"; null = dicht. Staat hier zodat
   // elke modewissel (tekenen, bewerken, navigeren) het kan sluiten.
   const [copyPanel, setCopyPanel] = useState<CopyPanelState | null>(null);
+  const [zoneNudge, setZoneNudge] = useState<ZoneNudgeState | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
 
   // ── Coverage-path preview ("show mowing path"): idle preview is generated
@@ -1396,16 +1370,9 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   const [paintRadius, setPaintRadius] = useState(0.4);
   const [paintWorking, setPaintWorking] = useState<XY[] | null>(null);
 
-  // ── Move/translate tool ─────────────────────────────────────────
-  // Drag a whole work/obstacle shape to reposition it (saved as a draft,
-  // undoable, applied later). The move target is pinned by CANONICAL — not by
-  // selectedMapId — because a fresh paste is a draft-only obstacle that may NOT
-  // appear in the committed `maps` list. moveWorking mirrors the live translated
-  // points during a drag for the dashed overlay; the drag re-seeds its base from
-  // the refreshed geometry on each release so successive nudges stack cleanly.
-  const [moveMode, setMoveMode] = useState(false);
-  const [moveTargetCanonical, setMoveTargetCanonical] = useState<string | null>(null);
-  const [moveWorking, setMoveWorking] = useState<XY[] | null>(null);
+  // Set once Nudge is defined further down; pasteObstacle opens it on a fresh
+  // obstacle before that definition is reachable.
+  const openZoneNudgeRef = useRef<((target: ZoneNudgeTarget) => void) | null>(null);
 
   // Cumulative obstacle offset (R3). Repeated Expand/Shrink must offset from the
   // ORIGINAL base by the accumulated distance — offsetting the previous result
@@ -1909,6 +1876,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
 
   useEffect(() => {
     setCopyPanel(null);
+    setZoneNudge(null);
     if (sn) {
       setMaps([]);
       setChargerGps(null);
@@ -2054,9 +2022,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setEditMode('edit');
     setSelectedMapId(null);
     setEditingName(null);
-    setMoveMode(false);
-    setMoveTargetCanonical(null);
-    setMoveWorking(null);
     setUserInteracted(true);
   }, [maps, displayCal, polyCenter, geometryOffset, mapWriteSupported, t]);
 
@@ -2107,9 +2072,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setDrawCursor(null);
     setEditMode('draw');
     setSelectedMapId(null);
-    setMoveMode(false);
-    setMoveTargetCanonical(null);
-    setMoveWorking(null);
     setUserInteracted(true);
   }, [mapWriteSupported, t]);
 
@@ -2199,7 +2161,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
   /** Nudge an existing copy: same wizard, same source and slot, starting from the dockAtB it was placed with. */
   const openNudge = useCallback(async (m: Omit<MapData, 'mapArea'>) => {
     if (!mapWriteSupported || !m.copyOrigin || !m.canonicalName) return;
-    setNavigateMode(false); setWallDrawMode(false); setPlacingCharger(false); setEditCal(null); setSelectedMapId(m.mapId);
+    setNavigateMode(false); setWallDrawMode(false); setPlacingCharger(false); setEditCal(null); setZoneNudge(null); setSelectedMapId(m.mapId);
     const { sourceSn, sourceCanonical, dockAtB } = m.copyOrigin;
     const pending: CopyPanelState = { sources: [], sourceSn, sourceMaps: [], canonical: sourceCanonical, replaceCanonical: m.canonicalName, withObstacles: true, plan: null, pending: 'source', error: null, alignment: null, atSourceDock: false, mode: 'point', dockAtB,
       nudge: { name: m.mapName || m.canonicalName, base: dockAtB, pairs: [], picking: false }, sourceFrame: null };
@@ -3123,19 +3085,11 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     await refreshEditGeometry();
     recordHistory();
     await reloadMaps();
-    // Auto-activate Move on the freshly pasted obstacle so the user can drag it
-    // into position immediately. The paste's saveEditDraft response carries the
-    // server-assigned canonical — the cleanest identifier (the pasted obstacle is
-    // a draft-only map, may not be in the committed `maps` list). We do NOT touch
-    // selectedMapId here: the draft obstacle has no maps-list entry to select, and
-    // changing selectedMapId would trip the move-exit effect.
-    if (r.canonical) {
-      setMoveTargetCanonical(r.canonical);
-      setMoveWorking(null);
-      moveStroke.current = null;
-      moveWorkingRef.current = null;
-      setMoveMode(true);
-    }
+    // Open Nudge on the fresh obstacle right away: it landed near the view
+    // centre as a draft only (not in `maps`, so it cannot be selected), and the
+    // mower standing at the real tree is what puts it in place. The paste's
+    // saveEditDraft response carries the server-assigned canonical.
+    if (r.canonical) openZoneNudgeRef.current?.({ canonical: r.canonical, name: clip.sourceName || t('map.obstacle'), kind: 'obstacle' });
     setEditStatus(t('map.edit.pasted'));
     setEditStatusKind('info');
   }, [sn, applying, obstacleClipboard, maps, selectedMapId, chargerGps, localFromDisplay, refreshEditGeometry, recordHistory, reloadMaps, t]);
@@ -3162,9 +3116,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setEditingMapId(null);
     setPaintMode(false);
     setPaintWorking(null);
-    setMoveMode(false);
-    setMoveTargetCanonical(null);
-    setMoveWorking(null);
     setBrushMode(true);
     setBrushWorking(null);
     brushStroke.current = null;
@@ -3271,9 +3222,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     setBrushMode(false);
     setBrushWorking(null);
     brushStroke.current = null;
-    setMoveMode(false);
-    setMoveTargetCanonical(null);
-    setMoveWorking(null);
     setPaintMode(true);
     setPaintWorking(null);
     paintStroke.current = null;
@@ -3401,123 +3349,62 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
     return null;
   }, [editGeometry, maps]);
 
-  const exitMoveMode = useCallback(() => {
-    setMoveMode(false);
-    setMoveTargetCanonical(null);
-    setMoveWorking(null);
-    moveStroke.current = null;
-    moveWorkingRef.current = null;
-  }, []);
+  // ── Nudge an own zone: the copy nudge's measurement, applied as drafts ─────
+  /** Latest geometry (draft if any) of the shape; a zone brings its obstacles,
+   *  which move along so they keep covering their tree or shrub. */
+  const openZoneNudge = useCallback((target: ZoneNudgeTarget) => {
+    if (!mapWriteSupported) return;
+    const work = geometryFor(target.canonical);
+    if (!work) return;
+    setNavigateMode(false); setWallDrawMode(false); setPlacingCharger(false); setEditCal(null); setCopyPanel(null);
+    if (target.mapId) setSelectedMapId(target.mapId);
+    const prefix = `${target.canonical}_`;
+    const obstacles = target.kind === 'work' ? maps
+      .filter(o => o.mapType === 'obstacle' && o.canonicalName?.startsWith(prefix)
+        && !editGeometry?.maps.find(e => e.canonical === o.canonicalName)?.draft?.deleted)
+      .flatMap(o => { const pts = geometryFor(o.canonicalName!); return pts ? [{ canonical: o.canonicalName!, points: pts }] : []; }) : [];
+    setZoneNudge({ canonical: target.canonical, name: target.name, kind: target.kind, work, obstacles, pairs: [], picking: false, busy: false, error: null });
+  }, [mapWriteSupported, maps, editGeometry, geometryFor]);
+  useEffect(() => { openZoneNudgeRef.current = openZoneNudge; }, [openZoneNudge]);
 
-  // Enter move mode targeting a specific canonical. Mirrors how paint/brush
-  // exit each other — this clears the other edit modes first.
-  const enterMoveMode = useCallback((canonical: string) => {
-    setEditMode('none');
-    setEditVertices([]);
-    setEditingMapId(null);
-    setBrushMode(false);
-    setBrushWorking(null);
-    brushStroke.current = null;
-    setPaintMode(false);
-    setPaintWorking(null);
-    paintStroke.current = null;
-    paintWorkingRef.current = null;
-    setMoveTargetCanonical(canonical);
-    setMoveWorking(null);
-    moveStroke.current = null;
-    moveWorkingRef.current = null;
-    setMoveMode(true);
-  }, []);
+  /** Pairs stay in the zone's stored coordinates, so a pick on the already
+   *  shifted preview adds up instead of halving the correction (as in addNudgePair). */
+  const addZoneNudgePair = useCallback((picked: LocalPoint) => {
+    const live = { x: parseFloat(mapX ?? ''), y: parseFloat(mapY ?? '') };
+    setZoneNudge(prev => {
+      if (!prev || prev.busy) return prev;
+      if (!Number.isFinite(live.x) || !Number.isFinite(live.y)) return { ...prev, picking: false, error: t('map.nudgeNoLive') };
+      const d = nudgeDelta(prev.pairs);
+      const snapped = snapToZone(picked, prev.work.map(p => ({ x: p.x + d.x, y: p.y + d.y })));
+      return { ...prev, pairs: [...prev.pairs, { live, clicked: { x: snapped.x - d.x, y: snapped.y - d.y } }], picking: false, error: null };
+    });
+  }, [mapX, mapY, t]);
 
-  // Drag-in-progress state: the base points captured at mousedown + the grabbed
-  // anchor. delta = current − anchor is added to every base point on mousemove.
-  const moveStroke = useRef<{ canonical: string; base: XY[]; anchor: XY } | null>(null);
-  const moveWorkingRef = useRef<XY[] | null>(null);
-
-  // Begin a drag — only if the down point is INSIDE the target polygon (so the
-  // user grabs the shape; outside lets the map pan). Seeds the base from the
-  // LATEST geometry (draft if present) so successive nudges stack.
-  const handleMoveDown = useCallback((m: XY): boolean => {
-    if (!moveTargetCanonical || !chargerGps) return false;
-    const pts = geometryFor(moveTargetCanonical);
-    if (!pts || pts.length < 3) return false;
-    if (!pointInPolygonXY(m, pts)) return false; // must press inside the shape
-    moveStroke.current = { canonical: moveTargetCanonical, base: pts, anchor: m };
-    moveWorkingRef.current = pts;
-    setMoveWorking(pts);
-    return true;
-  }, [moveTargetCanonical, chargerGps, geometryFor]);
-
-  // During a drag: translate every base point by (current − anchor).
-  const handleMoveMove = useCallback((m: XY) => {
-    const stroke = moveStroke.current;
-    if (!stroke) return;
-    const dx = m.x - stroke.anchor.x;
-    const dy = m.y - stroke.anchor.y;
-    const next = stroke.base.map(p => ({ x: p.x + dx, y: p.y + dy }));
-    moveWorkingRef.current = next;
-    setMoveWorking(next);
-  }, []);
-
-  // End a drag: commit the translated shape as a draft, refresh + record history,
-  // then re-seed from the refreshed geometry. Move mode stays ON so the user can
-  // nudge again. A zero-delta tap (anchor == release) writes the same points back
-  // — harmless, the server validates identically; we skip it to avoid noise.
-  const handleMoveUp = useCallback(async () => {
-    const stroke = moveStroke.current;
-    moveStroke.current = null;
-    if (!stroke) return;
-    const working = moveWorkingRef.current;
-    moveWorkingRef.current = null;
-    setMoveWorking(null);
-    if (!working || working.length < 3 || !sn) return;
-    // No-op tap (didn't actually move) → don't write a draft / history entry.
-    const moved = working.some((p, i) => p.x !== stroke.base[i]?.x || p.y !== stroke.base[i]?.y);
-    if (!moved) return;
-    const r = await saveEditDraft(sn, {
-      canonical: stroke.canonical,
-      points: working.map(p => ({ x: p.x, y: p.y })),
-    }).catch(() => null);
-    if (!r || !r.ok) {
-      setEditStatus(r?.error || t('map.edit.validationFailed'));
-      setEditStatusKind('error');
+  /** One draft per shape; the apply bar then sends them to the mower with its
+   *  own dock and firmware checks. A failed save leaves the earlier drafts in
+   *  place, visible in the bar, where Discard clears them. */
+  const applyZoneNudge = useCallback(async () => {
+    if (!sn || !zoneNudge || zoneNudge.busy) return;
+    const d = nudgeDelta(zoneNudge.pairs);
+    if (Math.hypot(d.x, d.y) < 0.01) return;
+    setZoneNudge(prev => prev ? { ...prev, busy: true, error: null } : prev);
+    const shift = (pts: LocalPoint[]) => pts.map(p => ({ x: p.x + d.x, y: p.y + d.y }));
+    try {
+      for (const entry of [{ canonical: zoneNudge.canonical, points: zoneNudge.work }, ...zoneNudge.obstacles]) {
+        const r = await saveEditDraft(sn, { canonical: entry.canonical, points: shift(entry.points) });
+        if (!r.ok) throw new Error(r.error || t('map.edit.validationFailed'));
+      }
+    } catch (err) {
+      setZoneNudge(prev => prev ? { ...prev, busy: false, error: err instanceof Error ? err.message : String(err) } : prev);
+      await refreshEditGeometry();
       return;
     }
-    setEditStatus('');
-    setEditStatusKind('info');
     await refreshEditGeometry();
     recordHistory();
     await reloadMaps();
-  }, [sn, refreshEditGeometry, reloadMaps, recordHistory, t]);
-
-  // Live in-progress move overlay projected to GPS (same charger/pose shift as
-  // gpsMaps / draftOverlays / paint overlay).
-  const moveOverlayGps = useMemo(() => {
-    if (!moveWorking || !isUsableChargerGps(chargerGps)) return null;
-    const offX = chargingPose?.x ?? 0;
-    const offY = chargingPose?.y ?? 0;
-    const gps = moveWorking.flatMap(p => {
-      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return [];
-      const g = localToGps({ x: p.x - offX, y: p.y - offY }, chargerGps);
-      if (!Number.isFinite(g.lat) || !Number.isFinite(g.lng)) return [];
-      return [g];
-    });
-    return gps.length >= 3 ? gps : null;
-  }, [moveWorking, chargerGps, chargingPose]);
-
-  // GPS → mapArea-local frame for move (identical conversion to brushToLocal).
-  const moveToLocal = brushToLocal;
-
-  // Move mode is also a "selected map" type tool — selecting a different map (or
-  // entering paint via the effect below) must exit it. The selectedMapId effect
-  // (used by paint) is reused; mirror it for move so a new selection drops out.
-  useEffect(() => {
-    setMoveMode(false);
-    setMoveTargetCanonical(null);
-    setMoveWorking(null);
-    moveStroke.current = null;
-    moveWorkingRef.current = null;
-  }, [selectedMapId]);
+    setZoneNudge(null);
+    toast(t('map.nudgeOwnApplied', { name: zoneNudge.name }), 'success');
+  }, [sn, zoneNudge, refreshEditGeometry, recordHistory, reloadMaps, t, toast]);
 
   // Add point in draw mode
   const handleDrawPoint = useCallback((latlng: [number, number]) => {
@@ -4214,22 +4101,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               onUp={handlePaintUp}
             />
           )}
-          {/* Move/translate tool: live in-progress dashed overlay of the shape at
-              its dragged position, plus the pointer handler. */}
-          {moveMode && moveOverlayGps && moveOverlayGps.length >= 3 && (
-            <Polygon
-              positions={calibratePoints(moveOverlayGps, displayCal, polyCenter, false, geometryOffset)}
-              pathOptions={{ color: '#22d3ee', weight: 2, dashArray: '6 4', fillOpacity: 0.14, fillColor: '#22d3ee' }}
-            />
-          )}
-          {moveMode && moveTargetCanonical && editMode === 'none' && !calibrating && (
-            <MovePointerHandler
-              toLocal={moveToLocal}
-              onDown={handleMoveDown}
-              onMove={handleMoveMove}
-              onUp={handleMoveUp}
-            />
-          )}
           {/* Polygon editor overlay */}
           {editMode !== 'none' && editVertices.length >= 2 && (
             <PolygonEditor vertices={editVertices} onChange={setEditVertices} color={editorColor} />
@@ -4453,6 +4324,30 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <CircleMarker key={`nudge-pick-${i}`} center={[b.lat, b.lng]} radius={5} pathOptions={{ color: '#f59e0b', fillOpacity: 0, weight: 2 }} />,
             ];
           })}
+          {/* Own-zone nudge: the zone and its obstacles at the measured shift, the
+              pairs as for a copy nudge, and the pick handler while picking. */}
+          {editMode === 'none' && zoneNudge && (() => {
+            const d = nudgeDelta(zoneNudge.pairs);
+            const shift = (pts: LocalPoint[]) => pts.map(p => ({ x: p.x + d.x, y: p.y + d.y }));
+            return (
+              <>
+                <Polygon positions={copyPositions(shift(zoneNudge.work))} pathOptions={{ ...COPY_PREVIEW_STYLES.work, dashArray: '6 4', fillOpacity: 0.2 }} interactive={false} />
+                {zoneNudge.obstacles.map(o => (
+                  <Polygon key={`zn-${o.canonical}`} positions={copyPositions(shift(o.points))} pathOptions={{ ...COPY_PREVIEW_STYLES.obstacle, dashArray: '4 3', fillOpacity: 0.25 }} interactive={false} />
+                ))}
+                {zoneNudge.pairs.flatMap((pair, i) => {
+                  const a = displayFromMower(pair.live), b = displayFromMower({ x: pair.clicked.x + d.x, y: pair.clicked.y + d.y });
+                  if (![a.lat, a.lng, b.lat, b.lng].every(Number.isFinite)) return [];
+                  return [
+                    <Polyline key={`zn-line-${i}`} positions={[[a.lat, a.lng], [b.lat, b.lng]]} pathOptions={{ color: '#f59e0b', weight: 2, dashArray: '4 3' }} />,
+                    <CircleMarker key={`zn-live-${i}`} center={[a.lat, a.lng]} radius={5} pathOptions={{ color: '#ffffff', fillColor: '#ffffff', fillOpacity: 1, weight: 1 }} />,
+                    <CircleMarker key={`zn-pick-${i}`} center={[b.lat, b.lng]} radius={5} pathOptions={{ color: '#f59e0b', fillOpacity: 0, weight: 2 }} />,
+                  ];
+                })}
+                {zoneNudge.picking && <ChargerPlacer onPlace={(lat, lng) => addZoneNudgePair(localFromDisplay({ lat, lng }))} />}
+              </>
+            );
+          })()}
           {editMode === 'none' && copyPanel?.mode === 'point' && !copyPanel.nudge && copyPanel.dockAtB && (() => {
             const g = displayFromMower(copyPanel.dockAtB);
             return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? (
@@ -4638,7 +4533,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
           />
           <RecenterMap position={position} hasManualInteraction={userInteracted} waitForFit={polygonMaps.length > 0 && !mapsFitted} />
           <UserInteractionTracker onInteract={() => setUserInteracted(true)} />
-          {editMode === 'none' && !brushMode && !paintMode && !moveMode && <MapClickDeselect onDeselect={() => setSelectedMapId(null)} />}
+          {editMode === 'none' && !brushMode && !paintMode && !zoneNudge && <MapClickDeselect onDeselect={() => setSelectedMapId(null)} />}
           <ResizeHandler />
         </MapContainer>
 
@@ -5605,6 +5500,49 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             )}
           </div>
         )}
+        {/* Eigen zone bijsturen: dezelfde meting als bij een kopie, het resultaat als concept */}
+        {zoneNudge && editMode === 'none' && (() => {
+          const d = nudgeDelta(zoneNudge.pairs);
+          const residual = Math.max(0, ...zoneNudge.pairs.map(p => Math.hypot(p.live.x - p.clicked.x - d.x, p.live.y - p.clicked.y - d.y)));
+          return (
+            <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-80 max-h-[calc(100%-1.5rem)] overflow-y-auto space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-amber-400">{t(zoneNudge.kind === 'obstacle' ? 'map.nudgeObstacleTitle' : 'map.nudgeTitle', { name: zoneNudge.name })}</span>
+                <button onClick={() => setZoneNudge(null)} disabled={zoneNudge.busy} className="text-gray-500 hover:text-gray-300 disabled:opacity-40" title={t('common.cancel')}>
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="rounded border border-gray-700/70 bg-gray-800/60 p-2 space-y-1.5">
+                <p className="text-[11px] leading-snug text-gray-200">{t(zoneNudge.kind === 'obstacle' ? 'map.nudgeObstacleHint' : 'map.nudgeOwnHint')}</p>
+                {zoneNudge.obstacles.length > 0 && <p className="text-[11px] text-gray-400">{t('map.nudgeOwnObstacles', { n: zoneNudge.obstacles.length })}</p>}
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setZoneNudge(prev => prev ? { ...prev, picking: !prev.picking, error: null } : prev)} disabled={zoneNudge.busy}
+                    className={`flex-1 text-xs px-2 py-1.5 rounded ${zoneNudge.picking ? 'bg-amber-600 text-white' : 'bg-gray-700 text-gray-200 hover:bg-gray-600'} disabled:opacity-40 transition-colors`}>
+                    <Crosshair className="inline w-3 h-3 mr-1" />{t(zoneNudge.picking ? 'map.nudgePicking' : 'map.nudgePick')}
+                  </button>
+                  {zoneNudge.pairs.length > 0 && (
+                    <button onClick={() => setZoneNudge(prev => prev ? { ...prev, pairs: [], picking: false, error: null } : prev)} disabled={zoneNudge.busy} className="text-[11px] text-gray-400 hover:text-gray-200 disabled:opacity-40">{t('map.nudgeClear')}</button>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-300">
+                  {t('map.nudgePairs', { n: zoneNudge.pairs.length, dx: d.x.toFixed(2), dy: d.y.toFixed(2) })}
+                  {zoneNudge.pairs.length > 1 && <span className={residual > 0.15 ? 'text-amber-300' : 'text-gray-400'}> · {t('map.nudgeResidual', { cm: Math.round(residual * 100) })}</span>}
+                </p>
+                {!isUsableChargerGps(chargerGps) && <p className="text-[11px] text-red-300">{t('map.copyPointNeedsDock')}</p>}
+              </div>
+              {zoneNudge.error && <p className="text-[11px] text-red-400" role="alert">{zoneNudge.error}</p>}
+              <div className="flex items-center gap-2 pt-1">
+                <button onClick={() => setZoneNudge(null)} disabled={zoneNudge.busy} className="flex-1 text-xs px-2 py-1.5 rounded bg-gray-700 text-gray-400 hover:text-gray-200 disabled:opacity-40 transition-colors">
+                  {t('common.cancel')}
+                </button>
+                <button onClick={() => void applyZoneNudge()} disabled={zoneNudge.busy || Math.hypot(d.x, d.y) < 0.01}
+                  className="flex-1 text-xs px-2 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 transition-colors">
+                  {zoneNudge.busy ? t('common.loading') : t('map.copyZoneApplyNudge')}
+                </button>
+              </div>
+            </div>
+          );
+        })()}
         {/* Na het tekenen van een werkgebied: kanaal erheen vragen */}
         {channelPrompt && editMode === 'none' && (
           <div className="absolute top-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-amber-600/60 rounded-lg p-3 shadow-xl w-[calc(100vw-1.5rem)] sm:w-64">
@@ -5735,7 +5673,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
         )}
 
         {/* Selected map info panel */}
-        {selectedMapId && !calibrating && editMode === 'none' && !brushMode && !paintMode && !moveMode && (() => {
+        {selectedMapId && !calibrating && editMode === 'none' && !brushMode && !paintMode && !zoneNudge && (() => {
           const m = polygonMaps.find(p => p.mapId === selectedMapId);
           if (!m) return null;
           const style = getAreaStyle(m.mapType, m.mapId, m.mapName);
@@ -5845,20 +5783,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       {t('map.edit.brush')}
                     </button>
                   )}
-                  {/* Move/translate the whole shape — work + obstacle (with a
-                      canonical, since the draft flow keys on it). Primary use is
-                      repositioning a pasted obstacle, but allowed for work too. */}
-                  {(m.mapType === 'work' || m.mapType === 'obstacle') && m.canonicalName && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); enterMoveMode(m.canonicalName!); }}
-                      disabled={!mapWriteSupported}
-                      className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-cyan-900/40 text-cyan-300 hover:bg-cyan-900/70 hover:text-cyan-200 transition-colors ${!mapWriteSupported ? 'opacity-40 cursor-not-allowed' : ''}`}
-                      title={!mapWriteSupported ? t('map.drawStockNotice') : t('map.edit.moveHint')}
-                    >
-                      <MoveIcon className="w-3 h-3" />
-                      {t('map.edit.move')}
-                    </button>
-                  )}
                   <button
                     onClick={(e) => { e.stopPropagation(); startEditMap(m.mapId, m.mapArea); }}
                     disabled={!mapWriteSupported}
@@ -5901,12 +5825,15 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
                       </button>
                     </>
                   )}
-                  {m.mapType === 'work' && m.copyOrigin && (
+                  {/* The one way to shift a shape: a copied zone re-runs its copy from
+                      a corrected source dock; an own zone (with its obstacles) or a
+                      single obstacle shifts as drafts. */}
+                  {(m.mapType === 'work' || m.mapType === 'obstacle') && m.canonicalName && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); void openNudge(m); }}
+                      onClick={(e) => { e.stopPropagation(); if (m.copyOrigin) void openNudge(m); else openZoneNudge({ canonical: m.canonicalName!, name: m.mapName || m.canonicalName!, mapId: m.mapId, kind: m.mapType === 'obstacle' ? 'obstacle' : 'work' }); }}
                       disabled={applying || !mapWriteSupported}
                       className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded bg-amber-900/40 text-amber-300 hover:bg-amber-900/70 hover:text-amber-200 transition-colors disabled:opacity-40"
-                      title={t('map.nudgeHint')}
+                      title={!mapWriteSupported ? t('map.drawStockNotice') : t(m.copyOrigin ? 'map.nudgeHint' : m.mapType === 'obstacle' ? 'map.nudgeObstacleHint' : 'map.nudgeOwnHint')}
                     >
                       <MoveIcon className="w-3 h-3" />
                       {t('map.nudgeButton')}
@@ -5933,7 +5860,7 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
             when there is no work map to attach to. Hidden during edit/draw/brush/
             paint/calibrate to avoid clutter. The clipboard persists across mower
             switches (localStorage), so this stays available after switching. */}
-        {obstacleClipboard && !calibrating && editMode === 'none' && !brushMode && !paintMode && !moveMode && (() => {
+        {obstacleClipboard && !calibrating && editMode === 'none' && !brushMode && !paintMode && (() => {
           const hasWork = maps.some(m => m.mapType === 'work' && m.canonicalName);
           return (
             <div className="absolute bottom-3 right-3 z-[1000] inline-flex items-center gap-1 rounded-xl bg-gray-900/85 backdrop-blur border border-gray-700 p-1 shadow-xl">
@@ -6040,24 +5967,6 @@ export function MowerMap({ sn, lat, lng, mapX, mapY, heading, mowingActive, prog
               <span className="font-mono text-amber-300 w-10 text-right">{paintRadius.toFixed(2)}m</span>
             </div>
             <p className="mt-2 text-[10px] text-gray-500 leading-snug">{t('map.edit.paintHint')}</p>
-          </div>
-        )}
-
-        {/* Move/translate control panel */}
-        {moveMode && !calibrating && (
-          <div className="absolute bottom-3 left-3 z-[1000] bg-gray-900/95 backdrop-blur border border-cyan-600/60 rounded-lg p-3 shadow-xl w-64">
-            <div className="flex items-center gap-2 mb-1.5">
-              <MoveIcon className="w-4 h-4 text-cyan-300" />
-              <span className="text-sm font-medium text-cyan-200">{t('map.edit.move')}</span>
-              <button
-                onClick={exitMoveMode}
-                className="ml-auto text-gray-500 hover:text-gray-300 flex-shrink-0"
-                title={t('common.done')}
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="text-[11px] text-gray-400 leading-snug">{t('map.edit.moveHint')}</p>
           </div>
         )}
 
