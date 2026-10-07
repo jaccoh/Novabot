@@ -1,4 +1,11 @@
 import 'dotenv/config';
+import './middleware/asyncErrors.js';
+
+// A single bad request (a space in a camera IP, a number where a string was
+// expected) ended the process: Node 20 exits on an unhandled rejection and on
+// an uncaught exception. Log and keep serving the mower instead.
+process.on('unhandledRejection', (reason) => { console.error('[PROCESS] unhandled rejection:', reason); });
+process.on('uncaughtException', (err) => { console.error('[PROCESS] uncaught exception:', err); });
 import { fileURLToPath } from 'url';
 import { dirname, resolve as resolvePath } from 'path';
 import { readFileSync } from 'fs';

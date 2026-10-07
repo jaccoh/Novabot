@@ -22,8 +22,8 @@
  *   ├── map0tocharge_unicom.csv
  *   └── ...
  */
-import { execSync } from 'child_process';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync } from 'fs';
 import path from 'path';
 import { db } from '../db/database.js';
 import { shiftPoints, isToChargeUnicomName } from '../services/polygonOffset.js';
@@ -257,7 +257,7 @@ export function buildMapZip(pkg: MapPackage): string {
     if (existsSync(zipPath)) rmSync(zipPath);
 
     // Gebruik zip commando (beschikbaar op macOS en Linux)
-    execSync(`cd "${tmpDir}" && zip -r -0 -q "${zipPath}" csv_file/`);
+    execFileSync('zip', ['-r', '-0', '-q', zipPath, 'csv_file/'], { cwd: tmpDir });
     console.log(`${TAG} ZIP gegenereerd: ${zipPath}`);
   } catch (err) {
     console.error(`${TAG} ZIP creatie mislukt:`, err);
@@ -466,7 +466,8 @@ export function parseMapZip(
 
   try {
     mkdirSync(tmpDir, { recursive: true });
-    execSync(`unzip -o -q "${zipPath}" -d "${tmpDir}"`);
+    // argv, never a shell string: the ZIP path carries the serial number from the request.
+    execFileSync('unzip', ['-o', '-q', zipPath, '-d', tmpDir]);
 
     const csvDir = path.join(tmpDir, 'csv_file');
     if (!existsSync(csvDir)) {
@@ -491,7 +492,7 @@ export function parseMapZip(
 
     // Zoek alle CSV bestanden — punten blijven lokaal (1:1 met CSV)
     const areas: MapArea[] = [];
-    const files = execSync(`ls "${csvDir}"/*.csv 2>/dev/null || true`).toString().trim().split('\n').filter(Boolean);
+    const files = readdirSync(csvDir).filter(f => f.endsWith('.csv')).sort().map(f => path.join(csvDir, f));
 
     for (const filePath of files) {
       const fileName = path.basename(filePath);

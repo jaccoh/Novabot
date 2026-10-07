@@ -2,6 +2,13 @@
 
 Format: most-recent first. Each entry is dated and names the endpoint(s) affected.
 
+## 2026-10-07 - no shell strings around unzip
+
+- `queryEquipmentMap` (map_info.json read) and `downloadMapFile`: the ZIP is
+  opened with `execFileSync('unzip', [...])` instead of a shell command built
+  from the ZIP path and file name, so a serial number or file name can no
+  longer carry shell syntax. Responses unchanged.
+
 ## 2026-10-06 - uploadEquipmentMap reports each processed ZIP
 
 - `uploadEquipmentMap`: after a mower ZIP is processed the route reports the

@@ -9,7 +9,7 @@ import { isDeviceOnline } from '../mqtt/broker.js';
 import { db } from '../db/database.js';
 import { initBleLogger, sendBleLogHistory } from '../ble/bleLogger.js';
 import { verifyAuthToken } from '../middleware/auth.js';
-import { pickGateClientIp, gateAllowsWithoutAuth } from '../middleware/externalAuthGate.js';
+import { pickGateClientIp, gateAllowsWithoutAuth, externalAccessDenied } from '../middleware/externalAuthGate.js';
 import { userRepo } from '../db/repositories/index.js';
 import { setOutlineEmitter, publishToDevice } from '../mqtt/mapSync.js';
 import { setDashboardEventEmitter } from '../notifications/dispatcher.js';
@@ -87,9 +87,23 @@ export function getRecentLogs(): MqttLogEntry[] {
 let io: SocketServer | null = null;
 
 export function initDashboardSocket(httpServer: HttpServer): void {
+  // `origin: true` in the cors package REFLECTS the request's Origin, so any
+  // page open in a LAN browser could connect and drive the joystick. Same
+  // origin needs no CORS header at all; CORS_ORIGIN lists extra origins (or *).
+  const corsOrigins = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
+  const originAllowed = (origin: string | undefined, host: string | undefined): boolean => {
+    if (!origin) return true;                          // non-browser clients (the app) send none
+    if (corsOrigins.includes('*') || corsOrigins.includes(origin)) return true;
+    try { return new URL(origin).host === host; } catch { return false; }
+  };
   io = new SocketServer(httpServer, {
-    cors: { origin: process.env.CORS_ORIGIN || true },  // true = same-origin; set CORS_ORIGIN="*" for dev
+    cors: { origin: corsOrigins.length ? corsOrigins : false },
     path: '/socket.io',
+    // A WebSocket upgrade is not subject to CORS, so check the Origin here too.
+    allowRequest: (req, cb) => {
+      const ok = originAllowed(req.headers.origin, req.headers.host);
+      cb(ok ? null : 'origin not allowed', ok);
+    },
   });
 
   // External-only auth gate (mirrors the HTTP externalAuthGate): LAN/VPN
@@ -105,7 +119,8 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     try {
       const token = (socket.handshake.auth as { token?: string })?.token || '';
       if (!token) { next(new Error('unauthorized')); return; }
-      verifyAuthToken(token);
+      const payload = verifyAuthToken(token);
+      if (externalAccessDenied(payload.userId)) { next(new Error('unauthorized')); return; }
       next();
     } catch {
       next(new Error('unauthorized'));
@@ -252,9 +267,13 @@ export function initDashboardSocket(httpServer: HttpServer): void {
     });
 
     socket.on('joystick:move', (data: { sn: string; holdType: number; mst: { x_w: number; y_v: number; z_g: number } }) => {
-      if (!data?.sn || joystickStopped) return;
+      if (typeof data?.sn !== 'string' || !data.sn || joystickStopped) return;
+      // A move without a valid mst left currentMst undefined and the 150 ms
+      // interval then threw outside any handler, which took the process down.
+      const mst = data.mst;
+      if (!mst || !Number.isFinite(mst.x_w) || !Number.isFinite(mst.y_v)) return;
       joystickSn = data.sn;
-      currentMst = data.mst;
+      currentMst = { x_w: mst.x_w, y_v: mst.y_v, z_g: Number.isFinite(mst.z_g) ? mst.z_g : 0 };
 
       // Change direction only when holdType actually changes — send start_move immediately
       if (data.holdType !== joystickHoldType) {
@@ -292,7 +311,7 @@ export function initDashboardSocket(httpServer: HttpServer): void {
 
     // Legacy: direct command passthrough
     socket.on('joystick:cmd', (data: { sn: string; command: Record<string, unknown> }) => {
-      if (!data?.sn || !data?.command) return;
+      if (typeof data?.sn !== 'string' || !data.sn || !data?.command || typeof data.command !== 'object') return;
       publishToDevice(data.sn, data.command);
     });
 

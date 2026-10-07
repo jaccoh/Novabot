@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import { equipmentRepo, mapRepo, mapUploadRepo } from '../../db/repositories/index.js';
 import { deriveCanonicalName, isCanonicalMapName } from '../../db/repositories/maps.js';
@@ -391,7 +391,7 @@ mapRouter.get('/queryEquipmentMap', authMiddleware, (req: AuthRequest, res: Resp
       const tmpDir = path.join(STORAGE_PATH, `tmp_info_${Date.now()}`);
       fs.mkdirSync(tmpDir, { recursive: true });
       try {
-        execSync(`unzip -o -q "${latestPath2}" "csv_file/map_info.json" -d "${tmpDir}"`);
+        execFileSync('unzip', ['-o', '-q', latestPath2, 'csv_file/map_info.json', '-d', tmpDir]);
         const infoPath = path.join(tmpDir, 'csv_file', 'map_info.json');
         if (fs.existsSync(infoPath)) {
           const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
@@ -457,7 +457,7 @@ mapRouter.get('/downloadMapFile', authMiddleware, (req: AuthRequest, res: Respon
       const tmpDir = path.join(STORAGE_PATH, `tmp_dl_${Date.now()}`);
       fs.mkdirSync(tmpDir, { recursive: true });
       try {
-        execSync(`unzip -o -q "${zipPath}" "csv_file/${safeName}" -d "${tmpDir}"`);
+        execFileSync('unzip', ['-o', '-q', zipPath, `csv_file/${safeName}`, '-d', tmpDir]);
         const csvPath = path.join(tmpDir, 'csv_file', safeName);
         if (fs.existsSync(csvPath)) {
           const csvData = fs.readFileSync(csvPath);

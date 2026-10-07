@@ -10,6 +10,16 @@
 import type { Catalog } from './serverText.js';
 
 export const CATALOG: Catalog = {
+  "Ongeldig serienummer": {
+    en: "Invalid serial number",
+    fr: "Numéro de série invalide",
+    de: "Ungültige Seriennummer",
+  },
+  "Ongeldig IP-adres": {
+    en: "Invalid IP address",
+    fr: "Adresse IP invalide",
+    de: "Ungültige IP-Adresse",
+  },
   "Zet de maaier eerst op het laadstation. De update wordt alleen gedownload terwijl de maaier laadt; daarbuiten blijft hij op 0% staan.": {
     en: "Put the mower on its charging station first. The update is only downloaded while the mower charges; anywhere else it stays at 0%.",
     fr: "Placez d'abord la tondeuse sur sa station de charge. La mise à jour n'est téléchargée que pendant la charge ; ailleurs elle reste à 0 %.",

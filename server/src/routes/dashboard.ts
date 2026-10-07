@@ -21,6 +21,8 @@ import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/b
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
 import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
+import { safeFirmwarePath, isFirmwareFileName, firmwareSourceAllowed, MANIFEST_HOST } from '../services/firmwareFiles.js';
+import os from 'os';
 import { autoPullState, onMapUpload } from '../services/mapPull.js';
 import { publishExtendedCommand } from '../mqtt/extendedCommands.js';
 import { disarmEdgeWatch, disarmEdgeWatchForSchedule, renderScheduleReason } from '../services/scheduleRunner.js';
@@ -476,7 +478,7 @@ dashboardRouter.get('/unbound-devices', (_req: Request, res: Response) => {
 dashboardRouter.post('/bind-device', async (req: Request, res: Response) => {
   const T = reqT(req);
   const { sn, name } = req.body as { sn?: string; name?: string };
-  if (!sn) { res.status(400).json({ ok: false, error: 'sn required' }); return; }
+  if (!sn || typeof sn !== 'string') { res.status(400).json({ ok: false, error: 'sn required' }); return; }
 
   // Haal de enige gebruiker op — maak er één aan als die niet bestaat
   let user = userRepo.findFirst();
@@ -3011,8 +3013,14 @@ dashboardRouter.post('/maps/:sn/upload-zip', async (req: Request, res: Response)
     return;
   }
 
+  // The serial ends up in a file name that parseMapZip hands to unzip; keep it
+  // to the characters a serial has, so nothing else can ride along.
+  if (!/^[A-Za-z0-9_-]+$/.test(sn)) {
+    res.status(400).json({ error: T`Ongeldig serienummer` });
+    return;
+  }
   try {
-    const tmpPath = `/tmp/map_upload_${sn}_${Date.now()}.zip`;
+    const tmpPath = path.join(os.tmpdir(), `map_upload_${sn}_${Date.now()}.zip`);
     const { writeFileSync, unlinkSync } = await import('fs');
     writeFileSync(tmpPath, Buffer.from(data, 'base64'));
 
@@ -4749,7 +4757,13 @@ export function initFirmwareSync(): void {
 // Custom firmware download handler met uitgebreide logging
 dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
   const filename = req.params.filename;
-  const filePath = path.join(firmwareDir, filename);
+  // Express decodes %2F in the parameter, so `..%2F..%2F` reached path.join as
+  // a path and served any file on the box. Only a bare name in firmwareDir.
+  const filePath = safeFirmwarePath(firmwareDir, filename);
+  if (!filePath) {
+    res.status(400).send('Invalid filename');
+    return;
+  }
 
   if (!existsSync(filePath)) {
     res.status(404).send('File not found');
@@ -4927,11 +4941,21 @@ dashboardRouter.post('/firmware-download', async (req: Request, res: Response) =
     res.status(400).json({ error: 'url, filename, version, and device_type are required' });
     return;
   }
+  // `filename` went into path.join verbatim and `url` could be any host: a
+  // write anywhere on disk from anywhere. Manifest names, manifest host only.
+  if (!isFirmwareFileName(filename)) {
+    res.status(400).json({ error: 'filename must be a firmware file name (.deb or .bin)' });
+    return;
+  }
   try {
     const { downloadFile, normaliseFirmwareDownloadUrl } = await import('./adminStatus.js');
     const url = normaliseFirmwareDownloadUrl(rawUrl);
+    if (!firmwareSourceAllowed(url)) {
+      res.status(400).json({ error: `url must be https on ${MANIFEST_HOST}` });
+      return;
+    }
     mkdirSync(firmwareDir, { recursive: true });
-    const filePath = path.join(firmwareDir, filename);
+    const filePath = safeFirmwarePath(firmwareDir, filename)!;
     await downloadFile(url, filePath);
     const fileBuffer = readFileSync(filePath);
     const fileMd5 = crypto.createHash('md5').update(fileBuffer).digest('hex');
@@ -6254,6 +6278,12 @@ dashboardRouter.get('/camera/:sn/stream', async (req: Request, res: Response) =>
       return;
     }
   }
+  // `http.get` throws synchronously on a malformed host (e.g. a space), which
+  // used to take the whole process down.
+  if (!/^[A-Za-z0-9.:[\]-]+$/.test(ip)) {
+    res.status(400).json({ error: T`Ongeldig IP-adres` });
+    return;
+  }
 
   // Disable Express timeout — MJPEG stream is infinite
   req.setTimeout(0);
@@ -6294,6 +6324,12 @@ dashboardRouter.get('/camera/:sn/snapshot', async (req: Request, res: Response) 
       res.status(404).json({ error: T`Maaier IP onbekend` });
       return;
     }
+  }
+  // `http.get` throws synchronously on a malformed host (e.g. a space), which
+  // used to take the whole process down.
+  if (!/^[A-Za-z0-9.:[\]-]+$/.test(ip)) {
+    res.status(400).json({ error: T`Ongeldig IP-adres` });
+    return;
   }
 
   const topic = req.query.topic as string || 'front';
@@ -6437,7 +6473,7 @@ dashboardRouter.post('/setup/create-user', async (req: Request, res: Response) =
   const T = reqT(req);
   const { email, password, username } = req.body as { email?: string; password?: string; username?: string };
 
-  if (!email || !password) {
+  if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
     res.status(400).json({ ok: false, error: T`Email en wachtwoord zijn verplicht` });
     return;
   }

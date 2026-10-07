@@ -80,6 +80,8 @@ interface FirmwareManifestEntry {
  * Rewrite both at the server boundary so the URL works regardless of when
  * the manifest is regenerated.
  */
+import { safeFirmwarePath, isFirmwareFileName, firmwareSourceAllowed, MANIFEST_HOST } from '../services/firmwareFiles.js';
+
 export function normaliseFirmwareDownloadUrl(url: string): string {
   return url
     .replace(
@@ -822,12 +824,22 @@ adminStatusRouter.post('/download-firmware', async (req: AuthRequest, res: Respo
   }
   // Defensive rewrite (issue #26) — see normaliseFirmwareDownloadUrl.
   const url = normaliseFirmwareDownloadUrl(rawUrl);
+  // Manifest file names and the manifest host only: `filename` went into
+  // path.join verbatim and `url` could point anywhere (write-anywhere + SSRF).
+  if (!isFirmwareFileName(filename)) {
+    res.status(400).json({ error: 'filename must be a firmware file name (.deb or .bin)' });
+    return;
+  }
+  if (!firmwareSourceAllowed(url)) {
+    res.status(400).json({ error: `url must be https on ${MANIFEST_HOST}` });
+    return;
+  }
 
   // Resolve firmware directory (same as dashboard.ts)
   const firmwareDir = process.env.FIRMWARE_PATH ?? path.resolve(process.cwd(), 'firmware');
   fs.mkdirSync(firmwareDir, { recursive: true });
 
-  const filePath = path.join(firmwareDir, filename);
+  const filePath = safeFirmwarePath(firmwareDir, filename)!;
 
   try {
     console.log(`[Admin] Downloading firmware ${version} from ${url}...`);

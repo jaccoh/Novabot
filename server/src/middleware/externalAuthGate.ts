@@ -32,8 +32,10 @@
  *    via DASHBOARD_TRUSTED_IP_PREFIXES (comma-separated, matched by prefix).
  */
 import { Response, NextFunction } from 'express';
+import bcrypt from 'bcrypt';
 import { AuthRequest } from '../types/index.js';
 import { authMiddleware } from './auth.js';
+import { userRepo } from '../db/repositories/index.js';
 
 /** Strip an IPv4-mapped IPv6 prefix and normalise casing/whitespace. */
 export function normalizeIp(raw: string | undefined | null): string {
@@ -136,5 +138,36 @@ export function externalAuthGate(req: AuthRequest, res: Response, next: NextFunc
   if (process.env.AUTH_DEBUG === '1') {
     console.log(`[AUTH-GATE] ${req.method} ${req.originalUrl} from ${normalizeIp(ip) || '(unknown)'} — JWT required`);
   }
-  authMiddleware(req, res, next);
+  authMiddleware(req, res, (err?: unknown) => {
+    if (err) { next(err); return; }
+    const denied = externalAccessDenied(req.userId);
+    if (denied) { res.status(403).json({ error: denied }); return; }
+    next();
+  });
+}
+
+/** Default passwords seen so far, keyed by hash: bcrypt is too slow per request. */
+const defaultPasswordByHash = new Map<string, boolean>();
+
+/**
+ * Why a logged-in user may still not come in from outside, or null.
+ *
+ * A valid JWT alone was enough: anyone could register through the app's
+ * open /regist and walk through, and the local setup account admin@local
+ * ships with password "admin". From outside, the account must have been
+ * given dashboard access and must not still carry that default password.
+ */
+export function externalAccessDenied(userId: string | undefined): string | null {
+  const user = userId ? userRepo.findById(userId) : undefined;
+  if (!user) return 'unknown account';
+  if (!user.is_admin && !user.dashboard_access) return 'this account has no dashboard access';
+  if (user.email === 'admin@local') {
+    let isDefault = defaultPasswordByHash.get(user.password);
+    if (isDefault === undefined) {
+      isDefault = bcrypt.compareSync('admin', user.password);
+      defaultPasswordByHash.set(user.password, isDefault);
+    }
+    if (isDefault) return 'change the default password of admin@local before using it from outside';
+  }
+  return null;
 }
