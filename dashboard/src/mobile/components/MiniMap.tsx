@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Polygon, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { Layers, Gamepad2 } from 'lucide-react';
-import type { MapData, TrailPoint, GpsPoint } from '../../types';
+import type { MapData, GpsPoint, LocalPoint } from '../../types';
 import { fetchMaps, fetchTrail } from '../../api/client';
 import { localToGps, isUsableChargerGps } from '../../utils/coords';
 import { CoverageStripes } from '../../components/map/MowerMap';
@@ -164,7 +164,9 @@ export function MiniMap({
   const [maps, setMaps] = useState<MapData[]>([]);
   const [chargerGps, setChargerGps] = useState<GpsPoint | null>(null);
   const [chargingPose, setChargingPose] = useState<{ x: number; y: number; orientation: number } | null>(null);
-  const [trail, setTrail] = useState<TrailPoint[]>([]);
+  // The server's /trail answers local metres {x, y, ts} by default (its
+  // TrailPoint type claims lat/lng; MowerMap casts around that too).
+  const [trail, setTrail] = useState<LocalPoint[]>([]);
   const [tileLayer, setTileLayer] = useState<'satellite' | 'street'>('satellite');
 
   // Fetch maps + trail
@@ -175,7 +177,7 @@ export function MiniMap({
       setChargerGps(resp.chargerGps);
       setChargingPose(resp.chargingPose ?? null);
     }).catch(() => {});
-    fetchTrail(sn).then(setTrail).catch(() => {});
+    fetchTrail(sn).then(pts => setTrail(pts as unknown as LocalPoint[])).catch(() => {});
   }, [sn]);
 
   // Convert local meter maps to GPS for Leaflet rendering. Drop any
@@ -206,10 +208,19 @@ export function MiniMap({
   const mowerIcon = useMemo(() => makeMowerIcon(heading), [heading]);
   const chargerIcon = useMemo(() => makeChargerIcon(), []);
 
-  const trailPositions = useMemo(
-    () => trail.map(p => [p.lat, p.lng] as [number, number]),
-    [trail],
-  );
+  // Same projection as the zones above. Reading p.lat/p.lng here handed
+  // Leaflet [undefined, undefined], which throws and white-screened the tab
+  // as soon as the mower had reported two positions.
+  const trailPositions = useMemo(() => {
+    if (!isUsableChargerGps(chargerGps)) return [] as Array<[number, number]>;
+    const offX = chargingPose?.x ?? 0;
+    const offY = chargingPose?.y ?? 0;
+    return trail.flatMap(p => {
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return [];
+      const g = localToGps({ x: p.x - offX, y: p.y - offY }, chargerGps);
+      return Number.isFinite(g.lat) && Number.isFinite(g.lng) ? [[g.lat, g.lng] as [number, number]] : [];
+    });
+  }, [trail, chargerGps, chargingPose]);
 
   const tile = TILE_LAYERS[tileLayer];
 

@@ -386,6 +386,13 @@ function normalizeSchedule(input: ScheduleLike): Schedule {
  *  kort genoeg dat een dood adres meteen een foutmelding oplevert. */
 const REQUEST_TIMEOUT_MS = 20_000;
 
+/** Reads the stored login token. App.tsx sets it once at start-up, so this
+ *  module stays free of react-native imports and its tests run in plain node. */
+let tokenProvider: (() => Promise<string | null>) | null = null;
+export function setTokenProvider(fn: () => Promise<string | null>): void {
+  tokenProvider = fn;
+}
+
 export class ApiClient {
   private baseUrl: string;
 
@@ -407,6 +414,11 @@ export class ApiClient {
 
     if (options?.token) {
       headers['Authorization'] = options.token;
+    } else if (tokenProvider) {
+      // Dashboard calls (commands, maps, OTA, camera) went out without any
+      // token, so past the external auth gate every one of them got 401.
+      const stored = await tokenProvider();
+      if (stored) headers['Authorization'] = stored;
     }
 
     if (options?.body != null) {

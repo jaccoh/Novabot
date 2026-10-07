@@ -35,6 +35,7 @@ import type {
   SettingsStackParams,
 } from './src/navigation/types';
 import { getToken, getServerUrl } from './src/services/auth';
+import { setTokenProvider } from './src/services/api';
 import { initSocket, disconnectSocket } from './src/services/socket';
 import { SNAPSHOT_MODE } from './src/lib/snapshot';
 import { useAppUpdateCheck } from './src/hooks/useAppUpdateCheck';
@@ -66,6 +67,10 @@ import DeviceChoiceScreen from './src/screens/DeviceChoiceScreen';
 import WifiScreen from './src/screens/WifiScreen';
 import BleScanScreen from './src/screens/BleScanScreen';
 import ProvisionScreen from './src/screens/ProvisionScreen';
+
+// Every API call carries the stored login token (api.ts stays free of
+// react-native, so the store is handed in here instead of imported there).
+setTokenProvider(getToken);
 
 // ── Navigators ───────────────────────────────────────────────────────────────
 

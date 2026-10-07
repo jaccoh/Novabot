@@ -193,8 +193,17 @@ export function scanForDevices(
       if (state === 'PoweredOn') {
         stateSub?.remove();
         doScan();
+      } else if (state === 'PoweredOff' || state === 'Unauthorized' || state === 'Unsupported') {
+        // No timer runs until PoweredOn, so without this the scan never
+        // ended: spinner forever, and the mapping screen stayed busy.
+        bleLog(`[BLE] Bluetooth ${state} — scan ends without devices`);
+        stateSub?.remove();
+        onDone();
       }
     }, true);
+  }).catch((e) => {
+    bleLog(`[BLE] permission request failed: ${(e as Error)?.message ?? e}`);
+    onDone();
   });
 
   // Return cancel function
@@ -338,6 +347,7 @@ export async function provisionDevice(
 ): Promise<ProvisionResult> {
   const mgr = getBleManager();
 
+  let cleanup: () => Promise<void> = async () => {};
   try {
     // ── Connect ──────────────────────────────────────────────────
     onProgress('connecting', 'Connecting...');
@@ -432,7 +442,17 @@ export async function provisionDevice(
           resolve({ ok, response: resp });
         };
 
-        await writeFrame(device, svc, wChar, json, withResp);
+        try {
+          await writeFrame(device, svc, wChar, json, withResp);
+        } catch (e) {
+          // A dead link rejected the write; waiting out the timeout only
+          // produced five slow fake-green steps.
+          clearTimeout(timer);
+          notifyResolve = null;
+          bleLog(`[BLE] ${cmdName}: write failed (${(e as Error)?.message ?? e})`);
+          resolve({ ok: false, response: '' });
+          return;
+        }
 
         // Flush: read from char 3333 to kick iOS CoreBluetooth notification delivery
         if (fChar) {
@@ -442,13 +462,26 @@ export async function provisionDevice(
       });
     }
 
+    // Each step must be acknowledged. The results used to be dropped, so a
+    // device that refused the MQTT address or never answered still ended in
+    // "Settings saved" and had LoRa values registered it never accepted.
+    async function must(json: string, cmdName: string, timeoutMs: number): Promise<{ ok: boolean; response: string }> {
+      const r = await must(json, cmdName, timeoutMs);
+      if (!r.ok) throw new Error(`${cmdName} was not acknowledged by the device`);
+      return r;
+    }
+    cleanup = async () => {
+      for (const sub of notifySubs) sub.remove();
+      try { await device.cancelConnection(); } catch { /* already gone */ }
+    };
+
     // ── Command sequence (order is CRITICAL) ─────────────────────
 
     const apName = params.deviceName || (isCharger ? 'CHARGER_PILE' : 'Novabot');
 
     if (isCharger) {
       onProgress('wifi', `Setting WiFi (${params.wifiSsid})...`);
-      await cmd(JSON.stringify({
+      await must(JSON.stringify({
         set_wifi_info: {
           sta: { ssid: params.wifiSsid, passwd: params.wifiPassword, encrypt: 0 },
           ap: { ssid: apName, passwd: '12345678', encrypt: 0 },
@@ -457,17 +490,17 @@ export async function provisionDevice(
       await sleep(1000);
 
       onProgress('rtk', 'Setting RTK...');
-      await cmd(JSON.stringify({ set_rtk_info: 0 }), 'set_rtk_info', 15000);
+      await must(JSON.stringify({ set_rtk_info: 0 }), 'set_rtk_info', 15000);
       await sleep(1000);
     } else {
       // Mower flow: get_signal_info first, then set_wifi_info
       // NOTE: mower uses 'ap' field (not 'sta') — matches bootstrap + official app
       onProgress('wifi', 'Handshake...');
-      await cmd(JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', 5000);
+      await must(JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', 5000);
       await sleep(1000);
 
       onProgress('wifi', `Setting WiFi (${params.wifiSsid})...`);
-      await cmd(JSON.stringify({
+      await must(JSON.stringify({
         set_wifi_info: {
           ap: { ssid: params.wifiSsid, passwd: params.wifiPassword, encrypt: 0 },
         },
@@ -478,7 +511,7 @@ export async function provisionDevice(
     // Use provided LoRa params (from server) or fallback
     const lora = params.lora ?? LORA_FALLBACK;
     onProgress('lora', `Configuring LoRa (addr=${lora.addr}, ch=${lora.channel})...`);
-    const loraResp = await cmd(JSON.stringify({ set_lora_info: lora }), 'set_lora_info', 15000);
+    const loraResp = await must(JSON.stringify({ set_lora_info: lora }), 'set_lora_info', 15000);
     // Charger replies with `result:1` and the channel/addr it ACTUALLY assigned —
     // it can override the requested channel (verified live on LFIC2231000724
     // 2026-05-07: requested ch=16, charger picked ch=20). Parse the response so
@@ -502,7 +535,7 @@ export async function provisionDevice(
     await sleep(1000);
 
     onProgress('mqtt', `Setting MQTT (${params.mqttAddr})...`);
-    await cmd(JSON.stringify({ set_mqtt_info: { addr: params.mqttAddr, port: params.mqttPort } }),
+    await must(JSON.stringify({ set_mqtt_info: { addr: params.mqttAddr, port: params.mqttPort } }),
       'set_mqtt_info', 15000);
     await sleep(1000);
 
@@ -528,7 +561,7 @@ export async function provisionDevice(
     const cfgPayload = isCharger
       ? JSON.stringify({ set_cfg_info: 1 })
       : JSON.stringify({ set_cfg_info: { cfg_value: 1, tz: deviceTz } });
-    await cmd(cfgPayload, 'set_cfg_info', 15000);
+    await must(cfgPayload, 'set_cfg_info', 15000);
 
     // Best-effort explicit reboot. Stock firmware sometimes only restarts
     // networking after set_cfg_info, which can leave mqtt_node in a
@@ -544,17 +577,16 @@ export async function provisionDevice(
       bleLog(`[BLE] set_robot_reboot (best-effort) error: ${(e as Error)?.message ?? e}`);
     }
 
-    // Cleanup subscriptions
-    for (const sub of notifySubs) sub.remove();
-
-    // Device will reboot — disconnect is expected
-    try { await device.cancelConnection(); } catch {}
+    await cleanup();
 
     onProgress('done', 'Settings saved! Device reconnecting...');
     return { ok: true, assignedLora };
   } catch (err: any) {
     console.error('[BLE] Provision error:', err.message);
     onProgress('error', err.message);
+    // The error path left the GATT link and notify monitors open, so the
+    // next attempt connected to a stale link.
+    await cleanup();
     return { ok: false, assignedLora: null };
   }
 }
