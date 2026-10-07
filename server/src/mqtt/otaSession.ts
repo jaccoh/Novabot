@@ -12,7 +12,7 @@
 import { emitOtaEvent } from '../dashboard/socketHandler.js';
 
 export type OtaPhase =
-  | 'downloading' | 'unpacking' | 'installing'
+  | 'downloading' | 'suspended' | 'unpacking' | 'installing'
   | 'awaiting-reboot' | 'rebooting' | 'back'
   | 'done' | 'rolled-back' | 'failed' | 'stalled';
 
@@ -26,6 +26,11 @@ export interface OtaSession {
   /** Version reported after the reboot (done / rolled-back). */
   reported?: string;
   lastState?: unknown;
+  /** How much of the firmware file went out to the mower: the highest offset
+   *  over its resumed requests. Stock 5.7.1 restarts its own percentage on
+   *  every resume, so this is the download progress clients show; its absence
+   *  means the mower has not fetched the file at all. */
+  served?: { bytes: number; size: number };
 }
 
 const AWAITING_REBOOT_TIMEOUT_MS = 5 * 60_000;
@@ -37,6 +42,8 @@ const IN_PROGRESS: ReadonlySet<OtaPhase> = new Set(['downloading', 'unpacking', 
 
 const sessions = new Map<string, OtaSession>();
 const timers = new Map<string, NodeJS.Timeout>();
+/** Sessions the user stopped following; their state reports stay quiet until a new update starts. */
+const cancelled = new Set<string>();
 
 const norm = (v: string | null | undefined) => String(v ?? '').replace(/^v+/i, '').trim();
 
@@ -62,6 +69,7 @@ function setPhase(sn: string, phase: OtaPhase): void {
 }
 
 export function otaSessionStarted(sn: string, target: string, from: string | null): void {
+  cancelled.delete(sn);
   clearTimeout(timers.get(sn));
   timers.delete(sn);
   const now = Date.now();
@@ -78,7 +86,13 @@ export function otaSessionState(sn: string, state: { status?: unknown; percentag
   armTimer(sn, s.phase); // any message proves the update is alive
   const status = String(state.status ?? '');
   if (status === 'success') return setPhase(sn, 'awaiting-reboot');
-  if (status === 'failed' || status === 'error') return setPhase(sn, 'failed');
+  // ota_client_node says 'fail'; 'failed' and 'error' are kept for other senders.
+  if (status === 'fail' || status === 'failed' || status === 'error') return setPhase(sn, 'failed');
+  // The download pauses while the mower is off its charger.
+  if (status === 'suspend') return setPhase(sn, 'suspended');
+  // While the file is still going out, this is the download, whatever the
+  // mower's own counter says.
+  if (s.served && s.served.bytes < s.served.size) return setPhase(sn, 'downloading');
   const raw = Number(state.percentage ?? state.progress);
   if (!isFinite(raw)) return;
   const pct = raw <= 1 ? raw * 100 : raw;
@@ -112,6 +126,39 @@ export function otaSessionVersion(sn: string, version: string): void {
   }
 }
 
+/** The firmware route hands out part of `filename`: progress for the session
+ *  that waits for that version, and proof the mower reaches this server. */
+export function otaSessionServed(filename: string, bytes: number, size: number): void {
+  for (const s of sessions.values()) {
+    if (TERMINAL.has(s.phase) || !fileHasVersion(filename, s.target)) continue;
+    s.served = { bytes: Math.max(s.served?.bytes ?? 0, bytes), size };
+    if (s.phase === 'suspended') { setPhase(s.sn, 'downloading'); continue; }
+    armTimer(s.sn, s.phase);
+    emitOtaEvent(s.sn, 'phase', { ...s });
+  }
+}
+
+/** 'mower_firmware_v6.0.2-custom-46.deb' holds v6.0.2-custom-46, not v6.0.2-custom-4. */
+function fileHasVersion(filename: string, version: string): boolean {
+  const v = norm(version).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return v !== '' && new RegExp(`(^|[^0-9.])v?${v}(?![0-9])`).test(filename);
+}
+
+/** Stop following an update. A mower cannot drop an accepted update (no such
+ *  command); it holds it until it restarts. This only ends the session here. */
+export function otaSessionCancel(sn: string): boolean {
+  const had = sessions.delete(sn);
+  clearTimeout(timers.get(sn));
+  timers.delete(sn);
+  cancelled.add(sn);
+  emitOtaEvent(sn, 'cancelled', { sn });
+  return had;
+}
+
+export function otaSessionCancelled(sn: string): boolean {
+  return cancelled.has(sn);
+}
+
 export function getOtaSession(sn: string): OtaSession | undefined {
   return sessions.get(sn);
 }
@@ -120,4 +167,5 @@ export function _resetOtaSessions(): void {
   for (const t of timers.values()) clearTimeout(t);
   timers.clear();
   sessions.clear();
+  cancelled.clear();
 }

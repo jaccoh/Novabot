@@ -1505,6 +1505,7 @@
   },
   "otaPhase": {
     "downloading": "Firmware downloaden…",
+    "suspended": "Wacht tot de maaier laadt…",
     "unpacking": "Uitpakken…",
     "installing": "Installeren…",
     "awaiting-reboot": "Geïnstalleerd, wachten op de herstart…",
@@ -1758,7 +1759,11 @@
     "downgrade": "downgrade",
     "downloading": "Downloaden…",
     "updateDone": "Update voltooid",
-    "updateFailed": "Update mislukt"
+    "updateFailed": "Update mislukt",
+    "noFetchHint": "De maaier heeft de firmware nog niet opgehaald. Staat hij op het laadstation en laadt hij? Kan hij deze server bereiken?",
+    "stopFollowing": "Niet meer volgen",
+    "stopTitle": "Deze update niet meer volgen?",
+    "stopBody": "Een maaier kan een aangenomen update niet annuleren. Dit stopt alleen het volgen hier; zet de maaier uit en aan om de wachtende update te wissen."
   },
   "whatsNew": {
     "heading": "Nieuw in OpenNova",

@@ -215,7 +215,7 @@ export interface FirmwareAdvisory {
 }
 
 export type OtaPhase =
-  | 'downloading' | 'unpacking' | 'installing'
+  | 'downloading' | 'suspended' | 'unpacking' | 'installing'
   | 'awaiting-reboot' | 'rebooting' | 'back'
   | 'done' | 'rolled-back' | 'failed' | 'stalled';
 
@@ -228,6 +228,8 @@ export interface OtaSession {
   from: string | null;
   reported?: string;
   lastState?: unknown;
+  /** Bytes of the firmware file the mower fetched so far; absent until it fetches. */
+  served?: { bytes: number; size: number };
 }
 
 export interface OtaVersion {
@@ -1100,6 +1102,11 @@ export class ApiClient {
     } catch {
       return null;
     }
+  }
+
+  /** Stop following an update; the mower keeps an accepted one until it restarts. */
+  async cancelOtaSession(sn: string): Promise<void> {
+    await this.request('DELETE', `/api/dashboard/ota/session/${enc(sn)}`);
   }
 
   async triggerOta(

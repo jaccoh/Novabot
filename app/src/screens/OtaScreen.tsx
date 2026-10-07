@@ -50,6 +50,7 @@ function otaPhaseLabel(p: OtaProgressEntry, t: (key: string, params?: Record<str
   const back = s.reported ?? s.from ?? '';
   switch (s.phase) {
     case 'downloading': return t('stOtaDownloading');
+    case 'suspended': return t('stOtaSuspended');
     case 'unpacking': return t('stOtaUnpacking');
     case 'installing': return t('stOtaInstalling');
     case 'awaiting-reboot': return t('stOtaAwaitingReboot');
@@ -137,6 +138,10 @@ export default function OtaScreen() {
     });
     const handler = (e: { sn: string; eventType: string; data: Record<string, unknown>; timestamp: number }) => {
       if (e.eventType === 'phase') { applySession(e.data as unknown as OtaSession); return; }
+      if (e.eventType === 'cancelled') {
+        setOtaProgress(prev => { const next = new Map(prev); next.delete(e.sn); return next; });
+        return;
+      }
       if (e.eventType !== 'state') return;
       const data = e.data ?? {};
       const rawPct = (data.percentage ?? data.progress ?? data.percent) as number | string | undefined;
@@ -525,9 +530,16 @@ export default function OtaScreen() {
           const subtitle = p.deviceLabel && p.targetVersion
             ? (isDone ? `${p.deviceLabel} → ${p.targetVersion}` : `${p.deviceLabel} → ${p.targetVersion}`)
             : activeOta.sn;
+          // Before the reboot: what the server handed out of the file is the
+          // download; the mower's own counter restarts on every resume (stock 5.7.1).
+          const served = p.session?.served;
+          const fetching = phase === 'downloading' || phase === 'suspended';
+          const shownPct = fetching && served ? (served.bytes / served.size) * 100 : p.percentage;
+          // Accepted but never fetched: off the charger, or the server unreachable.
+          const notFetched = fetching && !served;
           const pctLabel = waiting && p.session ? otaElapsed(now, p.session.since)
             : (isDone || isFail) && phase ? ''
-            : p.percentage != null ? `${p.percentage.toFixed(0)}%` : (isActive ? t('stOtaPreparing') : '');
+            : shownPct != null ? `${shownPct.toFixed(0)}%` : (isActive ? t('stOtaPreparing') : '');
           const phaseLabel = (() => {
             if (p.session) return otaPhaseLabel(p, t);
             if (isDone) return t('stOtaDoneLegacy');
@@ -560,7 +572,7 @@ export default function OtaScreen() {
                     style={[
                       styles.otaModalBarFill,
                       {
-                        width: `${waiting ? 100 : Math.max(0, Math.min(100, p.percentage ?? (isActive ? 4 : 100)))}%` as any,
+                        width: `${waiting ? 100 : Math.max(0, Math.min(100, shownPct ?? (isActive ? 4 : 100)))}%` as any,
                         backgroundColor: barColor,
                       },
                     ]}
@@ -576,6 +588,25 @@ export default function OtaScreen() {
                   <Text style={styles.otaModalHint}>
                     {t('stOtaWaitingHint')}
                   </Text>
+                )}
+                {notFetched && p.session && now - p.session.startedAt > 90_000 && (
+                  <Text style={styles.otaModalHint}>{t('stOtaNoFetchHint')}</Text>
+                )}
+                {notFetched && (
+                  <TouchableOpacity
+                    style={[styles.otaModalBtn, { backgroundColor: 'transparent', borderWidth: 1, borderColor: colors.cardBorder }]}
+                    onPress={() => appAlertCompat.alert(t('stOtaStopTitle'), t('stOtaStopBody'), [
+                      { text: t('cancel'), style: 'cancel' },
+                      { text: t('stOtaStopFollowing'), onPress: () => {
+                        const sn = activeOta.sn;
+                        void getServerUrl().then(url => url ? new ApiClient(url).cancelOtaSession(sn) : undefined).catch(() => {});
+                        dismissOta(sn);
+                      } },
+                    ])}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.otaModalBtnText, { color: colors.textDim }]}>{t('stOtaStopFollowing')}</Text>
+                  </TouchableOpacity>
                 )}
                 {phase === 'stalled' && p.session?.lastState != null && (
                   <Text style={styles.otaModalHint}>{t('stOtaLastReport', { report: JSON.stringify(p.session.lastState) })}</Text>

@@ -1456,6 +1456,7 @@
   },
   "otaPhase": {
     "downloading": "Firmware wird heruntergeladen…",
+    "suspended": "Wartet, bis der Mäher lädt…",
     "unpacking": "Entpacken…",
     "installing": "Installieren…",
     "awaiting-reboot": "Installiert, warte auf den Neustart…",
@@ -1758,7 +1759,11 @@
     "downgrade": "Downgrade",
     "downloading": "Wird heruntergeladen…",
     "updateDone": "Update abgeschlossen",
-    "updateFailed": "Update fehlgeschlagen"
+    "updateFailed": "Update fehlgeschlagen",
+    "noFetchHint": "Der Mäher hat die Firmware noch nicht abgerufen. Steht er auf der Ladestation und lädt? Kann er diesen Server erreichen?",
+    "stopFollowing": "Nicht mehr verfolgen",
+    "stopTitle": "Dieses Update nicht mehr verfolgen?",
+    "stopBody": "Ein Mäher kann ein angenommenes Update nicht abbrechen. Hier wird es nur nicht mehr verfolgt; schalten Sie den Mäher aus und wieder ein, um das wartende Update zu löschen."
   },
   "whatsNew": {
     "heading": "Neu in OpenNova",

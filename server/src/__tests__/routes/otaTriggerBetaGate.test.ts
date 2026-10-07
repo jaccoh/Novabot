@@ -104,7 +104,7 @@ import { ensureBetaFlashSafe } from '../../services/firmwareSafety.js';
 import { publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
 import { getAllDeviceSnapshots } from '../../mqtt/sensorData.js';
 import { dashboardRouter } from '../../routes/dashboard.js';
-import { otaVersionRepo } from '../../db/repositories/index.js';
+import { otaVersionRepo, equipmentRepo } from '../../db/repositories/index.js';
 
 const app = express();
 app.use(express.json());
@@ -145,6 +145,17 @@ describe('POST /ota/trigger/:sn beta gate', () => {
     expect(res.body.detail).toMatch(/charging station|laadstation/);
     expect(vi.mocked(publishToDevice)).not.toHaveBeenCalled();
     expect(vi.mocked(publishToTopic)).not.toHaveBeenCalled();
+  });
+
+  it('sends plain JSON to a v5 mower whose live version is not in yet', async () => {
+    vi.mocked(publishToDevice).mockClear(); vi.mocked(publishToTopic).mockClear();
+    vi.mocked(getAllDeviceSnapshots).mockReturnValue({});
+    equipmentRepo.create({ equipment_id: 'eq-v5', mower_sn: 'LFIN2231000367', mower_version: 'v5.7.1' });
+    (ensureBetaFlashSafe as any).mockResolvedValue({ allowed: true, reason: 'backup-created', backup: null });
+    const res = await request(server).post('/api/dashboard/ota/trigger/LFIN2231000367').send({ version_id: 1 });
+    expect(res.status).toBe(200);
+    expect(vi.mocked(publishToTopic)).toHaveBeenCalledOnce();
+    expect(vi.mocked(publishToDevice)).not.toHaveBeenCalled();
   });
 
   it('dispatches and returns backup info when allowed', async () => {

@@ -19,7 +19,7 @@ import {
 import { getAllDeviceSnapshots, getDeviceSnapshot, SENSORS, getGpsTrail, clearGpsTrail, getLocalTrail, clearLocalTrail, deviceCache, translateValue, markPinVerified, getDockPose } from '../mqtt/sensorData.js';
 import { isDeviceOnline, writeRawPublish, getBrokerDiagnostics } from '../mqtt/broker.js';
 import { getRecentLogs, forwardToDashboard, onLogEntry, emitMapsChanged } from '../dashboard/socketHandler.js';
-import { otaSessionStarted, getOtaSession } from '../mqtt/otaSession.js';
+import { otaSessionStarted, getOtaSession, otaSessionServed, otaSessionCancel } from '../mqtt/otaSession.js';
 import { requestMapList, requestMapOutline, publishToDevice, awaitCommand, publishRawToDevice, publishEncryptedOnTopic, publishToTopic, goToChargePayload, getNextCmdNum, republishObstacleDetection, publishToExtended, onExtendedResponse, offExtendedResponse } from '../mqtt/mapSync.js';
 import { safeFirmwarePath, isFirmwareFileName, firmwareSourceAllowed, MANIFEST_HOST } from '../services/firmwareFiles.js';
 import os from 'os';
@@ -4772,6 +4772,12 @@ dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
 
   const fileSize = statSync(filePath).size;
   const rangeHeader = req.headers.range;
+  // The mower's ota_client sets no User-Agent (none in the binary, and libcurl
+  // sends none by default); a browser or `curl` on a laptop does. Only the
+  // mower's requests count as its download, so a test from a laptop does not
+  // look like progress.
+  const fromMower = !req.headers['user-agent'];
+  const served = (bytes: number) => { if (fromMower) otaSessionServed(filename, bytes, fileSize); };
   let start = 0;
   let end = fileSize - 1;
   let isResume = false;
@@ -4786,6 +4792,7 @@ dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
         // Download is al compleet — stuur 416 Range Not Satisfiable (RFC 7233 §4.4)
         // Dit vertelt libcurl dat het bestand al volledig is → ota_client_node gaat door met MD5 check
         console.log(`\x1b[38;5;46m[OTA] ✓ Range ${rangeHeader} beyond EOF (${fileSize}B) — bestand al compleet, 416\x1b[0m`);
+        served(fileSize);
         res.writeHead(416, {
           'Content-Range': `bytes */${fileSize}`,
           'Content-Length': 0,
@@ -4800,7 +4807,8 @@ dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
   }
 
   const chunkSize = end - start + 1;
-  console.log(`\x1b[38;5;208m[OTA] ⬇ Start serving ${filename}: ${chunkSize} bytes (${(chunkSize/1024/1024).toFixed(1)}MB) ${isResume ? 'RESUME' : 'FRESH'}\x1b[0m`);
+  console.log(`\x1b[38;5;208m[OTA] ⬇ Start serving ${filename}: ${chunkSize} bytes (${(chunkSize/1024/1024).toFixed(1)}MB) ${isResume ? 'RESUME' : 'FRESH'}${fromMower ? '' : ' (not the mower: has a User-Agent)'}\x1b[0m`);
+  served(start);
 
   const headers: Record<string, string | number> = {
     'Content-Type': 'application/octet-stream',
@@ -4829,6 +4837,7 @@ dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
       const elapsed = ((now - startTime) / 1000).toFixed(1);
       const speed = ((bytesSent / 1024 / 1024) / ((now - startTime) / 1000)).toFixed(1);
       console.log(`\x1b[38;5;208m[OTA] ⬇ ${pct}% (${(bytesSent/1024/1024).toFixed(1)}MB/${(chunkSize/1024/1024).toFixed(1)}MB) ${elapsed}s ${speed}MB/s\x1b[0m`);
+      served(start + bytesSent);
       lastLog = now;
     }
   });
@@ -4836,6 +4845,7 @@ dashboardRouter.get('/firmware/:filename', (req: Request, res: Response) => {
   stream.pipe(res);
 
   res.on('close', () => {
+    served(start + bytesSent);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const totalPct = (((start + bytesSent) / fileSize) * 100).toFixed(1);
     if (bytesSent >= chunkSize) {
@@ -5434,7 +5444,9 @@ dashboardRouter.post('/ota/trigger/:sn', async (req: Request, res: Response) => 
   // v6.x+ firmware HAS AES → must send encrypted
   const snapshots = getAllDeviceSnapshots();
   const deviceSensors = snapshots[sn] ?? {};
-  const fwVersion = deviceSensors.sw_version || deviceSensors.version || deviceSensors.mower_version || '';
+  // Right after a reconnect the snapshot can still be empty; the stored version
+  // then decides, or a v5 mower gets AES and ignores the command in silence.
+  const fwVersion = deviceSensors.sw_version || deviceSensors.version || deviceSensors.mower_version || currentVersion || '';
   const needsPlaintext = fwVersion.startsWith('v5.') || fwVersion.startsWith('5.');
 
   const isCharger = sn.startsWith('LFIC');
@@ -5525,6 +5537,12 @@ dashboardRouter.post('/ota/trigger/:sn', async (req: Request, res: Response) => 
 // dashboard / reopened app can pick up an update that is still in flight.
 dashboardRouter.get('/ota/session/:sn', (req: Request, res: Response) => {
   res.json(getOtaSession(req.params.sn) ?? null);
+});
+
+// DELETE /api/dashboard/ota/session/:sn — stop following an update. The mower
+// keeps an accepted update until it restarts; this only ends the session.
+dashboardRouter.delete('/ota/session/:sn', (req: Request, res: Response) => {
+  res.json({ ok: true, cancelled: otaSessionCancel(req.params.sn) });
 });
 
 // ── LoRa address allocation ──────────────────────────────────────

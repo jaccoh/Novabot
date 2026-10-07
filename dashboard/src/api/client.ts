@@ -904,7 +904,7 @@ export async function triggerOta(
 }
 
 export type OtaPhase =
-  | 'downloading' | 'unpacking' | 'installing'
+  | 'downloading' | 'suspended' | 'unpacking' | 'installing'
   | 'awaiting-reboot' | 'rebooting' | 'back'
   | 'done' | 'rolled-back' | 'failed' | 'stalled';
 
@@ -917,6 +917,13 @@ export interface OtaSession {
   from: string | null;
   reported?: string;
   lastState?: unknown;
+  /** Bytes of the firmware file the mower fetched so far; absent until it fetches. */
+  served?: { bytes: number; size: number };
+}
+
+/** Stop following an update; the mower keeps an accepted one until it restarts. */
+export async function cancelOtaSession(sn: string): Promise<void> {
+  await apiFetch(`${BASE}/ota/session/${encodeURIComponent(sn)}`, { method: 'DELETE' });
 }
 
 /** Server-side OTA phase (#130); null when no update is in flight. */

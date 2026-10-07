@@ -6,6 +6,7 @@ vi.mock('../../dashboard/socketHandler.js', () => ({ emitOtaEvent }));
 import {
   otaSessionStarted, otaSessionState, otaSessionDisconnect, otaSessionConnect,
   otaSessionVersion, getOtaSession, _resetOtaSessions,
+  otaSessionServed, otaSessionCancel, otaSessionCancelled,
 } from '../../mqtt/otaSession.js';
 
 const SN = 'LFIN1231000211';
@@ -103,5 +104,46 @@ describe('OTA session phases (issue #130)', () => {
     otaSessionVersion(SN, 'v2');
     vi.advanceTimersByTime(10 * 60_000);
     expect(getOtaSession(SN)).toBeUndefined();
+  });
+
+  it("treats the mower's own 'fail' as a failure", () => {
+    otaSessionStarted(SN, 'v6.0.2-custom-46', 'v5.7.1');
+    otaSessionState(SN, { status: 'fail', percentage: 0 });
+    expect(getOtaSession(SN)?.phase).toBe('failed');
+  });
+
+  it('shows suspend as waiting, without stalling, and leaves it once the file goes out', () => {
+    otaSessionStarted(SN, 'v6.0.2-custom-46', 'v5.7.1');
+    otaSessionState(SN, { status: 'suspend', percentage: 0.3 });
+    expect(getOtaSession(SN)?.phase).toBe('suspended');
+    vi.advanceTimersByTime(60 * 60_000);
+    expect(getOtaSession(SN)?.phase).toBe('suspended');
+    otaSessionServed('mower_firmware_v6.0.2-custom-46.deb', 1000, 35_000_000);
+    expect(getOtaSession(SN)?.phase).toBe('downloading');
+  });
+
+  it('takes the download progress from the bytes served, not from the mower counter', () => {
+    otaSessionStarted(SN, 'v6.0.2-custom-46', 'v5.7.1');
+    otaSessionServed('mower_firmware_v6.0.2-custom-4.deb', 999, 1000);          // another version
+    expect(getOtaSession(SN)?.served).toBeUndefined();
+    otaSessionServed('mower_firmware_v6.0.2-custom-46.deb', 22_000_000, 35_000_000);
+    otaSessionServed('mower_firmware_v6.0.2-custom-46.deb', 5_000_000, 35_000_000); // an older resume
+    expect(getOtaSession(SN)?.served).toEqual({ bytes: 22_000_000, size: 35_000_000 });
+    otaSessionState(SN, { status: 'upgrade', percentage: 0.95 });                 // counter runs ahead
+    expect(getOtaSession(SN)?.phase).toBe('downloading');
+    otaSessionServed('mower_firmware_v6.0.2-custom-46.deb', 35_000_000, 35_000_000);
+    otaSessionState(SN, { status: 'success', percentage: 1 });
+    expect(getOtaSession(SN)?.phase).toBe('awaiting-reboot');
+  });
+
+  it('stops following on cancel until a new update starts', () => {
+    otaSessionStarted(SN, 'v6.0.2-custom-46', 'v5.7.1');
+    expect(otaSessionCancel(SN)).toBe(true);
+    expect(getOtaSession(SN)).toBeUndefined();
+    expect(otaSessionCancelled(SN)).toBe(true);
+    otaSessionState(SN, { status: 'upgrade', percentage: 0 });
+    expect(getOtaSession(SN)).toBeUndefined();
+    otaSessionStarted(SN, 'v6.0.2-custom-46', 'v5.7.1');
+    expect(otaSessionCancelled(SN)).toBe(false);
   });
 });

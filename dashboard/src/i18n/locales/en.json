@@ -1505,6 +1505,7 @@
   },
   "otaPhase": {
     "downloading": "Downloading firmware…",
+    "suspended": "Waiting until the mower is charging…",
     "unpacking": "Unpacking…",
     "installing": "Installing…",
     "awaiting-reboot": "Installed, waiting for the reboot…",
@@ -1758,7 +1759,11 @@
     "downgrade": "downgrade",
     "downloading": "Downloading…",
     "updateDone": "Update complete",
-    "updateFailed": "Update failed"
+    "updateFailed": "Update failed",
+    "noFetchHint": "The mower has not fetched the firmware yet. Is it on its charging station and charging? Can it reach this server?",
+    "stopFollowing": "Stop following",
+    "stopTitle": "Stop following this update?",
+    "stopBody": "A mower cannot cancel an update it has accepted. This only stops following it here; switch the mower off and on to clear the waiting update."
   },
   "whatsNew": {
     "heading": "New in OpenNova",

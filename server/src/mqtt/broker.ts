@@ -19,7 +19,7 @@ import { isMowerMapOperationBusy } from '../services/mowerMapOperation.js';
 import { isFrameUnvalidated } from '../services/frameValidation.js';
 import { allowBetaFlashOrSnapshot } from '../services/firmwareSafety.js';
 import { getMowerFileCapability } from '../services/mowerFileCapability.js';
-import { otaSessionStarted, otaSessionState, otaSessionDisconnect, otaSessionConnect } from './otaSession.js';
+import { otaSessionStarted, otaSessionState, otaSessionDisconnect, otaSessionConnect, otaSessionCancelled } from './otaSession.js';
 
 const PROXY_MODE = process.env.PROXY_MODE ?? 'local';
 
@@ -1096,7 +1096,8 @@ export async function startMqttBroker(): Promise<void> {
           ?? (parsed.type === 'ota_upgrade_state' ? parsed.message : null);
         if (otaState) {
           console.log(`\x1b[38;5;208m[OTA] ⚡ ota_upgrade_state van ${forwardSn}: ${JSON.stringify(otaState)}\x1b[0m`);
-          emitOtaEvent(forwardSn, 'state', otaState);
+          // Stopped following: the mower keeps reporting, the user asked not to see it.
+          if (!otaSessionCancelled(forwardSn)) emitOtaEvent(forwardSn, 'state', otaState);
           otaSessionState(forwardSn, otaState);
         }
 

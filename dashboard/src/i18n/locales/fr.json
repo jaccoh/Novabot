@@ -1456,6 +1456,7 @@
   },
   "otaPhase": {
     "downloading": "Téléchargement du firmware…",
+    "suspended": "En attente de la charge de la tondeuse…",
     "unpacking": "Décompression…",
     "installing": "Installation…",
     "awaiting-reboot": "Installé, en attente du redémarrage…",
@@ -1758,7 +1759,11 @@
     "downgrade": "rétrogradation",
     "downloading": "Téléchargement…",
     "updateDone": "Mise à jour terminée",
-    "updateFailed": "Échec de la mise à jour"
+    "updateFailed": "Échec de la mise à jour",
+    "noFetchHint": "La tondeuse n'a pas encore récupéré le firmware. Est-elle sur sa station de charge et en charge ? Peut-elle joindre ce serveur ?",
+    "stopFollowing": "Ne plus suivre",
+    "stopTitle": "Ne plus suivre cette mise à jour ?",
+    "stopBody": "Une tondeuse ne peut pas annuler une mise à jour acceptée. Ceci arrête seulement le suivi ici ; éteignez puis rallumez la tondeuse pour effacer la mise à jour en attente."
   },
   "whatsNew": {
     "heading": "Nouveau dans OpenNova",

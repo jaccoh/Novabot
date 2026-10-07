@@ -172,6 +172,10 @@ export function useDevices() {
       applyOtaSession(e.data as unknown as OtaSession);
       return;
     }
+    if (e.eventType === 'cancelled') {
+      setOtaProgress(prev => { const next = new Map(prev); next.delete(e.sn); return next; });
+      return;
+    }
     if (e.eventType === 'state') {
       const data = e.data;
       const rawPct = data.percentage ?? data.progress;

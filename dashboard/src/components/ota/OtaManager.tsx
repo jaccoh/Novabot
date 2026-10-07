@@ -4,9 +4,10 @@ import type { DeviceState } from '../../types';
 import { otaFinished, type OtaProgress } from '../../hooks/useDevices';
 import { useNow, otaElapsed, useOtaPhaseLabel } from '../../utils/otaPhase';
 import {
-  fetchOtaVersions, fetchFirmwareFiles, updateOtaVersion, deleteOtaVersion, triggerOta,
+  fetchOtaVersions, fetchFirmwareFiles, updateOtaVersion, deleteOtaVersion, triggerOta, cancelOtaSession,
   type OtaVersion, type FirmwareFile,
 } from '../../api/client';
+import { useDialog } from '../common/Dialog';
 import { useTranslation } from 'react-i18next';
 import { isOpenNovaFirmware } from '../../utils/firmwareCapability';
 import { betaFirmwareWarningLines } from '../../utils/betaFirmware';
@@ -290,7 +291,7 @@ export function OtaManager({ devices, otaProgress }: Props) {
                     <span className="text-[10px] font-mono text-gray-300">{version ?? '—'}</span>
                   </div>
                   {/* OTA progress bar */}
-                  <OtaProgressRow progress={progress} />
+                  <OtaProgressRow progress={progress} sn={d.sn} />
                 </div>
               );
             })}
@@ -496,8 +497,9 @@ export function OtaManager({ devices, otaProgress }: Props) {
  * phase (#130) it stays until the update is done / rolled back / stalled,
  * showing the phase and how long it has been in it.
  */
-function OtaProgressRow({ progress }: { progress: OtaProgress | undefined }) {
+function OtaProgressRow({ progress, sn }: { progress: OtaProgress | undefined; sn: string }) {
   const { t } = useTranslation();
+  const dialog = useDialog();
   const session = progress?.session;
   const phaseLabel = useOtaPhaseLabel(session);
   const now = useNow(!!progress);
@@ -510,7 +512,14 @@ function OtaProgressRow({ progress }: { progress: OtaProgress | undefined }) {
   const isFail = phase ? phase === 'failed' || phase === 'rolled-back' || phase === 'stalled'
     : progress.status === 'failed' || progress.status === 'error';
   const label = phaseLabel || (progress.status === 'upgrade' ? t('ota.downloading') : isDone ? t('ota.updateDone') : isFail ? t('ota.updateFailed') : progress.status);
-  const showPct = progress.percentage != null && (!phase || phase === 'downloading' || phase === 'unpacking' || phase === 'installing');
+  // Before the reboot: what the server handed out of the file is the download;
+  // the mower's own counter restarts on every resume (stock 5.7.1).
+  const fetching = phase === 'downloading' || phase === 'suspended';
+  const served = session?.served;
+  const pct = fetching && served ? (served.bytes / served.size) * 100 : progress.percentage;
+  // Accepted but never fetched: off the charger, or the server unreachable.
+  const notFetched = fetching && !served;
+  const showPct = pct != null && (!phase || fetching || phase === 'unpacking' || phase === 'installing');
   const pulse = phase === 'awaiting-reboot' || phase === 'rebooting' || phase === 'back';
   return (
     <div className="mt-0.5">
@@ -518,18 +527,33 @@ function OtaProgressRow({ progress }: { progress: OtaProgress | undefined }) {
         <span className={isDone ? 'text-emerald-400' : isFail ? 'text-red-400' : 'text-orange-300'}>
           {label}{pulse && elapsed ? ` ${elapsed}` : ''}
         </span>
-        {showPct && <span className="text-orange-300">{progress.percentage!.toFixed(0)}%</span>}
+        {showPct && <span className="text-orange-300">{pct!.toFixed(0)}%</span>}
       </div>
       {(showPct || pulse) && (
         <div className="w-full bg-gray-700 rounded-full h-1.5">
           <div
             className={`h-1.5 rounded-full transition-all duration-500 ${pulse ? 'bg-orange-500 animate-pulse' : 'bg-orange-500'}`}
-            style={{ width: `${pulse ? 100 : Math.min(100, progress.percentage ?? 0)}%` }}
+            style={{ width: `${pulse ? 100 : Math.min(100, pct ?? 0)}%` }}
           />
         </div>
       )}
       {phase === 'stalled' && session?.lastState != null && (
         <div className="text-[9px] text-gray-500 font-mono truncate">{JSON.stringify(session.lastState)}</div>
+      )}
+      {notFetched && session && now - session.startedAt > 90_000 && (
+        <div className="text-[9px] text-amber-300 leading-snug mt-0.5">{t('ota.noFetchHint')}</div>
+      )}
+      {notFetched && (
+        <button
+          className="text-[9px] text-gray-400 hover:text-gray-200 underline mt-0.5"
+          onClick={async () => {
+            if (await dialog.confirm({ title: t('ota.stopTitle'), message: t('ota.stopBody'), confirmLabel: t('ota.stopFollowing') })) {
+              await cancelOtaSession(sn).catch(() => {});
+            }
+          }}
+        >
+          {t('ota.stopFollowing')}
+        </button>
       )}
     </div>
   );
