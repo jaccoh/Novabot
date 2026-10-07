@@ -1,5 +1,13 @@
 # Night-docking — ArUco dock LED brightness (AUTHORITATIVE)
 
+> **Status 2026-10-07: reverted to stock (1).** From custom-47 the build no
+> longer patches this value. At 255 a mower that docked fine on stock lost the
+> marker just before the dock, circled and gave up (Walter, LED visibly at full
+> power): a full LED close to the marker can overexpose it. Docking must behave
+> exactly like stock. The consequence is that night docking can fail again as
+> described below, and with it the firmware's auto-continue (#30). Do not
+> re-enable 255 without a test of the same dock in the same light at 1 and 255.
+
 ## Problem
 
 The mower docks by driving toward an ArUco marker on the charging station, seen

@@ -481,20 +481,12 @@ if [ -f "$LOG_YAML" ]; then
     echo "  log_manager.yaml: URL → ${HTTP_BASE}"
 fi
 
-# 5a-bis. Night-docking fix: full-brightness ArUco dock-approach LED.
-# The stock value (1) leaves the dock marker invisible to the camera in the dark,
-# so auto-docking fails at night. That in turn breaks the FIRMWARE's own
-# auto-continue-after-recharge (RobotDecision::coverContinueDeal only fires after
-# a proper AutoCharging dock via rechargeFinishedDeal) — see docs/reference/
-# NIGHT-DOCKING.md and MOWER-INTERNALS.md. Baking 255 into every custom build makes
-# the fix survive OTA (the stock LED patch kept reverting). Drop the stale .pyc so
-# the launch is re-read from source.
-RECHARGE_LAUNCH="$NOVABOT_ROOT/install/automatic_recharge/share/automatic_recharge/launch/automatic_recharge_launch.py"
-if [ -f "$RECHARGE_LAUNCH" ]; then
-    sed -i '' 's/"brightness_adjustment_value": 1,/"brightness_adjustment_value": 255,/g' "$RECHARGE_LAUNCH"
-    rm -f "$NOVABOT_ROOT/install/automatic_recharge/share/automatic_recharge/launch/__pycache__/"*.pyc 2>/dev/null || true
-    echo "  automatic_recharge_launch.py: LED brightness 1 → 255 (night-docking)"
-fi
+# 5a-bis. Dock-approach LED: stock value (brightness_adjustment_value 1), on
+# purpose. Custom-30..46 baked 255 in for night docking, but a full LED right in
+# front of the marker can overexpose it: the mower then loses the marker just
+# before the dock, circles and gives up (Walter, 2026-10-07, docked fine on
+# stock). Docking must behave exactly like stock, so the launch file is left
+# untouched. See docs/reference/NIGHT-DOCKING.md before changing this.
 
 # 5a-ter. iceoryx mempool ladder: give small messages small chunks again.
 #
@@ -1293,8 +1285,24 @@ last_restart=0
 # another respawning launcher; on LFIN1231000211 (18-09-2026) that grew to
 # 80 launchers and a load of 149 with no mqtt_node ever connecting. Filter
 # on the state first, then the port, then the process.
+# The broker port from json_config.json (set_server_urls.sh keeps a custom
+# port, e.g. 1884 next to a Home Assistant Mosquitto), 1883 when unreadable.
+broker_port() {
+    python3 -c 'import json
+m = json.load(open("/userdata/lfi/json_config.json")).get("mqtt", {})
+print(int(m.get("port", 1883)))' 2>/dev/null || echo 1883
+}
 mqtt_connected() {
-    ss -tnp state established 2>/dev/null | grep ':1883 ' | grep -q mqtt_node
+    ss -tnp state established 2>/dev/null | grep ":$(broker_port) " | grep -q mqtt_node
+}
+# The broker port answers: a stuck mqtt_node is then worth a restart. A server
+# that is simply down (NAS reboot, update) is not; stock mqtt_node reconnects
+# by itself, and every kill races daemon_node's own respawn.
+broker_reachable() {
+    # The probe runs inside python: no shell string built from config values.
+    python3 -c 'import json, socket
+m = json.load(open("/userdata/lfi/json_config.json")).get("mqtt", {})
+socket.create_connection((str(m["addr"]), int(m.get("port", 1883))), 3).close()' 2>/dev/null
 }
 
 while true; do
@@ -1309,8 +1317,12 @@ while true; do
             no_conn=$((no_conn + 1))
             now=$(date +%s)
             if [ "$no_conn" -ge "$STALE_CHECKS" ] && [ $((now - last_restart)) -ge "$RESTART_BACKOFF_S" ]; then
-                echo "[$(date)] mqtt_node_monitor: draait maar geen verbinding na $((no_conn * 10))s — herstart" >> "$LOG"
-                kill -9 $PIDS 2>/dev/null
+                if broker_reachable; then
+                    echo "[$(date)] mqtt_node_monitor: draait maar geen verbinding na $((no_conn * 10))s terwijl de broker antwoordt — herstart" >> "$LOG"
+                    kill -9 $PIDS 2>/dev/null
+                else
+                    echo "[$(date)] mqtt_node_monitor: geen verbinding na $((no_conn * 10))s, broker onbereikbaar — mqtt_node met rust gelaten" >> "$LOG"
+                fi
                 last_restart=$now
                 no_conn=0
             fi
@@ -1321,7 +1333,7 @@ while true; do
 
     if [ "$COUNT" -gt 1 ]; then
         # Vind PID met actieve MQTT verbinding
-        ACTIVE_PID=$(ss -tnp 2>/dev/null | grep ':1883' | grep mqtt_node | grep -oP 'pid=\K[0-9]+' | head -1)
+        ACTIVE_PID=$(ss -tnp 2>/dev/null | grep ":$(broker_port)" | grep mqtt_node | grep -oP 'pid=\K[0-9]+' | head -1)
 
         if [ -z "$ACTIVE_PID" ]; then
             # Geen actieve verbinding — bewaar nieuwste PID
@@ -1434,6 +1446,11 @@ else
     echo "  WARN: $DISCOVERY_SRC niet gevonden — discovery loop overgeslagen"
 fi
 
+# Shared by camera_stream.py and seam_fix_daemon.py (both import it): is the
+# firmware busy with a task, mapping or docking? Copied unconditionally.
+cp "$SCRIPT_DIR/firmware_state.py" "$NOVABOT_ROOT/scripts/firmware_state.py"
+echo "  firmware_state.py gekopieerd naar scripts/"
+
 # === Stap 5d: Camera stream service toevoegen ===
 echo "[5d/9] Camera stream service toevoegen..."
 
@@ -1519,23 +1536,29 @@ fi
 # === Stap 5f: WiFi AP fallback script toevoegen ===
 echo "[5f/9] WiFi AP fallback script toevoegen..."
 
-# Dit script start een WiFi hotspot als de maaier na 90 seconden geen WiFi STA heeft.
+# Dit script start een WiFi hotspot als de maaier na 10 minuten nog geen WiFi STA heeft.
 # Hierdoor kun je altijd via WiFi bij de maaier komen, ook als json_config.json corrupt is.
+# Tien minuten, niet 90 s: na een stroomstoring starten router en maaier tegelijk, en
+# een router die er langer over doet liet de maaier voorgoed op zijn hotspot hangen
+# (de hotspot stopt wpa_supplicant; terug naar je eigen WiFi gaat pas na een herstart).
 cat > "$NOVABOT_ROOT/scripts/wifi_ap_fallback.sh" << 'APEOF'
 #!/bin/bash
 # WiFi AP fallback — start hotspot als STA niet verbindt
 # SSID: OpenNova, Wachtwoord: novabot123, IP: 192.168.4.1
 
-TIMEOUT=90
+# Seconden wachten op WiFi STA. De watchdog geeft 0 mee: die heeft al gewacht.
+TIMEOUT=${1:-600}
 AP_SSID="OpenNova"
 AP_PASS="novabot123"
 LOG="/userdata/ota/wifi_ap_fallback.log"
 
 echo "[$(date)] WiFi AP fallback monitor gestart (timeout: ${TIMEOUT}s)" >> "$LOG"
 
-# Wacht in stappen van 10 seconden op STA verbinding
-for i in $(seq 1 $((TIMEOUT / 10))); do
+# Wacht in stappen van 10 seconden op STA verbinding (teller, geen seq: 0 = meteen)
+waited=0
+while [ "$waited" -lt "$TIMEOUT" ]; do
     sleep 10
+    waited=$((waited + 10))
     WLAN_IP=$(ip addr show wlan0 2>/dev/null | grep 'inet ' | awk '{print $2}' | cut -d/ -f1)
     if [ -n "$WLAN_IP" ]; then
         echo "[$(date)] WiFi STA verbonden: $WLAN_IP — geen AP nodig" >> "$LOG"
@@ -1691,17 +1714,12 @@ except:
 
             echo "[$(date)] WiFi niet hersteld — AP fallback starten" >> "$LOG"
             if [ -f "/root/novabot/scripts/wifi_ap_fallback.sh" ] && ! pgrep -f hostapd >/dev/null; then
-                bash /root/novabot/scripts/wifi_ap_fallback.sh &
+                bash /root/novabot/scripts/wifi_ap_fallback.sh 0 &
             fi
         else
-            echo "[$(date)] WiFi weg maar config heeft wifi sectie — netwerk probleem (niet config)" >> "$LOG"
-            # Na 5 minuten zonder WiFi toch AP starten als vangnet
-            if [ $fail_count -ge 10 ] && ! pgrep -f hostapd >/dev/null; then
-                echo "[$(date)] WiFi >5 min weg — AP fallback als vangnet" >> "$LOG"
-                if [ -f "/root/novabot/scripts/wifi_ap_fallback.sh" ]; then
-                    bash /root/novabot/scripts/wifi_ap_fallback.sh &
-                fi
-            fi
+            # Config is in orde: blijven proberen, net als stock. Geen hotspot
+            # tijdens het draaien; die zou je eigen WiFi voorgoed loslaten.
+            echo "[$(date)] WiFi weg maar config heeft wifi sectie — blijft opnieuw proberen" >> "$LOG"
         fi
     fi
 done
@@ -1714,7 +1732,7 @@ if [ -f "$RUN_NOVABOT" ] && ! grep -q "wifi_ap_fallback.sh" "$RUN_NOVABOT"; then
     AP_START_BLOCK="/tmp/ap_start_block.sh"
     cat > "$AP_START_BLOCK" << 'APSTARTEOF'
 
-  # CUSTOM: WiFi AP fallback — start hotspot als STA niet verbindt na 90s
+  # CUSTOM: WiFi AP fallback — start hotspot als STA na 10 min nog niet verbindt
   if [ -f "/root/novabot/scripts/wifi_ap_fallback.sh" ]; then
       bash /root/novabot/scripts/wifi_ap_fallback.sh &
       echo "WiFi AP fallback monitor gestart" >> $LOGS_PATH/wifi_ap_fallback.log
@@ -2819,7 +2837,7 @@ if [ "$INCLUDE_SERVER" = "true" ]; then
     echo "    ✓ novabot-server.service geactiveerd (auto-start bij boot)"
     echo "    ✓ DNS redirect: app.lfibot.com + mqtt.lfibot.com → maaier IP"
     echo "    ✓ mDNS: maaier beschikbaar als novabot.local (avahi-daemon)"
-    echo "    ✓ WiFi AP fallback: SSID=OpenNova PSK=novabot123 (na 90s zonder STA)"
+    echo "    ✓ WiFi AP fallback: SSID=OpenNova PSK=novabot123 (na 10 min zonder STA)"
     echo "    ✓ WiFi watchdog: continu monitoring, auto-herstel config + AP bij problemen"
     echo "    ✓ Ethernet recovery: 192.168.1.10/24 (altijd actief)"
     echo "    ✓ json_config.json: atomic writes + factory backup + pre-boot validatie"

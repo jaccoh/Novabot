@@ -30,6 +30,7 @@ import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
+import firmware_state
 
 rclpy = None  # Wordt geinitialiseerd in main()
 
@@ -402,6 +403,12 @@ class CameraRegistry:
             last_activity = max(m.last_viewer_time for m in users)
             if (any(m.active_viewers or m._activating for m in users) or
                     not last_activity or now - last_activity <= IDLE_TIMEOUT):
+                return
+            # Stock leaves the cameras to robot_decision. Our stop would switch
+            # off the front camera or the ArUco detector in the middle of a mow
+            # or a dock approach, so wait until the firmware is idle; the
+            # watchdog retries every 10 s.
+            if firmware_state.firmware_busy():
                 return
             manager.deactivate(self.node)
             # Both aliases describe the same hardware. A later request must wake it.

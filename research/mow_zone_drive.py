@@ -69,6 +69,7 @@ TF_STATIC_QOS = QoSProfile(depth=10, history=QoSHistoryPolicy.KEEP_LAST)
 # above 9; USER_STOP is the parked state a stop lands in (docs/reference/MQTT.md).
 TASK_MODE_COVERAGE = 1
 WORK_STATUS_USER_STOP = 10
+WORK_STATUS_INIT_SUCCESS = 59  # robot_decision: init done, departure finished
 
 
 def task_executing(task_mode, work_status):
@@ -758,6 +759,12 @@ class Driver:
             pos = self.robot_xy(timeout=2.0)
             if pos is not None:
                 break
+        # A mower that was already localized has a frame before it moves. Stop
+        # only once the firmware has finished its own departure (INIT_SUCCESS
+        # or later), so the transit never starts from the dock itself.
+        self.wait_status(
+            lambda tm, ws: ws >= WORK_STATUS_INIT_SUCCESS or not task_executing(tm, ws),
+            timeout=max(5.0, deadline - time.time()))
         self.stop_task()
         # The stop is queued behind the init states and only lands once the
         # task reaches MOVING, as USER_STOP. A parked task still counts as
@@ -1032,34 +1039,33 @@ def do_mow(drv, to_slot, map_ids, cutterhigh, direction):
     clear_parked_task(drv)
     clear_recharge(drv)
     robot = drv.robot_xy()
-    if robot is None:
-        # Fresh boot on the dock: no map->base_link yet. robot_decision builds
-        # that frame at the start of every task, so the only question is whether
-        # we need to take back over afterwards to drive a recorded channel.
+    if robot is None or current_zone_slot(robot) == "dock":
+        # On the dock (no map->base_link yet after a fresh boot, or localized):
+        # the departure is the firmware's own, exactly as stock (QUIT_PILE,
+        # robot_decision.yaml quit_pile_distance 1.0 m). We never reverse off
+        # the dock ourselves; the 2.25 m open-loop undock we used to do was not
+        # stock (Walter, 2026-10-07).
         # Without a channel from the dock's zone to the target, the firmware
         # task IS the mow: hand it over in one go. Starting it only to stop and
         # start it again is what produced "Cannot start a new task when last
         # task is executing" (live .244, 2026-09-14).
         home = _dock_zone()
         if not _channel_files(home, to_slot):
-            log(f"not localized, no channel {home}->{to_slot}: the firmware runs the whole task")
+            log(f"on the dock, no channel {home}->{to_slot}: the firmware runs the whole task")
             return _cover(drv, map_ids, cutterhigh, direction)
-        robot = drv.localize_via_firmware(map_ids, cutterhigh, direction)
+        # A channel to drive: the firmware departs, then we take over.
+        if drv.localize_via_firmware(map_ids, cutterhigh, direction) is None:
+            phase("error", "not_localized")
+            return 1
+        robot = drv.robot_xy()   # where the departure left it, not the dock pose
         if robot is None:
             phase("error", "not_localized")
             return 1
         from_slot = current_zone_slot(robot)
-        log(f"post-init: robot={robot} from={from_slot}")
+        log(f"post-departure: robot={robot} from={from_slot}")
     else:
         from_slot = current_zone_slot(robot)
         log(f"mow start: robot={robot} from={from_slot} to={to_slot} map_ids={map_ids}")
-        # 1. undock if on the pile
-        if from_slot == "dock":
-            phase("undocking")
-            drv.undock()
-            robot = drv.robot_xy()
-            from_slot = current_zone_slot(robot)
-            log(f"post-undock: robot={robot} from={from_slot}")
 
     # 2. transit along the recorded unicom, if one exists and we are not
     #    already inside the target zone

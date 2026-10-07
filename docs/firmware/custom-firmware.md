@@ -62,7 +62,7 @@ The mower firmware is a Debian package. While the compiled ROS 2 nodes cannot be
 | **Atomic config writes** | `json_config.json` with factory backup + pre-boot validation |
 | **Camera stream** | Python ROS 2 node on port 8000 (MJPEG) |
 | **LED bridge** | Python MQTT->ROS bridge for LED/headlight control |
-| **WiFi AP fallback** | Creates AP `OpenNova` if home WiFi fails after 90s |
+| **WiFi AP fallback** | Creates AP `OpenNova` if home WiFi fails for 10 minutes after boot |
 | **daemon_node fix** | Prevents watchdog from killing custom scripts; starts mqtt_node |
 | **Extended commands** | Python ROS 2 node: reboot, camera snapshot, system info, PIN verify |
 | **STM32 stock v3.6.0 retained** | pin_unlock patch disabled per `build_custom_firmware.sh:1611-1615` because it broke blade calibration |
@@ -645,7 +645,7 @@ flowchart LR
 
 ## WiFi AP Fallback
 
-If the mower cannot connect to its home WiFi network within 90 seconds of boot, it creates a WiFi hotspot for emergency access:
+If the mower cannot connect to its home WiFi network within 10 minutes of boot, it creates a WiFi hotspot for emergency access. It keeps trying the home WiFi for those 10 minutes, so a router that boots slowly after a power cut does not push the mower onto its hotspot. Once the hotspot is up, the mower only returns to the home WiFi after a restart.
 
 | Setting | Value |
 |---------|-------|
@@ -658,8 +658,8 @@ A separate **WiFi watchdog** (`wifi_watchdog.sh`) runs continuously and:
 
 1. Checks WiFi connectivity every 30 seconds
 2. After 2 minutes without WiFi, checks if `json_config.json` has a `wifi` section
-3. If missing, restores from backup/factory and restarts `mqtt_node`
-4. If WiFi still fails after 5 minutes, starts the AP fallback as a safety net
+3. If missing, restores from backup/factory and restarts `mqtt_node`; if WiFi still fails, it starts the AP fallback right away (the configuration was broken)
+4. If the configuration is fine, it keeps retrying the home WiFi, like stock firmware, and never starts the hotspot while running
 
 ---
 

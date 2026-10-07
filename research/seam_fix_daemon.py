@@ -39,6 +39,7 @@ import ctypes
 import struct
 import select
 import subprocess
+import firmware_state
 import sys
 
 POLL_SEC = 1.0               # fallback cadence when inotify is unavailable
@@ -505,6 +506,11 @@ def reload_nav_map(base):
     if _reloaded_mtime.get(base) == mtime:
         return False
     if not os.path.exists(yaml_path):
+        return False
+    # map_generator rewrites map.pgm dozens of times per mow. Stock nav2 never
+    # sees those mid-task (map_server reads once); neither should ours. The
+    # next sweep retries, so the reload lands as soon as the firmware is idle.
+    if firmware_state.firmware_busy():
         return False
     _reloaded_mtime[base] = mtime          # ook bij mislukking: niet blijven hameren
     try:

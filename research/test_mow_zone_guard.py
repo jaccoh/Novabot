@@ -83,5 +83,54 @@ class Guard(unittest.TestCase):
         self.assertEqual(drv.calls, [])
 
 
+
+class DockDrv(FakeDrv):
+    """Idle mower standing on the dock (localized): records what it is asked."""
+    def __init__(self):
+        super().__init__((0, 0))
+
+    def robot_xy(self, timeout=0):
+        return (0.2, 0.1)
+
+    def undock(self, *a, **k):
+        self.calls.append("undock")
+
+    def localize_via_firmware(self, *a, **k):
+        self.calls.append("localize_via_firmware")
+        return None  # stop right after the departure decision
+
+    def start_cov(self, *a, **k):
+        self.calls.append("start_cov")
+        return True
+
+
+class StockDeparture(unittest.TestCase):
+    """The departure off the dock is always the firmware's own, as stock."""
+    def setUp(self):
+        self.saved = (mzd._dock_zone, mzd._channel_files, mzd.clear_recharge)
+        mzd._dock_zone = lambda: "map0"
+        mzd.clear_recharge = lambda drv: None
+
+    def tearDown(self):
+        mzd._dock_zone, mzd._channel_files, mzd.clear_recharge = self.saved
+
+    def test_same_zone_hands_the_whole_task_to_the_firmware(self):
+        mzd._channel_files = lambda a, b: []
+        drv = DockDrv()
+        with redirect_stdout(io.StringIO()):
+            rc = mzd.do_mow(drv, "map0", 1, 2, None)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("undock", drv.calls)
+        self.assertIn("start_cov", drv.calls)
+
+    def test_channel_lets_the_firmware_depart_first(self):
+        mzd._channel_files = lambda a, b: ["map0tomap1_0_unicom.csv"]
+        drv = DockDrv()
+        with redirect_stdout(io.StringIO()):
+            mzd.do_mow(drv, "map1", 10, 2, None)
+        self.assertNotIn("undock", drv.calls)
+        self.assertIn("localize_via_firmware", drv.calls)
+
+
 if __name__ == "__main__":
     unittest.main()

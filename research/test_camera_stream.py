@@ -160,6 +160,17 @@ class CameraLifecycleTests(unittest.TestCase):
         self.assertEqual(handler.send_error.call_args.args[0], 503)
         self.assertEqual(self.registry.marker_use_until, 0)
 
+    def test_idle_stop_waits_for_the_firmware(self):
+        self.front._active = True
+        self.front.last_viewer_time = 1
+        with patch.object(camera.time, 'monotonic', return_value=1000):
+            with patch.object(camera.firmware_state, 'firmware_busy', return_value=True):
+                self.registry.stop_if_idle(self.front)
+                self.front._call_stop_camera.assert_not_called()
+            with patch.object(camera.firmware_state, 'firmware_busy', return_value=False):
+                self.registry.stop_if_idle(self.front)
+                self.front._call_stop_camera.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
