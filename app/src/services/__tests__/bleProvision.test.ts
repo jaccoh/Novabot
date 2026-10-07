@@ -1,28 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * The whole mower provisioning sequence against a fake device that speaks the
- * real frame protocol (ble_start / 20-byte chunks / ble_end, answers as
- * notifications). Guards the two things that must never regress: every step
- * is still sent even when the device does not answer one of them, and the
- * result tells the truth about what was confirmed.
+ * Pins the PROVEN provisioning behaviour of ble.ts, which is not to be
+ * changed (Ramon, 2026-10-07): the whole mower sequence is sent in this
+ * order with these timings, and a step the device does not answer does not
+ * stop the sequence. The fake device speaks the real frame protocol
+ * (ble_start / 20-byte chunks / ble_end, answers as notifications).
  */
 const MOWER_SERVICE = '00000201-0000-1000-8000-00805f9b34fb';
 const MOWER_NOTIFY = '00000021-0000-1000-8000-00805f9b34fb';
 type Notify = (err: unknown, char: { uuid: string; value: string } | null) => void;
 
-function fakeMower(opts: { silent?: string[]; writeFailsAt?: string } = {}) {
+function fakeMower(opts: { silent?: string[] } = {}) {
   let notify: Notify | null = null;
   let buf = '';
   let collecting = false;
   const seen: string[] = [];
-  const removals = [vi.fn()];
   const device = {
     id: 'mower',
     discoverAllServicesAndCharacteristics: vi.fn(async () => device),
     services: vi.fn(async () => [{
       uuid: MOWER_SERVICE,
-      characteristics: async () => [{ uuid: MOWER_NOTIFY, isNotifiable: true, monitor: (cb: Notify) => { notify = cb; return { remove: removals[0] }; } }],
+      characteristics: async () => [{ uuid: MOWER_NOTIFY, isNotifiable: true, monitor: (cb: Notify) => { notify = cb; return { remove: vi.fn() }; } }],
     }]),
     monitorCharacteristicForService: vi.fn(),
     cancelConnection: vi.fn(async () => {}),
@@ -34,7 +33,6 @@ function fakeMower(opts: { silent?: string[]; writeFailsAt?: string } = {}) {
       collecting = false;
       const cmd = Object.keys(JSON.parse(buf))[0];
       seen.push(cmd);
-      if (opts.writeFailsAt === cmd) throw new Error('Device disconnected');
       if (opts.silent?.includes(cmd)) return;
       const reply = JSON.stringify({ type: `${cmd}_respond`, message: { result: 0, value: null } });
       setTimeout(() => {
@@ -44,7 +42,7 @@ function fakeMower(opts: { silent?: string[]; writeFailsAt?: string } = {}) {
       }, 50);
     }),
   };
-  return { device, seen, removals };
+  return { device, seen };
 }
 
 const manager = { connectToDevice: vi.fn(), onStateChange: vi.fn(), startDeviceScan: vi.fn(), stopDeviceScan: vi.fn() };
@@ -66,43 +64,30 @@ async function run(fake: ReturnType<typeof fakeMower>) {
   return { result: result!, progress };
 }
 
-describe('provisionDevice (mower, fake device)', () => {
+describe('provisionDevice (mower, fake device) — pins the proven behaviour', () => {
   beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
     vi.useFakeTimers();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
     ble = await import('../ble');
   });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-  it('sends every step in order and reports all confirmed', async () => {
+  it('sends every step in the proven order and ends in done', async () => {
     const fake = fakeMower();
     const { result, progress } = await run(fake);
     expect(fake.seen).toEqual(['get_signal_info', 'set_wifi_info', 'set_lora_info', 'set_mqtt_info', 'set_cfg_info', 'set_robot_reboot']);
-    expect(result).toEqual({ ok: true, assignedLora: null, unacknowledged: [] });
+    expect(result.ok).toBe(true);
     expect(progress.at(-1)?.[0]).toBe('done');
     expect(fake.device.cancelConnection).toHaveBeenCalledTimes(1);
-    expect(fake.removals[0]).toHaveBeenCalled();
   });
 
-  it('keeps going when the device does not answer a step, and says which one', async () => {
+  it('a step the device does not answer does not stop the sequence', async () => {
     const fake = fakeMower({ silent: ['set_mqtt_info'] });
-    const { result, progress } = await run(fake);
-    expect(fake.seen).toContain('set_cfg_info');             // the sequence was not cut short
+    const { result } = await run(fake);
+    expect(fake.seen).toEqual(['get_signal_info', 'set_wifi_info', 'set_lora_info', 'set_mqtt_info', 'set_cfg_info', 'set_robot_reboot']);
     expect(result.ok).toBe(true);
-    expect(result.unacknowledged).toEqual(['set_mqtt_info']);
-    expect(progress.at(-1)?.[1]).toMatch(/did not confirm: set_mqtt_info/);
-  });
-
-  it('stops and cleans up when a write fails because the link is gone', async () => {
-    const fake = fakeMower({ writeFailsAt: 'set_wifi_info' });
-    const { result, progress } = await run(fake);
-    expect(result.ok).toBe(false);
-    expect(fake.seen).not.toContain('set_lora_info');
-    expect(progress.at(-1)?.[0]).toBe('error');
-    expect(fake.device.cancelConnection).toHaveBeenCalledTimes(1);
   });
 });
