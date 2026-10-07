@@ -181,6 +181,7 @@ export function scanForDevices(
 
   // Request Android permissions, then wait for BLE adapter ready
   let stateSub: { remove: () => void } | null = null;
+  let waitTimer: ReturnType<typeof setTimeout> | null = null;
 
   requestAndroidPermissions().then((granted) => {
     if (!granted && Platform.OS === 'android') {
@@ -193,12 +194,17 @@ export function scanForDevices(
       if (state === 'PoweredOn') {
         stateSub?.remove();
         doScan();
-      } else if (state === 'PoweredOff' || state === 'Unauthorized' || state === 'Unsupported') {
-        // No timer runs until PoweredOn, so without this the scan never
-        // ended: spinner forever, and the mapping screen stayed busy.
-        bleLog(`[BLE] Bluetooth ${state} — scan ends without devices`);
-        stateSub?.remove();
-        onDone();
+      } else if (!waitTimer && (state === 'PoweredOff' || state === 'Unauthorized' || state === 'Unsupported')) {
+        // Keep listening: switching Bluetooth on while we wait still starts
+        // the scan, as before. But bound the wait; without a deadline the
+        // scan never ended (spinner forever, mapping screen stuck on busy).
+        bleLog(`[BLE] Bluetooth ${state} — waiting up to ${durationMs} ms for it to come on`);
+        waitTimer = setTimeout(() => {
+          if (scanTimer) return;            // PoweredOn arrived, the scan is running
+          bleLog('[BLE] Bluetooth stayed off — scan ends without devices');
+          stateSub?.remove();
+          onDone();
+        }, durationMs);
       }
     }, true);
   }).catch((e) => {
@@ -337,6 +343,8 @@ export interface ProvisionResult {
    * value, not the input, is what ends up in NVS. Null when the device
    * didn't return a parseable pair. */
   assignedLora?: { addr: number; channel: number } | null;
+  /** Steps the device sent no (or a non-zero) answer to; empty when all confirmed. */
+  unacknowledged?: string[];
 }
 
 export async function provisionDevice(
@@ -424,7 +432,7 @@ export async function provisionDevice(
     await sleep(500); // Let CCCD settle
 
     // Helper: send command using shared notification subscription
-    async function cmd(json: string, cmdName: string, timeoutMs: number): Promise<{ ok: boolean; response: string }> {
+    async function cmd(json: string, cmdName: string, timeoutMs: number): Promise<{ ok: boolean; response: string; writeFailed?: boolean }> {
       return new Promise(async (resolve) => {
         const timer = setTimeout(() => {
           bleLog(`[BLE] ${cmdName}: TIMEOUT (${timeoutMs}ms)`);
@@ -436,8 +444,9 @@ export async function provisionDevice(
           clearTimeout(timer);
           // result:0 = success for all commands
           // result:1 = success ONLY for set_lora_info (assigned channel)
+          // A v0.3.6 charger answers set_lora_info with {"value":15} and no result at all.
           const isLoraCmd = cmdName === 'set_lora_info';
-          const ok = resp.includes('"result":0') || (isLoraCmd && resp.includes('"result":1'));
+          const ok = resp.includes('"result":0') || (isLoraCmd && (resp.includes('"result":1') || /"value"\s*:\s*\d/.test(resp)));
           bleLog(`[BLE] ${cmdName} → ${ok ? 'OK' : 'FAIL'} (response: ${resp.substring(0, 60)})`);
           resolve({ ok, response: resp });
         };
@@ -450,7 +459,7 @@ export async function provisionDevice(
           clearTimeout(timer);
           notifyResolve = null;
           bleLog(`[BLE] ${cmdName}: write failed (${(e as Error)?.message ?? e})`);
-          resolve({ ok: false, response: '' });
+          resolve({ ok: false, response: '', writeFailed: true });
           return;
         }
 
@@ -462,12 +471,16 @@ export async function provisionDevice(
       });
     }
 
-    // Each step must be acknowledged. The results used to be dropped, so a
-    // device that refused the MQTT address or never answered still ended in
-    // "Settings saved" and had LoRa values registered it never accepted.
-    async function must(json: string, cmdName: string, timeoutMs: number): Promise<{ ok: boolean; response: string }> {
-      const r = await must(json, cmdName, timeoutMs);
-      if (!r.ok) throw new Error(`${cmdName} was not acknowledged by the device`);
+    // The results used to be dropped: a device that never answered still
+    // ended in "Settings saved". The whole sequence is still sent as before
+    // (CoreBluetooth delivers answers late, set_cfg_info reboots the device,
+    // a v0.3.6 charger omits "result"), but a missing acknowledgement is now
+    // reported, and a failed write (the link is gone) stops the sequence.
+    const unacknowledged: string[] = [];
+    async function ack(json: string, cmdName: string, timeoutMs: number): Promise<{ ok: boolean; response: string }> {
+      const r = await cmd(json, cmdName, timeoutMs);
+      if (r.writeFailed) throw new Error(`BLE write of ${cmdName} failed: the connection is gone`);
+      if (!r.ok) unacknowledged.push(cmdName);
       return r;
     }
     cleanup = async () => {
@@ -481,7 +494,7 @@ export async function provisionDevice(
 
     if (isCharger) {
       onProgress('wifi', `Setting WiFi (${params.wifiSsid})...`);
-      await must(JSON.stringify({
+      await ack(JSON.stringify({
         set_wifi_info: {
           sta: { ssid: params.wifiSsid, passwd: params.wifiPassword, encrypt: 0 },
           ap: { ssid: apName, passwd: '12345678', encrypt: 0 },
@@ -490,17 +503,17 @@ export async function provisionDevice(
       await sleep(1000);
 
       onProgress('rtk', 'Setting RTK...');
-      await must(JSON.stringify({ set_rtk_info: 0 }), 'set_rtk_info', 15000);
+      await ack(JSON.stringify({ set_rtk_info: 0 }), 'set_rtk_info', 15000);
       await sleep(1000);
     } else {
       // Mower flow: get_signal_info first, then set_wifi_info
       // NOTE: mower uses 'ap' field (not 'sta') — matches bootstrap + official app
       onProgress('wifi', 'Handshake...');
-      await must(JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', 5000);
+      await ack(JSON.stringify({ get_signal_info: 0 }), 'get_signal_info', 5000);
       await sleep(1000);
 
       onProgress('wifi', `Setting WiFi (${params.wifiSsid})...`);
-      await must(JSON.stringify({
+      await ack(JSON.stringify({
         set_wifi_info: {
           ap: { ssid: params.wifiSsid, passwd: params.wifiPassword, encrypt: 0 },
         },
@@ -511,7 +524,7 @@ export async function provisionDevice(
     // Use provided LoRa params (from server) or fallback
     const lora = params.lora ?? LORA_FALLBACK;
     onProgress('lora', `Configuring LoRa (addr=${lora.addr}, ch=${lora.channel})...`);
-    const loraResp = await must(JSON.stringify({ set_lora_info: lora }), 'set_lora_info', 15000);
+    const loraResp = await ack(JSON.stringify({ set_lora_info: lora }), 'set_lora_info', 15000);
     // Charger replies with `result:1` and the channel/addr it ACTUALLY assigned —
     // it can override the requested channel (verified live on LFIC2231000724
     // 2026-05-07: requested ch=16, charger picked ch=20). Parse the response so
@@ -535,7 +548,7 @@ export async function provisionDevice(
     await sleep(1000);
 
     onProgress('mqtt', `Setting MQTT (${params.mqttAddr})...`);
-    await must(JSON.stringify({ set_mqtt_info: { addr: params.mqttAddr, port: params.mqttPort } }),
+    await ack(JSON.stringify({ set_mqtt_info: { addr: params.mqttAddr, port: params.mqttPort } }),
       'set_mqtt_info', 15000);
     await sleep(1000);
 
@@ -561,7 +574,9 @@ export async function provisionDevice(
     const cfgPayload = isCharger
       ? JSON.stringify({ set_cfg_info: 1 })
       : JSON.stringify({ set_cfg_info: { cfg_value: 1, tz: deviceTz } });
-    await must(cfgPayload, 'set_cfg_info', 15000);
+    // Charger: set_cfg_info reboots it (BLE disconnect reason 8 = success), so no answer is normal.
+    const cfg = await cmd(cfgPayload, 'set_cfg_info', 15000);
+    if (cfg.writeFailed) throw new Error('BLE write of set_cfg_info failed: the connection is gone');
 
     // Best-effort explicit reboot. Stock firmware sometimes only restarts
     // networking after set_cfg_info, which can leave mqtt_node in a
@@ -579,8 +594,13 @@ export async function provisionDevice(
 
     await cleanup();
 
-    onProgress('done', 'Settings saved! Device reconnecting...');
-    return { ok: true, assignedLora };
+    if (unacknowledged.length) {
+      bleLog(`[BLE] not acknowledged by the device: ${unacknowledged.join(', ')}`);
+      onProgress('done', `Settings saved, but the device did not confirm: ${unacknowledged.join(', ')}. Check that it comes online.`);
+    } else {
+      onProgress('done', 'Settings saved! Device reconnecting...');
+    }
+    return { ok: true, assignedLora, unacknowledged };
   } catch (err: any) {
     console.error('[BLE] Provision error:', err.message);
     onProgress('error', err.message);
