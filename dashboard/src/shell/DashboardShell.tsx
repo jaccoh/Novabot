@@ -200,7 +200,7 @@ function ShellInner() {
 
       {/* Single row: device identity + live telemetry (left) and the tab nav
           (right), so the status and the tabs share one line. */}
-      <div className="px-4 py-1.5 bg-zinc-900/55 backdrop-blur-md border-b border-white/10 flex-shrink-0 flex items-center gap-3 flex-wrap">
+      <div className="px-4 py-1.5 bg-zinc-900/55 border-b border-white/10 flex-shrink-0 flex items-center gap-3 flex-wrap">
         {/* Mower selector (left) */}
         <DeviceChips
           part="identity"

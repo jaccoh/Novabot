@@ -42,7 +42,7 @@ export function Header({ connected, rainState, onOpenDrawer, activeSn, activeOnl
   };
 
   return (
-    <header className="h-12 md:h-16 bg-gray-900/55 backdrop-blur-md border-b border-white/10 flex items-center justify-between px-3 md:px-6">
+    <header className="h-12 md:h-16 bg-gray-900/55 border-b border-white/10 flex items-center justify-between px-3 md:px-6">
       {/* Left: logo + title (version sits directly under the DASHBOARD text) */}
       <div className="flex items-center gap-3">
         <img src="/OpenNova.png" alt="OpenNova" className="h-9 w-auto" />
