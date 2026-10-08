@@ -12,7 +12,7 @@ import type { DeviceState } from '../types';
 import {
   updateMowerNickname, sendCommand, setSensorOverride, softRestartMower,
   fetchRainSettings, updateRainSettings, type RainSettings,
-  setMaxSpeed, setChargeThreshold, rebootMower,
+  setMaxSpeed, setChargeThreshold, rebootMower, fetchDeviceSettings,
 } from '../api/client';
 import { readWeekStart, writeWeekStart, type WeekStart } from '../utils/weekStart';
 import { readTimeFormat, writeTimeFormat, type TimeFormat } from '../utils/timeFormat';
@@ -205,6 +205,25 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   );
 }
 
+function RadioOption({ active, onClick, label, desc }: { active: boolean; onClick: () => void; label: string; desc: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+        active ? 'border-emerald-500/60 bg-emerald-900/20' : 'border-gray-700 bg-gray-800/40 hover:bg-gray-800/70'
+      }`}
+    >
+      <span className={`grid place-items-center w-5 h-5 rounded-full border-2 flex-shrink-0 ${active ? 'border-emerald-400' : 'border-gray-600'}`}>
+        {active && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
+      </span>
+      <span className="flex-1">
+        <span className={`block text-sm font-semibold ${active ? 'text-emerald-300' : 'text-white'}`}>{label}</span>
+        <span className="block text-xs text-gray-500">{desc}</span>
+      </span>
+    </button>
+  );
+}
+
 function chipClass(active: boolean): string {
   return `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
     active ? 'bg-emerald-600 text-white' : 'bg-gray-800/60 text-gray-400 hover:text-gray-200 border border-gray-700'
@@ -369,6 +388,28 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
     return () => clearTimeout(id);
   }, [maxSpeedVal, chargeThresholdVal, online, sn, t, toast]);
 
+  // Edge cut (device_settings, OpenNova firmware): the obstacle level for the
+  // separate edge cut (#142) and an edge cut after every finished mow. The
+  // custom firmware has no edge pass inside the mow; the server starts one.
+  const [edgeLow, setEdgeLow] = useState(false);
+  const [edgeAlways, setEdgeAlways] = useState(false);
+  useEffect(() => {
+    fetchDeviceSettings(sn).then(s => {
+      setEdgeLow(s.edge_obstacle_level === '1');
+      setEdgeAlways(s.edge_always === '1');
+    }).catch(() => {});
+  }, [sn]);
+  const saveEdgeSetting = async (key: string, next: boolean, set: (v: boolean) => void) => {
+    set(next);
+    try {
+      await setSensorOverride(sn, { [key]: next ? '1' : '0' });
+      setSavedTick(x => x + 1);
+    } catch {
+      set(!next);
+      toast(`✗ ${t('settings.mower.saveFailed', 'Could not save settings')}`, 'error');
+    }
+  };
+
   const [showReanchor, setShowReanchor] = useState(false);
 
   const handleRestart = async () => {
@@ -442,35 +483,49 @@ function MowerSettingsSection({ mower }: { mower: DeviceState }) {
 
       {/* Obstacle avoidance */}
       <SettingCard icon={Shield} title={t('settings.mower.obstacle', 'Obstacle avoidance')}>
+        {firmwareSupported && <div className="text-xs font-semibold text-gray-400 mb-2">{t('settings.obstacleMowing', 'Mowing')}</div>}
         <div className="space-y-2">
-          {SENSITIVITY.map(o => {
-            const active = sensitivity === o.value;
-            return (
-              <button
-                key={o.value}
-                onClick={() => setSensitivity(o.value)}
-                className={`w-full flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                  active ? 'border-emerald-500/60 bg-emerald-900/20' : 'border-gray-700 bg-gray-800/40 hover:bg-gray-800/70'
-                }`}
-              >
-                <span className={`grid place-items-center w-5 h-5 rounded-full border-2 flex-shrink-0 ${active ? 'border-emerald-400' : 'border-gray-600'}`}>
-                  {active && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
-                </span>
-                <span className="flex-1">
-                  <span className={`block text-sm font-semibold ${active ? 'text-emerald-300' : 'text-white'}`}>
-                    {t(`settings.mower.sensitivity.${o.key}`, o.key === 'low' ? 'Off (terrain only)' : o.key === 'medium' ? 'Avoid objects' : 'Avoid objects (frequent)')}
-                  </span>
-                  <span className="block text-xs text-gray-500">
-                    {t(`settings.mower.sensitivity.${o.key}Desc`,
-                      o.key === 'low' ? 'Segmentation only, no object detection (max coverage)'
-                      : o.key === 'medium' ? 'Periodic object detection while mowing'
-                      : 'Frequent object detection (best avoidance)')}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
+          {SENSITIVITY.map(o => (
+            <RadioOption
+              key={o.value}
+              active={sensitivity === o.value}
+              onClick={() => setSensitivity(o.value)}
+              label={t(`settings.mower.sensitivity.${o.key}`, o.key === 'low' ? 'Off (terrain only)' : o.key === 'medium' ? 'Avoid objects' : 'Avoid objects (frequent)')}
+              desc={t(`settings.mower.sensitivity.${o.key}Desc`,
+                o.key === 'low' ? 'Segmentation only, no object detection (max coverage)'
+                : o.key === 'medium' ? 'Periodic object detection while mowing'
+                : 'Frequent object detection (best avoidance)')}
+            />
+          ))}
         </div>
+        {firmwareSupported && (
+          <>
+            {/* Edge cut level, saved at once. Only Standard and Low: Medium/High
+                are set by the mower itself when a mow starts. */}
+            <div className="text-xs font-semibold text-gray-400 mt-4 mb-2">{t('settings.obstacleEdge', 'Edge cut')}</div>
+            <div className="space-y-2">
+              <RadioOption
+                active={!edgeLow}
+                onClick={() => void saveEdgeSetting('edge_obstacle_level', false, setEdgeLow)}
+                label={t('settings.edgeObstacleDefault', 'Standard')}
+                desc={t('settings.edgeObstacleDefaultDesc', 'Detection as the mower left it after mowing')}
+              />
+              <RadioOption
+                active={edgeLow}
+                onClick={() => void saveEdgeSetting('edge_obstacle_level', true, setEdgeLow)}
+                label={t('settings.edgeObstacleLow', 'Low')}
+                desc={t('settings.edgeObstacleLowDesc', 'Hedges and overhanging plants along the edge are not obstacles; people, animals and objects are still detected')}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 mt-4">
+              <div>
+                <div className="text-sm font-semibold text-white">{t('settings.edgeAlways', 'Edge cut after every mow')}</div>
+                <div className="text-xs text-gray-500">{t('settings.edgeAlwaysHint')}</div>
+              </div>
+              <Toggle on={edgeAlways} onChange={v => void saveEdgeSetting('edge_always', v, setEdgeAlways)} />
+            </div>
+          </>
+        )}
       </SettingCard>
 
       {/* Mowing direction */}

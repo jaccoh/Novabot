@@ -6,10 +6,13 @@
  * controleert het weer via Open-Meteo, en stuurt start_run als het droog is.
  */
 
-import { scheduleRepo, mapRepo, rainSettingsRepo } from '../db/repositories/index.js';
+import { scheduleRepo, mapRepo, rainSettingsRepo, deviceSettingsRepo } from '../db/repositories/index.js';
 import { isDeviceOnline } from '../mqtt/broker.js';
 import { publishToDevice } from '../mqtt/mapSync.js';
-import { startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut } from './mowingService.js';
+import { deviceCache } from '../mqtt/sensorData.js';
+import {
+  startMowing, edgeBladeHeightMm, getMowerPhase, startEdgeCut, EDGE_ALWAYS_KEY, edgeAlways,
+} from './mowingService.js';
 import { getWeatherForecast, shouldPauseForRain, isNight, isFrostExpected } from './weatherService.js';
 import { emitScheduleEvent, pushMqttLog } from '../dashboard/socketHandler.js';
 import type { ScheduleRow } from '../db/repositories/schedules.js';
@@ -47,6 +50,47 @@ const EDGE_WATCH_TIMEOUT_MS = 12 * 60 * 60 * 1000; // 12 uur
 const EDGE_MOW_START_WINDOW_MS = 30 * 60 * 1000; // 30 minuten
 
 const pendingEdge = new Map<string, EdgeWatchEntry>(); // sn → watcher
+
+// "Altijd randmaaien" (device_settings edge_always): dezelfde watcher, maar
+// gearmd door elke coverage-taak, wie hem ook startte (app, dashboard, schema,
+// stock-app, de maaier zelf). sn → zat de maaier op de vorige tick in een
+// coverage-taak.
+const wasCovering = new Map<string, boolean>();
+
+/** Eerste zone uit current_map_ids, een decimaal positioneel bitmasker
+ *  (map0 = "1", map3 = "1000"). start_edge_cut neemt één mapName, dus bij een
+ *  meerzone-beurt alleen de eerste zone; zelfde beperking als de rand-dag. */
+export function firstMapName(mapIds: string | undefined): string {
+  const i = [...(mapIds ?? '')].reverse().indexOf('1');
+  return i >= 0 ? `map${i}` : 'map0';
+}
+
+function armAlwaysEdge(nowMs: number): void {
+  for (const { sn } of deviceSettingsRepo.listAll().filter(r => r.key === EDGE_ALWAYS_KEY && r.value === '1')) {
+    const cache = deviceCache.get(sn);
+    // Alleen een echte coverage-taak: niet de randmaai zelf (edge_active, gaat
+    // buiten robot_decision om), niet mapping en geen rit naar dock of punt.
+    const covering = getMowerPhase(sn) === 'mowing'
+      && /Mode:COVERAGE/.test(cache?.get('msg') ?? '')
+      && cache?.get('edge_active') !== '1';
+    const started = covering && !wasCovering.get(sn);
+    wasCovering.set(sn, covering);
+    // Alleen op de overgang naar maaien: een stop of "naar huis" via de server
+    // ontwapent de watcher terwijl de maaier nog even als maaiend rapporteert,
+    // en die beurt mag dan niet opnieuw gearmd worden.
+    if (!started || pendingEdge.has(sn)) continue;
+    const wire = parseInt(cache?.get('target_height') ?? '', 10); // cutterhigh, cm − 2
+    const entry: EdgeWatchEntry = {
+      scheduleId: null,
+      bladeHeightMm: edgeBladeHeightMm(Number.isFinite(wire) ? wire + 2 : DEFAULT_CUTTING_HEIGHT_CM),
+      mapName: firstMapName(cache?.get('current_map_ids')),
+      armedAt: nowMs,
+      sawMowing: true,
+    };
+    pendingEdge.set(sn, entry);
+    console.log(`[ScheduleRunner] EDGE ARMED (altijd) sn=${sn} map=${entry.mapName} blade=${entry.bladeHeightMm}mm`);
+  }
+}
 
 /** Ontwapen de rand-dag watcher voor een maaier. Aangeroepen bij elke
  *  handmatige start/stop via de server (dashboard stop-navigation, generieke
@@ -202,8 +246,9 @@ export function isEdgeDay(edgeDaysJson: string | null, weekday: number): boolean
 
 export type EdgeWatchEntry = {
   /** Identiteit van de run: het schema dat deze watcher armde. Bij het vuren
-   *  wordt gecontroleerd of dat schema nog bestaat en aan staat. */
-  scheduleId: string;
+   *  wordt gecontroleerd of dat schema nog bestaat en aan staat. null = gearmd
+   *  door de instelling "altijd randmaaien"; dan moet die nog aan staan. */
+  scheduleId: string | null;
   bladeHeightMm: number;
   mapName: string;
   /** Moment van armen = starttijd van de maaibeurt waarvoor gearmd is (de arm
@@ -307,6 +352,7 @@ function checkSchedules() {
   // ook loopt op ticks waarop geen enkel schema aan de beurt is. Puur via
   // advanceEdgeWatch; state in pendingEdge. Kopie van de entries zodat
   // delete/set tijdens de iteratie veilig is.
+  armAlwaysEdge(now.getTime());
   for (const [sn, entry] of [...pendingEdge]) {
     const { next, fire } = advanceEdgeWatch(entry, getMowerPhase(sn), now.getTime(), EDGE_WATCH_TIMEOUT_MS);
     // State EERST bijwerken, het bewegingscommando als LAATSTE. Gooit de
@@ -318,10 +364,12 @@ function checkSchedules() {
       // Hercontrole op het vuurmoment (finding 4): het schema dat deze watcher
       // armde moet nog bestaan en aan staan. Dit vangt ALLE verwijder- en
       // uitzetpaden af (dashboard, app, admin, directe DB-wijziging), niet
-      // alleen de routes die disarmEdgeWatchForSchedule aanroepen.
-      const sched = scheduleRepo.findById(entry.scheduleId);
-      if (!sched || !sched.enabled) {
-        console.log(`[ScheduleRunner] EDGE NIET GESTART sn=${sn}: schema ${entry.scheduleId} bestaat niet meer of staat uit`);
+      // alleen de routes die disarmEdgeWatchForSchedule aanroepen. Gearmd door
+      // "altijd randmaaien": die instelling moet dan nog aan staan.
+      if (entry.scheduleId === null ? !edgeAlways(sn) : !scheduleRepo.findById(entry.scheduleId)?.enabled) {
+        console.log(`[ScheduleRunner] EDGE NIET GESTART sn=${sn}: ${entry.scheduleId === null
+          ? '"altijd randmaaien" staat inmiddels uit'
+          : `schema ${entry.scheduleId} bestaat niet meer of staat uit`}`);
         continue;
       }
       // departFromDock: de watcher vuurt per definitie op fase 'charging'

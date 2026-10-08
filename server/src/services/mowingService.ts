@@ -376,6 +376,14 @@ export function edgeObstacleLevel(sn: string): number {
   return row?.value === '1' ? 1 : 0;
 }
 
+/** device_settings key: '1' = an edge cut after every finished mow. The custom
+ *  firmware switches robot_decision's built-in edge pass off (step 7bis in
+ *  build_custom_firmware.sh), so edges are opt-in: per schedule day or always. */
+export const EDGE_ALWAYS_KEY = 'edge_always';
+export function edgeAlways(sn: string): boolean {
+  return deviceSettingsRepo.findBySn(sn).some(r => r.key === EDGE_ALWAYS_KEY && r.value === '1');
+}
+
 export function startEdgeCut(sn: string, mapName: string, bladeHeightMm: number, departFromDock = false): MowingResult {
   if (!sn) return { ok: false, error: 'sn required' };
   if (!isDeviceOnline(sn)) return refuse(M`maaier offline`);

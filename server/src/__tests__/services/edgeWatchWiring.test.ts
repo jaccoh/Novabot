@@ -33,9 +33,9 @@ vi.mock('../../dashboard/socketHandler.js', () => ({
 }));
 
 import {
-  startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch,
+  startScheduleRunner, stopScheduleRunner, __getPendingEdgeForTest, disarmEdgeWatch, firstMapName,
 } from '../../services/scheduleRunner.js';
-import { scheduleRepo } from '../../db/repositories/index.js';
+import { scheduleRepo, deviceSettingsRepo } from '../../db/repositories/index.js';
 import { deviceCache } from '../../mqtt/sensorData.js';
 import { publishToDevice, publishToTopic } from '../../mqtt/mapSync.js';
 
@@ -392,5 +392,102 @@ describe('rand-dag watcher bekabeling', () => {
     // Blijft weg op volgende ticks, terwijl de maaier nog steeds laadt.
     vi.advanceTimersByTime(TICK_MS * 3);
     expect(edgeCutCalls()).toHaveLength(0);
+  });
+});
+
+// "Altijd randmaaien" (device_settings edge_always): de custom firmware maait
+// geen rand meer binnen de beurt, dus met deze instelling start de server na
+// ELKE afgeronde coverage-taak een losse randmaai, ook zonder schema.
+describe('altijd randmaaien', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deviceCache.clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    stopScheduleRunner();
+    vi.useRealTimers();
+  });
+
+  /** Coverage-taak op map3 met cutterhigh 3 (= 5 cm). */
+  function setMowingMap3(sn: string): void {
+    setMowing(sn);
+    deviceCache.get(sn)!.set('current_map_ids', '1000').set('target_height', '3');
+  }
+
+  it('firstMapName leest het decimale bitmasker', () => {
+    expect(firstMapName('1')).toBe('map0');
+    expect(firstMapName('1000')).toBe('map3');
+    expect(firstMapName('110')).toBe('map1');
+    expect(firstMapName(undefined)).toBe('map0');
+    expect(firstMapName('0')).toBe('map0');
+  });
+
+  it('handmatige beurt zonder schema → na afronden één randmaai op die zone en hoogte', () => {
+    const SN = 'ALWAYS_HAPPY';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setIdleOnDock(SN);
+    startScheduleRunner();
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+
+    setMowingMap3(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    expect(__getPendingEdgeForTest().get(SN)).toMatchObject({ scheduleId: null, mapName: 'map3', bladeHeightMm: 50 });
+
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS);
+    expect(edgeCutCalls()).toEqual([{ start_edge_cut: { mapName: 'map3', bladeHeight: 50, departFromDock: true } }]);
+    edgeCutNooitViaStockKanaal();
+
+    vi.advanceTimersByTime(TICK_MS * 3);
+    expect(edgeCutCalls()).toHaveLength(1);
+  });
+
+  it('stop via de server terwijl hij nog als maaiend rapporteert → niet opnieuw gearmd', () => {
+    const SN = 'ALWAYS_STOPPED';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setMowingMap3(SN);
+    startScheduleRunner();
+    expect(__getPendingEdgeForTest().has(SN)).toBe(true);
+
+    disarmEdgeWatch(SN, 'test: stop-navigation');
+    vi.advanceTimersByTime(TICK_MS * 2);         // nog steeds 'mowing' in de cache
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  it('instelling uit → niets', () => {
+    const SN = 'ALWAYS_OFF';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '0');
+    setMowingMap3(SN);
+    startScheduleRunner();
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  it('instelling tijdens de beurt uitgezet → geen randmaai', () => {
+    const SN = 'ALWAYS_TURNED_OFF';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setMowingMap3(SN);
+    startScheduleRunner();
+    deviceSettingsRepo.upsert(SN, 'edge_always', '0');
+    setDockedAfterFinishedMow(SN);
+    vi.advanceTimersByTime(TICK_MS * 2);
+    expect(edgeCutCalls()).toHaveLength(0);
+  });
+
+  it('de randmaai zelf (edge_active) armt niets', () => {
+    const SN = 'ALWAYS_EDGE_ACTIVE';
+    deviceSettingsRepo.upsert(SN, 'edge_always', '1');
+    setMowingMap3(SN);
+    deviceCache.get(SN)!.set('edge_active', '1');
+    startScheduleRunner();
+    expect(__getPendingEdgeForTest().has(SN)).toBe(false);
   });
 });
