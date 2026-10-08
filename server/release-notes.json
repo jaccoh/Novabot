@@ -1,6 +1,31 @@
 {
   "releases": [
     {
+      "version": "2026.1008.1626",
+      "date": "2026-10-08",
+      "sections": {
+        "dashboard": [
+          "Notifications panel above the status bar again",
+          "Send the login token, make BLE provisioning honest, unbreak the mobile map",
+          "Measured nudge for own zones and obstacles, drag-to-move removed"
+        ],
+        "app": [
+          "BLE provisioning sends every step again and only reports what was not confirmed"
+        ],
+        "firmware": [
+          "Stock departure and dock light, longer hotspot wait, no camera stop or map reload during a task"
+        ],
+        "server": [
+          "Edge cut after every mow, and the edge obstacle level in the real dashboard settings",
+          "Push rain_paused as a live change so a stale rain popup cannot appear",
+          "Honest progress for a stock-to-custom update, and a way out",
+          "Close path traversal, shell injection and gate bypass found in the repo review",
+          "Refuse a mower update while the mower is off its dock",
+          "Fill an empty map database from the mower itself"
+        ]
+      }
+    },
+    {
       "version": "2026.1005.2300",
       "date": "2026-10-05",
       "sections": {
@@ -258,25 +283,6 @@
           "Let the wifi_rssi migration fail like its neighbours",
           "Show the mower's WiFi signal as a percentage",
           "Send the file name with .csv when deleting an obstacle or a channel"
-        ]
-      }
-    },
-    {
-      "version": "2026.0915.2240",
-      "date": "2026-09-15",
-      "sections": {
-        "dashboard": [
-          "The diagnosis keeps its title and close button in view"
-        ],
-        "admin": [
-          "No Dutch left in the panel outside its help popup",
-          "The beta firmware warning follows the panel language",
-          "The diagnosis panel names its steps instead of printing ids"
-        ],
-        "server": [
-          "A device is judged on its newest connection, not its first",
-          "Stop diagnosing a charging station as if it were a mower",
-          "The diagnosis stops crying wolf on a healthy stock setup"
         ]
       }
     }
