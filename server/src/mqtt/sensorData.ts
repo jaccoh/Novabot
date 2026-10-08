@@ -1441,7 +1441,15 @@ export function updateDeviceData(sn: string, payload: Buffer): Map<string, strin
   // frame_unvalidated also covers a running or unfinished map install, which
   // blocks starting just the same but needs no re-anchor; map_install_pending
   // lets the UI say which of the two it is.
-  for (const [key, value] of [['frame_unvalidated', isFrameUnvalidated(sn)], ['map_install_pending', isMapInstallPending(sn)]] as const) {
+  // rain_paused: a rain pause sets Work:USER_STOP (same as a manual pause), so
+  // this flag is the only way the UI can tell rain apart from a manual pause.
+  // Pushed as a change so a page that loaded during the pause sees it end.
+  const rainPaused = sn.startsWith('LFIN') && !!scheduleRepo.findRainSessionByMower(sn, 'paused');
+  for (const [key, value] of [
+    ['frame_unvalidated', isFrameUnvalidated(sn)],
+    ['map_install_pending', isMapInstallPending(sn)],
+    ['rain_paused', rainPaused],
+  ] as const) {
     const now = value ? '1' : '0';
     if (snValues.get(key) !== now) {
       snValues.set(key, now);
@@ -1463,9 +1471,8 @@ export function getDeviceSnapshot(sn: string): Record<string, string> | null {
   for (const [field, rawValue] of snValues) {
     result[field] = translateValue(field, rawValue);
   }
-  // Rain-pause flag: a rain pause now sets Work:USER_STOP (same as a manual
-  // pause), so this flag is the only way the app can tell rain apart from a
-  // manual pause. Only mowers (LFIN*) have rain sessions.
+  // Live DB value, not the cached one: a pause that started or ended since the
+  // mower's last report must not reach a fresh page stale.
   result.rain_paused =
     sn.startsWith('LFIN') && scheduleRepo.findRainSessionByMower(sn, 'paused')
       ? '1'

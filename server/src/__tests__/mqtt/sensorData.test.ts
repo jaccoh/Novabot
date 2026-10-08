@@ -16,6 +16,7 @@ import {
   markFrameUnvalidated, clearFrameUnvalidated, isFrameUnvalidated, noteAutoRecharge,
   markMapInstallPending, clearMapInstallPending,
 } from '../../services/frameValidation.js';
+import { scheduleRepo } from '../../db/repositories/schedules.js';
 
 describe('translateValue rtk_fix_quality', () => {
   it('maps GGA quality codes to labels', () => {
@@ -133,6 +134,21 @@ describe('frame_unvalidated lifecycle in updateDeviceData', () => {
     const after = updateDeviceData(SN, Buffer.from(JSON.stringify({ report_state_robot: { battery_power: 81 } })));
     expect(after?.get('frame_unvalidated')).toBe('0');
     expect(after?.get('map_install_pending')).toBe('0');
+  });
+});
+
+// rain_paused only lived in the full snapshot, so a dashboard that loaded during
+// a rain pause kept '1' after the pause ended and called the next manual
+// go-home a rain return.
+describe('rain_paused in updateDeviceData', () => {
+  it('pushes the flag as a change when the rain session starts and ends', () => {
+    const SN = 'LFIN_RAIN_FLAG';
+    const report = (battery: number) =>
+      updateDeviceData(SN, Buffer.from(JSON.stringify({ report_state_robot: { battery_power: battery } })));
+    scheduleRepo.createRainSession('rain-flag-test', 'manual', SN, null, null, 3, 120, 0, 0, 0, 0.1, 50, 0.5);
+    expect(report(80)?.get('rain_paused')).toBe('1');
+    scheduleRepo.resumeRainSession('rain-flag-test');
+    expect(report(81)?.get('rain_paused')).toBe('0');
   });
 });
 
