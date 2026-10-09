@@ -782,6 +782,11 @@ def ros2_run(args, timeout=10):
     etc. from setup.bash to find message types and service definitions.
     ROS_LOCALHOST_ONLY=1 and rmw_cyclonedds_cpp are required to match the
     running novabot ROS2 nodes.
+
+    Timing gelogd per aanroep: de CLI kost ~4 s op een idle A55 en
+    burst onder load ruim boven z'n timeout (session_crash-familie,
+    live 2026-10-04/09). Zonder deze metingen is niet te zien wélke
+    stap de tijd vreet.
     """
     cmd = (
         "source /opt/ros/galactic/setup.bash && "
@@ -794,11 +799,24 @@ def ros2_run(args, timeout=10):
         "ROS_LOCALHOST_ONLY": "1",
         "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
     }
-    return subprocess.run(
-        ["bash", "-c", cmd],
-        capture_output=True, text=True, timeout=timeout,
-        env=env
-    )
+    t0 = time.monotonic()
+    try:
+        result = subprocess.run(
+            ["bash", "-c", cmd],
+            capture_output=True, text=True, timeout=timeout,
+            env=env
+        )
+        log(f"[ros2_run] {args[1]} {' '.join(args[2:])[:60]} | "
+            f"{time.monotonic() - t0:.1f}s | rc={result.returncode}")
+        return result
+    except subprocess.TimeoutExpired:
+        log(f"[ros2_run] {args[1]} {' '.join(args[2:])[:60]} | "
+            f"TIMEOUT na {time.monotonic() - t0:.1f}s (grens {timeout}s)")
+        raise
+    except Exception as ex:
+        log(f"[ros2_run] {args[1]} {' '.join(args[2:])[:60]} | "
+            f"FOUT na {time.monotonic() - t0:.1f}s: {ex}")
+        raise
 
 
 def obstacle_detect_window_seconds():

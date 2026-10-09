@@ -223,12 +223,23 @@ def _wait_for_perception_data(ec, deadline_s=90.0):
 
 
 def _set_costmap_topic(ec):
-    """Runtime costmap-param (NOOIT YAML, maart-les). Verifieer met param get."""
+    """Runtime costmap-param (NOOIT YAML, maart-les). Verifieer met param get.
+
+    Get-first: de param staat meestal al goed (vorige sessie/eerdere run),
+    en een ros2-CLI-aanroep kost 4-8 s idle en ruim meer onder load
+    (gemeten 7.7 s idle, live 2026-10-09) — elke overbodige call is een
+    timeout-risico voor de sessie. Timeouts ruim genomen (45 s): het werk
+    is milliseconds, de CLI-startup niet."""
+    g = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
+                     "obstacle_layer.pointcloud.topic"], timeout=45)
+    if "points_relabeled" in (g.stdout or ""):
+        ec.log("[auto_map] costmap-param stond al goed — set overgeslagen")
+        return True
     ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
                  "obstacle_layer.pointcloud.topic", "/perception/points_relabeled"],
-                timeout=20)
+                timeout=45)
     r = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
-                     "obstacle_layer.pointcloud.topic"], timeout=20)
+                     "obstacle_layer.pointcloud.topic"], timeout=45)
     return "points_relabeled" in (r.stdout or "")
 
 
