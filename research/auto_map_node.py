@@ -212,12 +212,15 @@ def _wait_for_perception_data(ec, deadline_s=90.0):
         import rclpy
         from rclpy.node import Node
         from sensor_msgs.msg import PointCloud2
-        try:
-            rclpy.init()
-        except RuntimeError:
-            pass
+        # Eigen context (zelfde isolatie als de preflight-blokken): de default
+        # context deelt z'n executor met extended_commands en leverde in het
+        # session-proces geen enkele frame meer nadat eerdere nodes erop
+        # gedraaid hadden (live 2026-10-09: vers python-proces kreeg 52
+        # frames/10s, de sessie 0 in 90s op hetzelfde topic).
+        ctx = rclpy.Context()
+        rclpy.init(context=ctx)
         node = Node(f"auto_map_datacheck_{os.getpid()}_"
-                    f"{int(time.monotonic() * 1000) % 1000000}")
+                    f"{int(time.monotonic() * 1000) % 1000000}", context=ctx)
 
         def on_msg(msg):
             if msg.data:
@@ -232,6 +235,10 @@ def _wait_for_perception_data(ec, deadline_s=90.0):
         while not got["data"] and time.monotonic() < end_at:
             rclpy.spin_once(node, timeout_sec=1.0)
         node.destroy_node()
+        try:
+            ctx.shutdown()
+        except Exception:
+            pass
     except Exception as ex:
         ec.log(f"[auto_map] perceptie-datacheck faalde: {ex}")
         return False
