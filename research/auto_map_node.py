@@ -329,51 +329,33 @@ def _wait_for_perception_data(ec, deadline_s=90.0):
 
 
 def _set_costmap_topic(ec):
-    """Runtime costmap-param (NOOIT YAML, maart-les). Verifieer met param get.
+    """Costmap-param op orde — best-effort, NOOIT fataal.
 
-    Get-first: de param staat meestal al goed (vorige sessie/eerdere run),
-    en een ros2-CLI-aanroep kost 4-8 s idle en ruim meer onder load
-    (gemeten 7.7 s idle, live 2026-10-09) — elke overbodige call is een
-    timeout-risico voor de sessie. Timeouts ruim genomen (45 s): het werk
-    is milliseconds, de CLI-startup niet."""
-    try:
-        g = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
-                         "obstacle_layer.pointcloud.topic"], timeout=45)
-    except Exception as ex:
-        # CLI-graadmeter te traag onder load (live 45s+ time-out, 2026-10-09
-        # avond): de param staat persistent op de costmap-node en overleeft
-        # sessies. Een time-out op de check mag de mapping-sessie niet
-        # vermoorden — loggen en doorgaan met de set als zekerheid.
-        ec.log(f"[auto_map] costmap-get time-out ({ex}) — ga door, "
-               "param is persistent; set als zekerheid")
-        g = None
-    if g is None or "points_relabeled" not in (g.stdout or ""):
-        ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
-                     "obstacle_layer.pointcloud.topic",
-                     "/perception/points_relabeled"], timeout=45)
-    else:
+    De param staat persistent op de costmap-node (overleeft sessies;
+    live geverifieerd 2026-10-09). Onder avond-load werd de ros2-CLI
+    zó traag dat zowel get als set door hun time-out gingen en de
+    sessie twee keer stierf aan een check waar de werkelijkheid al
+    goed was. Korte time-outs, elke uitzondering = loggen + doorgaan:
+    een mapping-sessie vermoorden omdat een graadmeter traag is, is
+    erger dan plannen met een param die al uren klopt."""
+    def _try(args):
+        try:
+            return ec.ros2_run(args, timeout=12)
+        except Exception as ex:
+            ec.log(f"[auto_map] costmap CLI traag/fail ({args[1]}): {ex}")
+            return None
+    g = _try(["ros2", "param", "get", "/local_costmap/local_costmap",
+              "obstacle_layer.pointcloud.topic"])
+    if g is not None and "points_relabeled" in (g.stdout or ""):
         ec.log("[auto_map] costmap-topic stond al goed")
-
-    # Tijdelijke smoothing: observation_persistence laat waarnemingen
-    # tot ~1 s meetellen i.p.v. alleen het laatste frame. Eén verdwaald
-    # segmentatieframe (schaduw/blad/licht) liet de boundary daardoor
-    # 90 graden springen — zichtbaar als plotselinge rukken, meestal met
-    # herstel, maar fataal wanneer de ruk naar een obstakel wees
-    # (hek-ram + wiel-overstroom, live 2026-10-09). Met persistentie
-    # moet een richtingsprong meerdere frames aanhouden om door te
-    # voeren; de echte rand (elk frame aanwezig) blijft staan.
-    ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
-                 "obstacle_layer.observation_persistence", "1.0"],
-                timeout=45)
-    try:
-        r = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
-                         "obstacle_layer.pointcloud.topic"], timeout=45)
-        topic_ok = "points_relabeled" in (r.stdout or "")
-    except Exception:
-        topic_ok = None  # onbekend, geen reden om te sterven
-    ec.log(f"[auto_map] costmap check: topic={topic_ok} "
-           "(None = CLI te traag, param is persistent)")
-    return topic_ok is not False
+    else:
+        _try(["ros2", "param", "set", "/local_costmap/local_costmap",
+              "obstacle_layer.pointcloud.topic",
+              "/perception/points_relabeled"])
+    _try(["ros2", "param", "set", "/local_costmap/local_costmap",
+          "obstacle_layer.observation_persistence", "1.0"])
+    ec.log("[auto_map] costmap-stap afgerond (best-effort)")
+    return True
 
 
 def _cancel_follow(ec):
