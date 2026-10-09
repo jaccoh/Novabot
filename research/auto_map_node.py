@@ -176,29 +176,40 @@ def _preflight_node(name_prefix):
 
 
 def _relay_alive(ec):
-    """Is lawn_edge_relay actief? In-process publisher-count op het
-    relay-topic (ros2-CLI time-outte live onder load, 2026-10-09)."""
-    import rclpy
+    """Is lawn_edge_relay actief? Publisher-count via SUBPROCESS met vers
+    python-proces. Reden: de in-process variant (eigen Context,
+    count_publishers + discovery-ticks) gaf false negatives in het
+    session-proces — relay aantoonbaar aan het streamen, check zei
+    relay_missing (live 2026-10-09). Zelfde proces-lokale wispelturigheid
+    als bij de perceptie-levering: een vers proces ontdekt en ontvangt
+    betrouwbaar, het session-proces niet altijd. CLI topic-info werkt ook
+    (vers proces) maar kost 4+ s; dit script is sneller."""
+    script = (
+        "import sys, rclpy, time\n"
+        "rclpy.init()\n"
+        "node = rclpy.create_node('auto_map_relaycheck_subproc')\n"
+        "n = 0\n"
+        "end = time.monotonic() + 8.0\n"
+        "while time.monotonic() < end and n == 0:\n"
+        "    n = node.count_publishers('/perception/points_relabeled')\n"
+        "    rclpy.spin_once(node, timeout_sec=0.5)\n"
+        "print(n)\n"
+    )
     try:
-        node, ctx = _preflight_node("auto_map_relaycheck")
-        try:
-            deadline = time.monotonic() + 10.0
-            n = 0
-            while time.monotonic() < deadline:
-                n = node.count_publishers("/perception/points_relabeled")
-                if n:
-                    break
-                # discovery heeft een paar spin-ticks nodig
-                rclpy.spin_once(node, timeout_sec=0.5)
-            return n > 0
-        finally:
-            node.destroy_node()
-            try:
-                ctx.shutdown()
-            except Exception:
-                pass
+        out = subprocess.run(
+            ["python3", "-c", script],
+            capture_output=True, text=True, timeout=25.0,
+            env={**os.environ,
+                 "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                 "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
+                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+                 "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+                 "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
+        count = int((out.stdout or "0").strip() or 0)
+        ec.log(f"[auto_map] relay-check (subprocess): {count} publishers")
+        return count > 0
     except Exception as ex:
-        ec.log(f"[auto_map] relay-check faalde: {ex}")
+        ec.log(f"[auto_map] relay-check subprocess faalde: {ex}")
         return False
 
 
