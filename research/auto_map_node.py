@@ -200,49 +200,53 @@ def _relay_alive(ec):
 
 
 def _wait_for_perception_data(ec, deadline_s=90.0):
-    """Wacht tot er echt labeled-punten op het relay-topic stromen, via een
-    EIGEN rclpy-subscription (zelfde patroon als terrain_scan). NIET via de
-    ros2-CLI: `topic echo/hz` ziet deze stroom niet eens terwijl de relay
-    aantoonbaar berichten verwerkt (live .244, 2026-07-23 — CLI blind door
-    QoS/daemon-eigenaardigheid van deze firmware), en Galactic kent `--once`
-    niet. Deadline ruim (90 s): camera- en model-spin-up na koud aanzetten
-    duurt tot ~60 s."""
-    got = {"data": False}
+    """Wacht tot er echt labeled-punten op het relay-topic stromen.
+
+    Gedraaid als SUBPROCESS met eigen python-proces. Reden: in het
+    session-proces leverde de rclpy-subscription (ook op een eigen
+    Context) geen enkele frame — 0 in 90 s — terwijl een vers
+    python-proces op hetzelfde moment 41-54 frames per 8-10 s op
+    hetzelfde topic, dezelfde QoS-varianten ontving (live 2026-10-09,
+    meerdere keren herhaald). De oorzaak zit diep in het process-lokale
+    rmw/CycloneDDS/iceoryx-gedrag van dit proces (shared executor van
+    extended_commands draait op de default context); tot die ondergrond
+    begrepen is, is een vers proces de enige bewezen betrouwbare
+    ontvanger. CLI-echo is hiervoor blind (QoS/daemon, bekend), maar
+    een eigen python-subprocess werkt — het onderscheid is het
+    process, niet de API.
+    """
+    script = (
+        "import sys, rclpy, time\n"
+        "from rclpy.node import Node\n"
+        "from sensor_msgs.msg import PointCloud2\n"
+        "deadline=float(sys.argv[1])\n"
+        "rclpy.init()\n"
+        "node=Node('auto_map_datacheck_subproc')\n"
+        "n=[0]\n"
+        "node.create_subscription(PointCloud2,\n"
+        "    '/perception/points_relabeled',\n"
+        "    lambda m: n.__setitem__(0, n[0]+1), 5)\n"
+        "end=time.monotonic()+deadline\n"
+        "while time.monotonic()<end and n[0]<3:\n"
+        "    rclpy.spin_once(node, timeout_sec=0.5)\n"
+        "print(n[0])\n"
+    )
     try:
-        import rclpy
-        from rclpy.node import Node
-        from sensor_msgs.msg import PointCloud2
-        # Eigen context (zelfde isolatie als de preflight-blokken): de default
-        # context deelt z'n executor met extended_commands en leverde in het
-        # session-proces geen enkele frame meer nadat eerdere nodes erop
-        # gedraaid hadden (live 2026-10-09: vers python-proces kreeg 52
-        # frames/10s, de sessie 0 in 90s op hetzelfde topic).
-        ctx = rclpy.Context()
-        rclpy.init(context=ctx)
-        node = Node(f"auto_map_datacheck_{os.getpid()}_"
-                    f"{int(time.monotonic() * 1000) % 1000000}", context=ctx)
-
-        def on_msg(msg):
-            if msg.data:
-                got["data"] = True
-
-        # Queue depth 1 on every big-message topic: a queued sample holds a 4 MB
-        # iceoryx chunk out of a pool of 50 that the stock stack already fills to
-        # ~32. These callbacks only ever use the newest frame (they throttle on
-        # time), so a deeper queue bought nothing and starved camera_307_cap.
-        node.create_subscription(PointCloud2, "/perception/points_relabeled", on_msg, 1)
-        end_at = time.monotonic() + deadline_s
-        while not got["data"] and time.monotonic() < end_at:
-            rclpy.spin_once(node, timeout_sec=1.0)
-        node.destroy_node()
-        try:
-            ctx.shutdown()
-        except Exception:
-            pass
+        out = subprocess.run(
+            ["python3", "-c", script, str(deadline_s)],
+            capture_output=True, text=True, timeout=deadline_s + 20.0,
+            env={**os.environ,
+                 "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                 "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
+                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+                 "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+                 "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
+        count = int((out.stdout or "0").strip() or 0)
+        ec.log(f"[auto_map] perceptie-datacheck (subprocess): {count} frames")
+        return count > 0
     except Exception as ex:
-        ec.log(f"[auto_map] perceptie-datacheck faalde: {ex}")
+        ec.log(f"[auto_map] perceptie-datacheck subprocess faalde: {ex}")
         return False
-    return got["data"]
 
 
 def _set_costmap_topic(ec):
