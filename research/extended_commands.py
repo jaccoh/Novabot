@@ -2380,6 +2380,18 @@ def handle_start_edge_cut(params, respond):
         /coverage_planner_server/cover_task_stop, which cancels NTCP the
         same way it cancels BoundaryFollow.
     """
+    # Edge-cut wil OP de rand rijden: dunne obstakelband. Auto-map zet
+    # observation_persistence op 1.0 (dempen van 90-gradersrukken, live
+    # 2026-10-09) maar dat verbreedt de band en duwt het volgen van de
+    # polygon-lijn eraf. Terug op 0 voor deze pass; auto-map zet zijn
+    # eigen waarde weer bij z'n volgende sessie.
+    try:
+        ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
+                  "obstacle_layer.observation_persistence", "0.0"],
+                 timeout=45)
+    except Exception as ex:
+        log(f"edge_cut: persistence-reset faalde (ga door): {ex}")
+
     # Safe non-blocking cleanup: clear any stale obstacle observations
     # in the nav2 costmaps so the edge planner doesn't inherit false
     # blockers from a prior run. Do NOT call cover_task_stop here — it
