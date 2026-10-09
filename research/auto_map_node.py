@@ -143,10 +143,44 @@ class AutoMapSession:
                 pass
 
 
+def _preflight_node(name_prefix):
+    """Kortlevende rclpy-node voor preflight-checks, zelfde idioom als
+    _wait_for_perception_data. De ros2-CLI kost op deze A55 ~4 s per
+    aanroep (live gemeten, rustige tuin) en overschrijdt onder mapping-load
+    z'n eigen timeout — de session_crash van 2026-10-04 (set_infer_model)
+    en 2026-10-09 (topic info) waren allebei precies dit. In-process is
+    milliseconden zodra de node eenmaal bestaat."""
+    import rclpy
+    from rclpy.node import Node
+    try:
+        rclpy.init()
+    except RuntimeError:
+        pass
+    return Node(f"{name_prefix}_{os.getpid()}_"
+                f"{int(time.monotonic() * 1000) % 1000000}")
+
+
 def _relay_alive(ec):
-    """Is lawn_edge_relay actief? Check publisher-count op het relay-topic."""
-    r = ec.ros2_run(["ros2", "topic", "info", "/perception/points_relabeled"], timeout=15)
-    return r.returncode == 0 and "Publisher count: 0" not in (r.stdout or "")
+    """Is lawn_edge_relay actief? In-process publisher-count op het
+    relay-topic (ros2-CLI time-outte live onder load, 2026-10-09)."""
+    import rclpy
+    try:
+        node = _preflight_node("auto_map_relaycheck")
+        try:
+            deadline = time.monotonic() + 10.0
+            n = 0
+            while time.monotonic() < deadline:
+                n = node.count_publishers("/perception/points_relabeled")
+                if n:
+                    break
+                # discovery heeft een paar spin-ticks nodig
+                rclpy.spin_once(node, timeout_sec=0.5)
+            return n > 0
+        finally:
+            node.destroy_node()
+    except Exception as ex:
+        ec.log(f"[auto_map] relay-check faalde: {ex}")
+        return False
 
 
 def _wait_for_perception_data(ec, deadline_s=90.0):
@@ -332,8 +366,29 @@ def _run_session_body(sess, ec):
 
     # Enige perceptie-instelling die wij zetten: SEG_HIGH (mode 3, maart-flow).
     # coverage_planner_server regelt semantic/detection-mode ZELF bij de goal.
-    ec.ros2_run(["ros2", "service", "call", "/perception/set_infer_model",
-                 "general_msgs/srv/SetUint8", "'{value: 3}'"], timeout=15)
+    # In-process service call: de CLI-vorm time-outte live (session_crash
+    # 2026-10-04, 15 s) terwijl de call zelf milliseconden werk is.
+    try:
+        import rclpy
+        from general_msgs.srv import SetUint8
+        node = _preflight_node("auto_map_infermodel")
+        try:
+            cli = node.create_client(SetUint8, "/perception/set_infer_model")
+            if not cli.wait_for_service(timeout_sec=10.0):
+                ec.log("[auto_map] set_infer_model: service niet gevonden (ga door)")
+            else:
+                fut = cli.call_async(SetUint8.Request(value=3))
+                end_at = time.monotonic() + 10.0
+                while not fut.done() and time.monotonic() < end_at:
+                    rclpy.spin_once(node, timeout_sec=0.5)
+                if not fut.done():
+                    ec.log("[auto_map] set_infer_model: call time-out (ga door)")
+                else:
+                    ec.log(f"[auto_map] set_infer_model ok: {fut.result()}")
+        finally:
+            node.destroy_node()
+    except Exception as ex:
+        ec.log(f"[auto_map] set_infer_model faalde (ga door): {ex}")
 
     # Maart-flow stap 3: wachten tot er echt labeled-data stroomt (camera's
     # hebben spin-up nodig). Drie pogingen van ~15 s elk; geen data → abort.
