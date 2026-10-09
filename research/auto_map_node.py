@@ -688,38 +688,66 @@ def _run_session_body(sess, ec):
 
 
 def _start_gps_watch(sess):
-    """NavSatFix-subscriber in eigen thread (patroon: calibration-drive in
-    extended_commands). Vult sess.start_gps (eerste fix) en sess.last_gps."""
-    def _spin():
+    """GPS-wachter via SUBPROCESS: een klein python-proces streamt elke
+    seconde 'lat lng' naar stdout, de thread leest dat en vult de sessie.
+    Reden: de in-process rclpy-subscription verhongerde na ~2,5 min —
+    sessie brak veilig af met gps_stale terwijl de GPS-data aantoonbaar
+    naar de server bleef stromen (zelfde proces-lokale
+    leveringsziekte als de perceptie-wacht, derde verschijning,
+    live 2026-10-09). Een vers proces levert betrouwbaar; dit patroon
+    is al twee keer bewezen in deze sessie-infrastructuur."""
+    script = (
+        "import time\n"
+        "import rclpy\n"
+        "from sensor_msgs.msg import NavSatFix\n"
+        "rclpy.init()\n"
+        "node = rclpy.create_node('auto_map_gps_subproc')\n"
+        "last = [0.0]\n"
+        "def on_fix(m):\n"
+        "    if m.latitude != 0.0 or m.longitude != 0.0:\n"
+        "        last[0] = time.monotonic()\n"
+        "        print(f'{m.latitude} {m.longitude}', flush=True)\n"
+        "node.create_subscription(NavSatFix, '/gps_raw', on_fix, 5)\n"
+        "while True:\n"
+        "    rclpy.spin_once(node, timeout_sec=1.0)\n"
+    )
+    proc = subprocess.Popen(
+        ["python3", "-c", script],
+        stdout=subprocess.PIPE, text=True,
+        env={**os.environ,
+             "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+             "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
+             "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+             "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+             "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
+
+    def _read():
         try:
-            import rclpy
-            from rclpy.node import Node
-            from sensor_msgs.msg import NavSatFix
-            try:
-                rclpy.init()
-            except RuntimeError:
-                pass
-            # Unieke naam per sessie: voorkomt botsing met een nog uitdovende
-            # node van een vorige (net gestopte) sessie-thread.
-            node = Node(f"auto_map_gps_watch_{os.getpid()}_"
-                        f"{int(time.monotonic() * 1000) % 1000000}")
-
-            def on_fix(msg):
-                if msg.latitude == 0.0 and msg.longitude == 0.0:
-                    return
+            for line in proc.stdout:
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                lat, lng = float(parts[0]), float(parts[1])
                 if sess.start_gps is None:
-                    sess.start_gps = (msg.latitude, msg.longitude)
-                sess.last_gps = (msg.latitude, msg.longitude)
+                    sess.start_gps = (lat, lng)
+                sess.last_gps = (lat, lng)
                 sess.last_fix_mono = time.monotonic()
+                if sess.stop_requested or sess.last_status.get("phase") in (
+                        "result", "error", "aborted"):
+                    break
+        except Exception:
+            pass
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                proc.kill()
 
-            node.create_subscription(NavSatFix, "/gps_raw", on_fix, 5)
-            while not sess.stop_requested and sess.last_status.get("phase") not in (
-                    "result", "error", "aborted"):
-                rclpy.spin_once(node, timeout_sec=1.0)
-            node.destroy_node()
-        except Exception as ex:
-            _ec().log(f"[auto_map] gps watch dood: {ex}")
-    threading.Thread(target=_spin, daemon=True).start()
+    import threading
+    t = threading.Thread(target=_read, daemon=True,
+                         name="gps-watch-subproc-reader")
+    t.start()
 
 
 def main():
