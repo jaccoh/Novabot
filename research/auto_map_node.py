@@ -160,12 +160,16 @@ def _preflight_node(name_prefix):
     milliseconden zodra de node eenmaal bestaat."""
     import rclpy
     from rclpy.node import Node
-    try:
-        rclpy.init()
-    except RuntimeError:
-        pass
+    # EIGEN context, nooit de default: extended_commands draait een shared
+    # executor op de default context en twee spinners daarop racen (les uit
+    # de RtkRelay-code). Mijn spin_once op de default context wurgde de
+    # callback-levering voor latere default-context subscriptions — de
+    # perceptie-wacht hieronder kreeg daardoor NOOIT een frame (py-spy-bewezen
+    # 2026-10-09). Eigen context = volledig geisoleerd.
+    ctx = rclpy.Context()
+    rclpy.init(context=ctx)
     return Node(f"{name_prefix}_{os.getpid()}_"
-                f"{int(time.monotonic() * 1000) % 1000000}")
+                f"{int(time.monotonic() * 1000) % 1000000}", context=ctx), ctx
 
 
 def _relay_alive(ec):
@@ -173,7 +177,7 @@ def _relay_alive(ec):
     relay-topic (ros2-CLI time-outte live onder load, 2026-10-09)."""
     import rclpy
     try:
-        node = _preflight_node("auto_map_relaycheck")
+        node, ctx = _preflight_node("auto_map_relaycheck")
         try:
             deadline = time.monotonic() + 10.0
             n = 0
@@ -186,6 +190,10 @@ def _relay_alive(ec):
             return n > 0
         finally:
             node.destroy_node()
+            try:
+                ctx.shutdown()
+            except Exception:
+                pass
     except Exception as ex:
         ec.log(f"[auto_map] relay-check faalde: {ex}")
         return False
@@ -381,7 +389,7 @@ def _run_session_body(sess, ec):
     try:
         import rclpy
         from std_srvs.srv import SetBool
-        node = _preflight_node("auto_map_camstart")
+        node, ctx = _preflight_node("auto_map_camstart")
         try:
             for srv in ("/camera/preposition/start_camera",
                         "/camera/tof/start_camera",
@@ -403,6 +411,10 @@ def _run_session_body(sess, ec):
                     ec.log(f"[auto_map] {srv} aanzetten faalde (ga door): {ex}")
         finally:
             node.destroy_node()
+            try:
+                ctx.shutdown()
+            except Exception:
+                pass
     except Exception as ex:
         ec.log(f"[auto_map] camera-start blok faalde (ga door): {ex}")
 
@@ -413,7 +425,7 @@ def _run_session_body(sess, ec):
     try:
         import rclpy
         from general_msgs.srv import SetUint8
-        node = _preflight_node("auto_map_infermodel")
+        node, ctx = _preflight_node("auto_map_infermodel")
         try:
             cli = node.create_client(SetUint8, "/perception/set_infer_model")
             if not cli.wait_for_service(timeout_sec=10.0):
@@ -429,6 +441,10 @@ def _run_session_body(sess, ec):
                     ec.log(f"[auto_map] set_infer_model ok: {fut.result()}")
         finally:
             node.destroy_node()
+            try:
+                ctx.shutdown()
+            except Exception:
+                pass
     except Exception as ex:
         ec.log(f"[auto_map] set_infer_model faalde (ga door): {ex}")
 
