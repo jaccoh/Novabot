@@ -45,9 +45,15 @@ RESULT_NAMES = {
 
 def boundary_goal_yaml():
     """Goal voor `ros2 action send_goal /boundary_follow
-    coverage_planner/action/BoundaryFollow` (maart-flow: follow_mode=0,
-    start_follow_wait=false; coverage_planner configureert perceptie zelf)."""
-    return "{follow_mode: 0, start_follow_wait: false}"
+    coverage_planner/action/BoundaryFollow` (follow_mode=0).
+
+    start_follow_wait + more_close_to_boundary AAN: zonder deze vlaggen
+    aborteert de action direct met 'No valid boundary need robot!!!'
+    (status 1) — met de vlaggen vindt hij de boundary en start het volgen
+    (live bewezen 2026-10-09: zelfde positie, zelfde costmap, alleen deze
+    vlaggen anders → status 3 'boundary complex' i.p.v. status 1)."""
+    return ("{follow_mode: 0, start_follow_wait: true, "
+            "more_close_to_boundary: true}")
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
@@ -111,10 +117,12 @@ class AutoMapSession:
     last_status (concurrent geraadpleegd door get_auto_map_status); de rest
     van de sessie draait op de eigen achtergrondthread zonder verdere locking."""
 
-    def __init__(self, publish_status, radius_m, timeout_s):
+    def __init__(self, publish_status, radius_m, timeout_s,
+                 depart_from_dock=False):
         self.publish_status = publish_status   # dict -> None (MQTT publish)
         self.radius_m = radius_m
         self.timeout_s = timeout_s
+        self.depart_from_dock = bool(depart_from_dock)
         self.lock = threading.Lock()
         # Synchroon al op "preparing" zetten (niet pas in de thread) zodat de
         # already_running-gate in main() geen race heeft met een tweede
@@ -439,6 +447,17 @@ def _run_session_body(sess, ec):
         sess.status("error", error="no_gps_fix")
         return
 
+    # Optioneel: eerst deterministisch achteruit van de dock (zelfde
+    # _depart_pile als edge-cut: magnet-lock vrijgeven, ~1 m reverse).
+    # Alleen op verzoek (departFromDock) — midden op het gazon achteruit
+    # rijden kan een obstakel raken dat de costmap niet kent.
+    if sess.depart_from_dock:
+        ec.log("[auto_map] departFromDock: achteruit van de dock (~1 m)")
+        try:
+            ec._depart_pile()
+        except Exception as ex:
+            ec.log(f"[auto_map] depart_pile faalde: {ex} — goal toch proberen")
+
     # BoundaryFollow-goal via CLI, output naar ACTION_LOG voor result-parse.
     # Eén automatische retry bij SEARCHING_START_FAILED (code 4, zie
     # should_retry()): de maaier rijdt ~2 m vooruit en probeert de goal
@@ -595,13 +614,15 @@ def main():
             try:
                 radius = float(params.get("radiusM", DEFAULT_RADIUS_M))
                 timeout = int(params.get("timeoutS", DEFAULT_TIMEOUT_S))
+                depart = bool(params.get("departFromDock", False))
             except (TypeError, ValueError) as ex:
                 respond("start_auto_map_test_respond",
                         {"result": 1, "error": f"param type error: {ex}"})
                 return
             radius = max(5.0, min(200.0, radius))
             timeout = max(60, min(3600, timeout))
-            sess = AutoMapSession(publish_status, radius, timeout)
+            sess = AutoMapSession(publish_status, radius, timeout,
+                                  depart_from_dock=depart)
             state["session"] = sess
             threading.Thread(target=_run_session, args=(sess, ec), daemon=True).start()
             respond("start_auto_map_test_respond", {"result": 0})
