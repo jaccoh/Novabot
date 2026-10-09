@@ -175,6 +175,46 @@ def _preflight_node(name_prefix):
                 f"{int(time.monotonic() * 1000) % 1000000}", context=ctx), ctx
 
 
+def _is_charging(ec):
+    """Staat de maaier op de lader? Subprocess-probe op de laadstroom
+    (novabot_msgs/ChassisBatteryMessage.battery_current_ma > 300 mA =
+    laden). Subprocess om dezelfde reden als de andere checks: het
+    session-proces levert geen betrouwbare subscriptions (live 2026-10-09).
+    False bij twijfel: achteruit rijden mid-gazon is de onveilige kant."""
+    script = (
+        "import sys, rclpy, time\n"
+        "from novabot_msgs.msg import ChassisBatteryMessage\n"
+        "rclpy.init()\n"
+        "node = rclpy.create_node('auto_map_chargecheck')\n"
+        "val = [None]\n"
+        "node.create_subscription(ChassisBatteryMessage, '/battery_message',\n"
+        "    lambda m: val.__setitem__(0, m.battery_current_ma), 5)\n"
+        "end = time.monotonic() + 8.0\n"
+        "while time.monotonic() < end and val[0] is None:\n"
+        "    rclpy.spin_once(node, timeout_sec=0.5)\n"
+        "print(val[0] if val[0] is not None else 'none')\n"
+    )
+    try:
+        out = subprocess.run(
+            ["python3", "-c", script],
+            capture_output=True, text=True, timeout=25.0,
+            env={**os.environ,
+                 "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
+                 "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
+                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+                 "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+                 "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
+        raw = (out.stdout or "").strip() or "none"
+        ec.log(f"[auto_map] laadstroom-check (subprocess): {raw} mA")
+        try:
+            return int(raw) > 300
+        except ValueError:
+            return False
+    except Exception as ex:
+        ec.log(f"[auto_map] laadstroom-check faalde: {ex}")
+        return False
+
+
 def _relay_alive(ec):
     """Is lawn_edge_relay actief? Publisher-count via SUBPROCESS met vers
     python-proces. Reden: de in-process variant (eigen Context,
@@ -492,8 +532,9 @@ def _run_session_body(sess, ec):
     # _depart_pile als edge-cut: magnet-lock vrijgeven, ~1 m reverse).
     # Alleen op verzoek (departFromDock) — midden op het gazon achteruit
     # rijden kan een obstakel raken dat de costmap niet kent.
-    if sess.depart_from_dock:
-        ec.log("[auto_map] departFromDock: achteruit van de dock (~1 m)")
+    if sess.depart_from_dock or _is_charging(ec):
+        why = ("param" if sess.depart_from_dock else "laadstroom gedetecteerd")
+        ec.log(f"[auto_map] dock-departure ({why}): achteruit van de dock (~1 m)")
         try:
             ec._depart_pile()
         except Exception as ex:
