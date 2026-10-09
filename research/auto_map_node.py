@@ -55,8 +55,12 @@ def boundary_goal_yaml():
     # inflation_radius 0.4: met de default 0.0 brak het volgen na ~25 s af
     # (FOLLOW_FAILED, meerdere posities); met 0.4 reed hij direct en bleef
     # rijden tot de goal extern geannuleerd werd (live 2026-10-09).
+    # close_loop_stop true: de action stopt zelf bij het dichten van de lus.
+    # De sessie bewaakt het als vangnet (zie de loop-closure check in de
+    # goal-monitor) — live bleek de mower anders eindeloos door te rijden.
     return ("{follow_mode: 0, start_follow_wait: true, "
-            "more_close_to_boundary: true, inflation_radius: 0.4}")
+            "more_close_to_boundary: true, inflation_radius: 0.4, "
+            "close_loop_stop: true}")
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
@@ -562,6 +566,7 @@ def _run_session_body(sess, ec):
 
         following_reported = False
         result_code = None
+        farthest_from_start = 0.0
         while True:
             time.sleep(2.0)
             elapsed = time.monotonic() - sess.started
@@ -592,9 +597,21 @@ def _run_session_body(sess, ec):
                     _wait_proc(proc)
                     sess.status("aborted", error="geofence", dist_m=round(d, 1))
                     return
+                farthest_from_start = max(farthest_from_start, d)
                 if not following_reported and elapsed > 10:
                     following_reported = True
                     sess.status("following", dist_m=round(d, 1))
+                # Loop-closure vangnet: volgend, ver genoeg geweest, en weer
+                # terug binnen 1.5 m van het startpunt -> rondje klaar.
+                if (following_reported and elapsed > 60
+                        and farthest_from_start > 5.0 and d < 1.5):
+                    ec.log(f"[auto_map] lus gesloten na {int(elapsed)} s, "
+                           f"{round(farthest_from_start, 1)} m verste punt")
+                    _cancel_follow(ec)
+                    _wait_proc(proc)
+                    sess.status("result", code=0, name="LOOP_CLOSED",
+                                dist_m=round(d, 1))
+                    return
             if proc.poll() is not None:
                 try:
                     with open(ACTION_LOG) as f:
