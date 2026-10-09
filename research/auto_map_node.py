@@ -336,9 +336,18 @@ def _set_costmap_topic(ec):
     (gemeten 7.7 s idle, live 2026-10-09) — elke overbodige call is een
     timeout-risico voor de sessie. Timeouts ruim genomen (45 s): het werk
     is milliseconds, de CLI-startup niet."""
-    g = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
-                     "obstacle_layer.pointcloud.topic"], timeout=45)
-    if "points_relabeled" not in (g.stdout or ""):
+    try:
+        g = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
+                         "obstacle_layer.pointcloud.topic"], timeout=45)
+    except Exception as ex:
+        # CLI-graadmeter te traag onder load (live 45s+ time-out, 2026-10-09
+        # avond): de param staat persistent op de costmap-node en overleeft
+        # sessies. Een time-out op de check mag de mapping-sessie niet
+        # vermoorden — loggen en doorgaan met de set als zekerheid.
+        ec.log(f"[auto_map] costmap-get time-out ({ex}) — ga door, "
+               "param is persistent; set als zekerheid")
+        g = None
+    if g is None or "points_relabeled" not in (g.stdout or ""):
         ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
                      "obstacle_layer.pointcloud.topic",
                      "/perception/points_relabeled"], timeout=45)
@@ -356,13 +365,15 @@ def _set_costmap_topic(ec):
     ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
                  "obstacle_layer.observation_persistence", "1.0"],
                 timeout=45)
-    r = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
-                     "obstacle_layer.pointcloud.topic"], timeout=45)
-    rp = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
-                      "obstacle_layer.observation_persistence"], timeout=45)
-    ec.log(f"[auto_map] costmap check: topic={'ok' if 'points_relabeled' in (r.stdout or '') else 'FOUT'}, "
-           f"persistence={(rp.stdout or '?').strip().splitlines()[-1]}")
-    return "points_relabeled" in (r.stdout or "")
+    try:
+        r = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
+                         "obstacle_layer.pointcloud.topic"], timeout=45)
+        topic_ok = "points_relabeled" in (r.stdout or "")
+    except Exception:
+        topic_ok = None  # onbekend, geen reden om te sterven
+    ec.log(f"[auto_map] costmap check: topic={topic_ok} "
+           "(None = CLI te traag, param is persistent)")
+    return topic_ok is not False
 
 
 def _cancel_follow(ec):
