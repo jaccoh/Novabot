@@ -125,11 +125,12 @@ class AutoMapSession:
     van de sessie draait op de eigen achtergrondthread zonder verdere locking."""
 
     def __init__(self, publish_status, radius_m, timeout_s,
-                 depart_from_dock=False):
+                 depart_from_dock=False, depart_seconds=4.0):
         self.publish_status = publish_status   # dict -> None (MQTT publish)
         self.radius_m = radius_m
         self.timeout_s = timeout_s
         self.depart_from_dock = bool(depart_from_dock)
+        self.depart_seconds = min(max(float(depart_seconds), 1.0), 10.0)
         self.lock = threading.Lock()
         # Synchroon al op "preparing" zetten (niet pas in de thread) zodat de
         # already_running-gate in main() geen race heeft met een tweede
@@ -466,6 +467,34 @@ def _run_session_body(sess, ec):
         sess.status("error", error="costmap_param_failed")
         return
 
+    # GPS-volger voor de geofence: één achtergrond-subscription op NavSatFix.
+    _start_gps_watch(sess)
+    deadline = time.monotonic() + 30
+    while sess.start_gps is None and time.monotonic() < deadline:
+        time.sleep(0.5)
+    if sess.start_gps is None:
+        sess.status("error", error="no_gps_fix")
+        return
+
+
+    # EERST van de dock af, dan pas de routine: camera's en perceptie
+    # warmen op met zicht op het gazon i.p.v. het dock-plateau, en de
+    # grasrand-zoekfase begint op de plek waar je wilt starten. Vertrek
+    # alleen bij gedetecteerde lader of expliciete param. departSeconds =
+    # achteruit-afstand in seconden @ 0.25 m/s (1-10, default 4); niet
+    # elke basisstation-plek heeft gras op 1 m (owner-idee 2026-10-09).
+    if sess.depart_from_dock or _docked_on_pile(
+            ec, sess.start_gps[0] if sess.start_gps else None,
+            sess.start_gps[1] if sess.start_gps else None):
+        why = ("param" if sess.depart_from_dock else "op de lader gedetecteerd (GPS)")
+        ec.log(f"[auto_map] dock-departure ({why}): "
+               f"{sess.depart_seconds:.1f} s achteruit")
+        try:
+            ec._depart_pile(seconds=sess.depart_seconds)
+        except Exception as ex:
+            ec.log(f"[auto_map] depart_pile faalde: {ex} - goal toch proberen")
+
+
     # Maart-flow stap 1+2: camera's aan + perceptie aan. Zonder rijdende
     # maaibeurt staan de camera's UIT en blijft de costmap leeg — dan komt
     # BoundaryFollow direct terug met "No valid boundary need robot!!!"
@@ -542,29 +571,6 @@ def _run_session_body(sess, ec):
     if not _wait_for_perception_data(ec):
         sess.status("error", error="no_perception_data")
         return
-
-    # GPS-volger voor de geofence: één achtergrond-subscription op NavSatFix.
-    _start_gps_watch(sess)
-    deadline = time.monotonic() + 30
-    while sess.start_gps is None and time.monotonic() < deadline:
-        time.sleep(0.5)
-    if sess.start_gps is None:
-        sess.status("error", error="no_gps_fix")
-        return
-
-    # Optioneel: eerst deterministisch achteruit van de dock (zelfde
-    # _depart_pile als edge-cut: magnet-lock vrijgeven, ~1 m reverse).
-    # Alleen op verzoek (departFromDock) — midden op het gazon achteruit
-    # rijden kan een obstakel raken dat de costmap niet kent.
-    docked = _docked_on_pile(ec, sess.start_gps[0] if sess.start_gps else None,
-                             sess.start_gps[1] if sess.start_gps else None)
-    if sess.depart_from_dock or docked:
-        why = ("param" if sess.depart_from_dock else "op de lader gedetecteerd (GPS)")
-        ec.log(f"[auto_map] dock-departure ({why}): achteruit van de dock (~1 m)")
-        try:
-            ec._depart_pile()
-        except Exception as ex:
-            ec.log(f"[auto_map] depart_pile faalde: {ex} — goal toch proberen")
 
     # BoundaryFollow-goal via CLI, output naar ACTION_LOG voor result-parse.
     # Eén automatische retry bij SEARCHING_START_FAILED (code 4, zie
@@ -736,6 +742,7 @@ def main():
                 radius = float(params.get("radiusM", DEFAULT_RADIUS_M))
                 timeout = int(params.get("timeoutS", DEFAULT_TIMEOUT_S))
                 depart = bool(params.get("departFromDock", False))
+                depart_s = float(params.get("departSeconds", 4.0))
             except (TypeError, ValueError) as ex:
                 respond("start_auto_map_test_respond",
                         {"result": 1, "error": f"param type error: {ex}"})
@@ -743,7 +750,8 @@ def main():
             radius = max(5.0, min(200.0, radius))
             timeout = max(60, min(3600, timeout))
             sess = AutoMapSession(publish_status, radius, timeout,
-                                  depart_from_dock=depart)
+                                  depart_from_dock=depart,
+                                  depart_seconds=depart_s)
             state["session"] = sess
             threading.Thread(target=_run_session, args=(sess, ec), daemon=True).start()
             respond("start_auto_map_test_respond", {"result": 0})
