@@ -52,8 +52,11 @@ def boundary_goal_yaml():
     (status 1) — met de vlaggen vindt hij de boundary en start het volgen
     (live bewezen 2026-10-09: zelfde positie, zelfde costmap, alleen deze
     vlaggen anders → status 3 'boundary complex' i.p.v. status 1)."""
+    # inflation_radius 0.4: met de default 0.0 brak het volgen na ~25 s af
+    # (FOLLOW_FAILED, meerdere posities); met 0.4 reed hij direct en bleef
+    # rijden tot de goal extern geannuleerd werd (live 2026-10-09).
     return ("{follow_mode: 0, start_follow_wait: true, "
-            "more_close_to_boundary: true}")
+            "more_close_to_boundary: true, inflation_radius: 0.4}")
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
