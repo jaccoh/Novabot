@@ -179,43 +179,63 @@ def _preflight_node(name_prefix):
                 f"{int(time.monotonic() * 1000) % 1000000}", context=ctx), ctx
 
 
-def _is_charging(ec):
-    """Staat de maaier op de lader? Subprocess-probe op de laadstroom
-    (novabot_msgs/ChassisBatteryMessage.battery_current_ma > 300 mA =
-    laden). Subprocess om dezelfde reden als de andere checks: het
-    session-proces levert geen betrouwbare subscriptions (live 2026-10-09).
-    False bij twijfel: achteruit rijden mid-gazon is de onveilige kant."""
-    script = (
-        "import sys, rclpy, time\n"
-        "from novabot_msgs.msg import ChassisBatteryMessage\n"
-        "rclpy.init()\n"
-        "node = rclpy.create_node('auto_map_chargecheck')\n"
-        "val = [None]\n"
-        "node.create_subscription(ChassisBatteryMessage, '/battery_message',\n"
-        "    lambda m: val.__setitem__(0, m.battery_current_ma), 5)\n"
-        "end = time.monotonic() + 8.0\n"
-        "while time.monotonic() < end and val[0] is None:\n"
-        "    rclpy.spin_once(node, timeout_sec=0.5)\n"
-        "print(val[0] if val[0] is not None else 'none')\n"
-    )
+def _docked_on_pile(ec, lat, lng):
+    """Staat de maaier op de lader? Positie-gebaseerd: afstand tussen de
+    huidige GPS-fix en de dock-GPS. De dock-Gps volgt uit twee lokale
+    bestanden: pos.json (utm_origin) + het unicom-anker (dockpositie in
+    kaartframe). Signaal 'laadstroom' deugt niet: een volle accel op de
+    lader trekt 0 mA — ononderscheidbaar van 'los in het veld' (live
+    2026-10-09)."""
+    if lat is None or lng is None:
+        return False
     try:
-        out = subprocess.run(
-            ["python3", "-c", script],
-            capture_output=True, text=True, timeout=25.0,
-            env={**os.environ,
-                 "RMW_IMPLEMENTATION": "rmw_cyclonedds_cpp",
-                 "ROS_LOCALHOST_ONLY": "1", "ROS_DOMAIN_ID": "0",
-                 "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
-                 "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
-                 "AMENT_PREFIX_PATH": os.environ.get("AMENT_PREFIX_PATH", "")})
-        raw = (out.stdout or "").strip() or "none"
-        ec.log(f"[auto_map] laadstroom-check (subprocess): {raw} mA")
-        try:
-            return int(raw) > 300
-        except ValueError:
+        import json as _json, math as _math
+
+        # Dock-anker in kaartframe: eerste punt unicom-csv (grondwaarheid).
+        ax = ay = None
+        for path in ("/userdata/lfi/maps/home0/csv_file/map0tocharge_unicom.csv",
+                     "/userdata/lfi/maps/home0/x3_csv_file/map0tocharge_unicom.csv"):
+            try:
+                with open(path) as f:
+                    ax, ay = (float(v) for v in f.readline().strip().split(",")[:2])
+                break
+            except Exception:
+                continue
+        if ax is None:
             return False
+
+        with open("/userdata/pos.json") as f:
+            org = _json.load(f)["utm_origin"]
+        dx = org["x"] + ax      # dock-UTM = origin + kaartframe-anker
+        dy = org["y"] + ay
+        zone = int(org.get("utm_zone", 31))
+
+        # UTM -> WGS84 (Karney/Snyder, zelfde formules als reanchor_pos).
+        a = 6378137.0; f = 1 / 298.257223563; k0 = 0.9996
+        e2 = f * (2 - f); e1 = (1 - _math.sqrt(1 - e2)) / (1 + _math.sqrt(1 - e2))
+        xx = dx - 500000.0; M = dy / k0
+        mu = M / (a * (1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256))
+        phi1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * _math.sin(2 * mu)
+                + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * _math.sin(4 * mu)
+                + (151 * e1 ** 3 / 96) * _math.sin(6 * mu))
+        ep2 = e2 / (1 - e2); C1 = ep2 * _math.cos(phi1) ** 2
+        T1 = _math.tan(phi1) ** 2
+        N1 = a / _math.sqrt(1 - e2 * _math.sin(phi1) ** 2)
+        R1 = a * (1 - e2) / (1 - e2 * _math.sin(phi1) ** 2) ** 1.5
+        D = xx / (N1 * k0)
+        lat_d = phi1 - (N1 * _math.tan(phi1) / R1) * (D ** 2 / 2
+                - (5 + 3 * T1 + 10 * C1 - 4 * C1 ** 2 - 9 * ep2) * D ** 4 / 24
+                + (61 + 90 * T1 + 298 * C1 + 45 * T1 ** 2 - 252 * ep2
+                   - 3 * C1 ** 2) * D ** 6 / 720)
+        lon0 = _math.radians(6 * zone - 183)
+        lon_d = lon0 + (D - (1 + 2 * T1 + C1) * D ** 3 / 6
+                + (5 - 2 * C1 + 28 * T1 - 3 * C1 ** 2 + 8 * ep2
+                   + 24 * T1 ** 2) * D ** 5 / 120) / _math.cos(phi1)
+        d = haversine_m(lat, lng, _math.degrees(lat_d), _math.degrees(lon_d))
+        ec.log(f"[auto_map] dock-afstand: {d:.2f} m")
+        return d < 2.5
     except Exception as ex:
-        ec.log(f"[auto_map] laadstroom-check faalde: {ex}")
+        ec.log(f"[auto_map] dock-positie-check faalde: {ex}")
         return False
 
 
@@ -536,8 +556,10 @@ def _run_session_body(sess, ec):
     # _depart_pile als edge-cut: magnet-lock vrijgeven, ~1 m reverse).
     # Alleen op verzoek (departFromDock) — midden op het gazon achteruit
     # rijden kan een obstakel raken dat de costmap niet kent.
-    if sess.depart_from_dock or _is_charging(ec):
-        why = ("param" if sess.depart_from_dock else "laadstroom gedetecteerd")
+    docked = _docked_on_pile(ec, sess.start_gps[0] if sess.start_gps else None,
+                             sess.start_gps[1] if sess.start_gps else None)
+    if sess.depart_from_dock or docked:
+        why = ("param" if sess.depart_from_dock else "op de lader gedetecteerd (GPS)")
         ec.log(f"[auto_map] dock-departure ({why}): achteruit van de dock (~1 m)")
         try:
             ec._depart_pile()
