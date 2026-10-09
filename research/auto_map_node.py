@@ -366,14 +366,37 @@ def _run_session_body(sess, ec):
     # BoundaryFollow direct terug met "No valid boundary need robot!!!"
     # (live gezien op .244, 2026-07-23). Alle drie SetBool true; best-effort
     # (staan ze al aan dan zijn dit no-ops).
-    for srv in ("/camera/preposition/start_camera",
-                "/camera/tof/start_camera",
-                "/perception/do_perception"):
+    # In-process SetBool-calls (zelfde idioom als set_infer_model hieronder):
+    # de CLI-vorm time-outte live alle drie tegelijk onder load (2026-10-09,
+    # 20.2/20.1/20.2 s) terwijl de in-process call in dezelfde sessie
+    # binnen een seconde slaagde — zonder camera's is de sessie blind.
+    try:
+        import rclpy
+        from std_srvs.srv import SetBool
+        node = _preflight_node("auto_map_camstart")
         try:
-            ec.ros2_run(["ros2", "service", "call", srv,
-                         "std_srvs/srv/SetBool", "'{data: true}'"], timeout=20)
-        except Exception as ex:
-            ec.log(f"[auto_map] {srv} aanzetten faalde (ga door): {ex}")
+            for srv in ("/camera/preposition/start_camera",
+                        "/camera/tof/start_camera",
+                        "/perception/do_perception"):
+                try:
+                    cli = node.create_client(SetBool, srv)
+                    if not cli.wait_for_service(timeout_sec=10.0):
+                        ec.log(f"[auto_map] {srv}: service niet gevonden (ga door)")
+                        continue
+                    fut = cli.call_async(SetBool.Request(data=True))
+                    end_at = time.monotonic() + 10.0
+                    while not fut.done() and time.monotonic() < end_at:
+                        rclpy.spin_once(node, timeout_sec=0.5)
+                    ec.log(f"[auto_map] {srv}: "
+                           + ("ok" if fut.done() and fut.result().success
+                              else ("time-out (ga door)" if not fut.done()
+                                    else f"weigerde: {fut.result().message}")))
+                except Exception as ex:
+                    ec.log(f"[auto_map] {srv} aanzetten faalde (ga door): {ex}")
+        finally:
+            node.destroy_node()
+    except Exception as ex:
+        ec.log(f"[auto_map] camera-start blok faalde (ga door): {ex}")
 
     # Enige perceptie-instelling die wij zetten: SEG_HIGH (mode 3, maart-flow).
     # coverage_planner_server regelt semantic/detection-mode ZELF bij de goal.
