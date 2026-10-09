@@ -641,7 +641,7 @@ def _run_session_body(sess, ec):
                 # Loop-closure vangnet: volgend, ver genoeg geweest, en weer
                 # terug binnen 1.5 m van het startpunt -> rondje klaar.
                 if (following_reported and elapsed > 60
-                        and farthest_from_start > 5.0 and d < 1.5):
+                        and farthest_from_start > 8.0 and d < 1.5):
                     ec.log(f"[auto_map] lus gesloten na {int(elapsed)} s, "
                            f"{round(farthest_from_start, 1)} m verste punt")
                     _cancel_follow(ec)
