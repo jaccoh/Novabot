@@ -689,18 +689,22 @@ def _start_gps_watch(sess):
     leveringsziekte als de perceptie-wacht, derde verschijning,
     live 2026-10-09). Een vers proces levert betrouwbaar; dit patroon
     is al twee keer bewezen in deze sessie-infrastructuur."""
+    # BestPos i.p.v. /gps_raw: raw-jitter (meter-sprongen) gaf valse
+    # loop-closures en gps-ruis in de geofence (live 2026-10-09: sessie
+    # sloot bij >8 m 'verste punt' terwijl de gefuseerde positie 3 cm
+    # bewoog — en vermoordde daarmee het goal vóór het kon rijden).
+    # BestPos is dezelfde RTK-bron als de telemetrie; qual >= 2 filtert
+    # de loose fixes eruit.
     script = (
         "import time\n"
         "import rclpy\n"
-        "from sensor_msgs.msg import NavSatFix\n"
+        "from novabot_msgs.msg import BestPos\n"
         "rclpy.init()\n"
         "node = rclpy.create_node('auto_map_gps_subproc')\n"
-        "last = [0.0]\n"
         "def on_fix(m):\n"
-        "    if m.latitude != 0.0 or m.longitude != 0.0:\n"
-        "        last[0] = time.monotonic()\n"
-        "        print(f'{m.latitude} {m.longitude}', flush=True)\n"
-        "node.create_subscription(NavSatFix, '/gps_raw', on_fix, 5)\n"
+        "    if m.lat != 0.0 and m.lon != 0.0 and m.qual >= 2:\n"
+        "        print(f'{m.lat} {m.lon}', flush=True)\n"
+        "node.create_subscription(BestPos, '/bestpos_parsed_data', on_fix, 5)\n"
         "while True:\n"
         "    rclpy.spin_once(node, timeout_sec=1.0)\n"
     )
