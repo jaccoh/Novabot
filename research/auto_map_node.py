@@ -338,14 +338,30 @@ def _set_costmap_topic(ec):
     is milliseconds, de CLI-startup niet."""
     g = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
                      "obstacle_layer.pointcloud.topic"], timeout=45)
-    if "points_relabeled" in (g.stdout or ""):
-        ec.log("[auto_map] costmap-param stond al goed — set overgeslagen")
-        return True
+    if "points_relabeled" not in (g.stdout or ""):
+        ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
+                     "obstacle_layer.pointcloud.topic",
+                     "/perception/points_relabeled"], timeout=45)
+    else:
+        ec.log("[auto_map] costmap-topic stond al goed")
+
+    # Tijdelijke smoothing: observation_persistence laat waarnemingen
+    # tot ~1 s meetellen i.p.v. alleen het laatste frame. Eén verdwaald
+    # segmentatieframe (schaduw/blad/licht) liet de boundary daardoor
+    # 90 graden springen — zichtbaar als plotselinge rukken, meestal met
+    # herstel, maar fataal wanneer de ruk naar een obstakel wees
+    # (hek-ram + wiel-overstroom, live 2026-10-09). Met persistentie
+    # moet een richtingsprong meerdere frames aanhouden om door te
+    # voeren; de echte rand (elk frame aanwezig) blijft staan.
     ec.ros2_run(["ros2", "param", "set", "/local_costmap/local_costmap",
-                 "obstacle_layer.pointcloud.topic", "/perception/points_relabeled"],
+                 "obstacle_layer.observation_persistence", "1.0"],
                 timeout=45)
     r = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
                      "obstacle_layer.pointcloud.topic"], timeout=45)
+    rp = ec.ros2_run(["ros2", "param", "get", "/local_costmap/local_costmap",
+                      "obstacle_layer.observation_persistence"], timeout=45)
+    ec.log(f"[auto_map] costmap check: topic={'ok' if 'points_relabeled' in (r.stdout or '') else 'FOUT'}, "
+           f"persistence={(rp.stdout or '?').strip().splitlines()[-1]}")
     return "points_relabeled" in (r.stdout or "")
 
 
